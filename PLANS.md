@@ -29,6 +29,7 @@
   - `Sync Key Field`
   - `Sync Field Mapping`
   - `Sync Value Mapping`
+  - `Sync Modified Field`
 - Audit-Doctypes:
   - `Sync Run`
   - `Sync Run Item`
@@ -36,7 +37,8 @@
 - Hook-Integration:
   - `scheduler_events` fuer periodisches Pruefen faelliger Definitionen
   - `after_migrate` zum Seeden der Partner-Typen
-  - Desk-JS fuer `Sync Definition` und `Sync Partner`
+  - Desk-JS fuer `Sync Definition`, `Sync Partner`, `Sync Run` und `Sync Run Item`
+  - List-View-JS fuer `Sync Run` und `Sync Run Item`
 - Backend:
   - API-Endpunkte in `sync/api.py`
   - Service-Layer unter `sync/sync/service/`
@@ -58,12 +60,26 @@
   - dynamische Feldsichtbarkeit fuer Query/Table, Partner-Typ und Auth-Typ
   - neue Konfigurationsfelder wie `preview_limit`, `export_mask_credentials`, `next_run_at`, `last_run_status`, `last_run_summary`
   - Partner-Felder fuer `auth_type`, `api_key`, `api_secret`, `certificate_path`, `connection_notes`, `secret_fields`
+  - gefuehrte Feldauswahl fuer Frappe-Feldreferenzen in `Sync Definition`, basierend auf dem gewaehlten Doctype
+  - Child-Table-basierte Modified-Fields in `Sync Definition`, mit Legacy-Fallback auf die bisherigen Textfelder
+  - lesbare Preview-Darstellung mit Zusammenfassung, Mapping-/Action-Tabellen und Raw-JSON-Fallback
+  - `Sync Run` zeigt zugehoerige `Sync Run Item` direkt in der Form
+  - `Sync Run Item` kann auf das zugehoerige Frappe-Dokument verlinken, wenn `doctype_name` aufgeloest werden kann
+  - native List-Views fuer `Sync Run` und `Sync Run Item` mit Status-/Fehlerfokus und Direktaktionen
+  - Desk-seitige Source-/Query-Validierung in `Sync Definition`
+  - klarere Partner-Form mit dynamischen Pflichtfeldern, Statushinweisen und besseren Hilfetexten
+  - klarere Partner-Abschnitte fuer Connection Health, Driver Options, Authentication und Security Notes
+  - manuell ladbare Partner-Spaltenlisten fuer tabellenbasierte Definitionen mit Refresh-Status in `Sync Definition`
+  - Partner-Spaltenlisten als Auswahlhilfe fuer `partner_field` und partnerseitige Modified-Fields
+  - YAML-Import mit Voransicht, Konflikt-/Warnhinweisen und blockierter Bestaetigung bei ungueltiger Preview
+  - erweiterte Monitoring-Ansichten direkt in `Sync Run` und `Sync Run Item`, zusaetzlich zu den List-Views
+  - systematischere Layout-Ueberarbeitung mit `Column Breaks`, Gruppen und operatorfreundlicheren Formularabschnitten fuer `Sync Definition`, `Sync Partner`, `Sync Run` und `Sync Run Item`
 - Security/Export:
   - YAML-Export kann Credentials maskieren
   - Secret-Felder aus Partnern/Partner-Typen werden beim Export beruecksichtigt
 - Tests:
   - Service-Tests fuer Due-Selection und Duplicate-Run-Guard
-  - API-Tests fuer Preview, Partner-Test, YAML-Roundtrip und `run_sync_definition`
+  - API-Tests fuer Preview, Partner-Test, YAML-Roundtrip, `run_sync_definition` und die Doctype-Feldauswahl
   - Runtime-Helper-Tests fuer Config-Building, Record-Key-Stabilitaet, YAML-Sanitizing und Upsert-Helfer
   - Connector-Tests fuer Basisverhalten bei fehlender Konfiguration
 
@@ -72,16 +88,28 @@
 - `bench build --app sync`
 - `bench --site development.localhost migrate`
 - `bench --site development.localhost run-tests --app sync`
+- `bench --site development.localhost run-tests --app sync --module sync.tests.test_api`
 - `bench --site development.localhost execute frappe.db.count --args '["Sync Partner Type"]'` liefert `3`
 - `bench --site development.localhost execute frappe.get_meta --args '["Sync Definition"]'` zeigt die neuen Runtime-/UX-Felder auf der Site
 
 ## Oeffentliche Schnittstellen
+- Kern-APIs:
 - `run_sync_definition(sync_definition_name, trigger="manual", queue=True, dry_run=False)`
 - `run_due_sync_definitions(limit=20, queue=True)`
 - `test_sync_partner(sync_partner_name)`
 - `preview_sync_definition(sync_definition_name, limit=50)`
 - `export_sync_definition_yaml(sync_definition_name)`
 - `import_sync_definition_yaml(yaml_payload, overwrite=False)`
+- Weitere whitelisted Endpunkte / Kompatibilitaets- und Hilfsfunktionen:
+- `list_due_syncs()`
+- `run_due_syncs(limit=20, queue=True)`
+- `enqueue_sync(sync_definition_name, trigger="manual", queue=True, dry_run=False)`
+- `run_sync_now(sync_definition_name, trigger="manual", dry_run=False)`
+- `preview_sync(sync_definition_name, limit=50)`
+- `export_sync_yaml(sync_definition_name)`
+- `import_sync_yaml(yaml_payload, overwrite=False)`
+- `import_sync_yaml_from_json(payload, overwrite=False)`
+- `get_sync_definition_field_choices(doctype_name)`
 
 ## Was fuer eine komplett belastbare v1 noch fehlt
 
@@ -109,38 +137,20 @@
   - Reduktion redundanter Reads/Writes
   - Lasttests mit realistischen Datenvolumina
 
-### 4. Sicherheit und Datenminimierung
-- Secret-Masking im YAML-Export ist eingefuehrt, aber die produktive Sicherheitsgeschichte ist noch nicht vollstaendig.
-- Offen:
-  - Redaction sensibler Daten in `Sync Run Item` / `Sync Run Item Change`
-  - Schutz sensibler Payloads in Run-History und Logs
-  - Rollen-/Berechtigungskonzept ueber `System Manager` hinaus
-  - Betriebsmodell fuer Secret-Injection oder Vault-Anbindung
+### 4. UX fuer produktive Operatoren abrunden
+- Die groben v1-Operator-UX-Luecken sind jetzt geschlossen.
+- Restliches UX-Polish:
+  - dedizierte Dashboard-Seite, falls Monitoring ueber Form-/List-Ansichten hinaus zentral gebuendelt werden soll
+  - weitere Konsistenzpruefung fuer selten genutzte Formularpfade und Randfaelle im Import-Dialog
 
-### 5. UX fuer produktive Operatoren abrunden
-- Die Grund-UX ist vorhanden, aber noch eher technisch.
-- Offen:
-  - `Sync Run` soll die zugehoerigen `Sync Run Item` direkt in der Form sichtbar machen, idealerweise als Child-Table-artige Liste oder eng integrierte Unteransicht zur besseren Nachvollziehbarkeit
-  - `Sync Run Item` soll einen klickbaren Bezug zum zugehoerigen Frappe-Dokument haben, damit man in der UI direkt per Pfeil/Link in den Datensatz springen kann
-  - Doctype-Layouts sollen systematisch mit `Column Breaks` und klareren Formulargruppen ueberarbeitet werden; aktuell sind mehrere Formulare noch zu linear und dadurch unuebersichtlich
-  - Feldauswahl fuer alle Frappe-Feldreferenzen in `Sync Definition`, basierend auf dem gewaehlten Doctype statt freier Texteingabe
-  - Child-Table-basierte Modified-Fields statt Freitextfeldern, inklusive Feldvorschlaegen aus dem gewaehlten Doctype
-  - optional ladbare Spaltenliste fuer Partner-Tabellen nach Eingabe des Tabellennamens, idealerweise mit manuellem Refresh-Button
-  - Nutzung dieser Partner-Spaltenliste als Auswahlhilfe fuer Mapping- und Modified-Field-Eintraege auf der Partner-Seite
-  - besser lesbare Preview-Darstellung statt reinem JSON-Block
-  - Query-/Source-Validierung direkt im Desk
-  - bessere Listen-/Dashboard-Sicht fuer Runs und Fehler
-  - Import-Workflow mit Voransicht und Konflikthinweisen
-  - klarere Pflichtfelder und Hilfetexte je Partner-Typ
-
-### 6. Betriebsdokumentation
+### 5. Betriebsdokumentation
 - Installation und Treiberhinweise sind dokumentiert.
 - Offen:
   - Beispielkonfigurationen pro Partner-Typ
   - Betriebsdoku fuer Scheduler, Workers und Queue-Diagnostik
   - Hinweise fuer Fehleranalyse bei gescheiterten Sync-Runs
 
-### 7. Erweiterte Tests
+### 6. Erweiterte Tests
 - Die aktuelle Test-Suite deckt Geruest, Runtime-Helfer und API-Vertraege ab.
 - Vor produktivem Einsatz sollten noch dazu:
   - echte Integrations-Tests gegen Testdatenbanken
@@ -152,14 +162,7 @@
 ## Empfohlene naechste Schritte
 1. Fuer jeden Partner-Typ einen echten Integrationspfad gegen Testdatenbanken aufsetzen.
 2. Die aktuellen Runtime-Pfade mit realen Daten verifizieren und die Delete-/Conflict-Pfade haerten.
-3. Die Definitions-UX auf feldbasierte Auswahllisten umstellen:
-   - Frappe-Felder aus dem gewaehlten Doctype laden
-   - Modified-Fields auf Child Tables umstellen
-   - Partner-Spaltenlisten bei Tabellen-basierten Definitionen ladbar machen
-4. Die Run-UX verbessern:
-   - `Sync Run Items` direkt im `Sync Run` sichtbar machen
-   - klickbare Verlinkung vom `Sync Run Item` zum Frappe-Dokument ergaenzen
-   - Doctype-Layouts mit Columns und klareren Abschnitten ueberarbeiten
-5. Audit- und Payload-Redaction fuer sensible Daten nachziehen.
-6. Preview, Run-Monitoring und Import-UX fuer Operatoren weiter verbessern.
-7. Danach Lasttests und Betriebsdoku fertigziehen.
+3. Echte Integrationspfade fuer MSSQL, Postgres und Firebird mit Testdatenbanken aufsetzen und die Connector-Dialekte dort verifizieren.
+4. Delete-/Conflict-/Recovery-Pfade der Runtime mit realen Daten haerten.
+5. Betriebsdokumentation und Beispielkonfigurationen fuer Operatoren fertigziehen.
+6. Danach Lasttests und gegebenenfalls eine dedizierte Monitoring-Seite ergaenzen.

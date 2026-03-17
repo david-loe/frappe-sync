@@ -46,8 +46,13 @@ app_include_js = "/assets/sync/js/sync_helpers.js"
 doctype_js = {
 	"Sync Definition": "public/js/sync_definition.js",
 	"Sync Partner": "public/js/sync_partner.js",
+	"Sync Run": "public/js/sync_run.js",
+	"Sync Run Item": "public/js/sync_run_item.js",
 }
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_list_js = {
+	"Sync Run": "public/js/sync_run_list.js",
+	"Sync Run Item": "public/js/sync_run_item_list.js",
+}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 

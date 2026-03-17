@@ -38,6 +38,37 @@ class TestSyncApi(unittest.TestCase):
 		self.api = api
 		self.original_get_doc = self.api.frappe.get_doc
 
+	def test_doctype_field_choices_filters_non_selectable_fields(self):
+		meta = SimpleNamespace(
+			fields=[
+				SimpleNamespace(fieldname="subject", label="Subject", fieldtype="Data", hidden=0),
+				SimpleNamespace(fieldname="items", label="Items", fieldtype="Table", hidden=0),
+				SimpleNamespace(fieldname="internal_note", label="Internal Note", fieldtype="Data", hidden=1),
+			]
+		)
+
+		with patch.object(self.api.frappe, "get_meta", return_value=meta):
+			response = self.api.get_sync_definition_field_choices("Task")
+
+		self.assertEqual(response["doctype"], "Task")
+		self.assertEqual([field["fieldname"] for field in response["fields"]], ["name", "modified", "subject"])
+		self.assertEqual(response["fields"][0]["label"], "Name")
+		self.assertEqual(response["fields"][1]["label"], "Modified")
+
+	def test_get_sync_partner_table_columns_returns_connector_columns(self):
+		partner = SimpleNamespace(doctype="Sync Partner", name="PARTNER-1", get=getattr)
+		connector = SimpleNamespace(describe_source_columns=lambda **kwargs: ["id", "status", "updated_at"])
+
+		with (
+			patch.object(self.api.frappe, "get_doc", return_value=partner),
+			patch.object(self.api, "get_connector_for_partner", return_value=connector),
+		):
+			response = self.api.get_sync_partner_table_columns(partner.name, table_name="  dbo.SyncTable  ")
+
+		self.assertEqual(response["sync_partner"], partner.name)
+		self.assertEqual(response["table_name"], "dbo.SyncTable")
+		self.assertEqual(response["columns"], ["id", "status", "updated_at"])
+
 	def test_yaml_export_import_roundtrip(self):
 		sample_definition = {
 			"doctype": "Sync Definition",
@@ -125,11 +156,57 @@ class TestSyncApi(unittest.TestCase):
 
 		self.assertEqual(out, preview_data)
 
+	def test_preview_import_yaml_reports_conflicts_and_missing_sections(self):
+		payload = {
+			"sync_partner_type": {"doctype": "Sync Partner Type", "name": "MSSQL"},
+			"sync_definition": {
+				"doctype": "Sync Definition",
+				"name": "SYNC-NEW",
+				"sync_type": "A->B",
+				"sync_partner": "PARTNER-1",
+			},
+		}
+		yaml_payload = yaml.safe_dump(payload, sort_keys=False)
+
+		def fake_exists(doctype, name):
+			return (doctype, name) == ("Sync Partner Type", "MSSQL")
+
+		with (
+			patch("sync.sync.service.runtime.frappe.db.exists", side_effect=fake_exists),
+			patch("sync.sync.service.runtime.frappe.get_meta", side_effect=_fake_meta),
+		):
+			preview = self.api.preview_import_sync_definition_yaml(yaml_payload, overwrite=False)
+
+		self.assertTrue(preview["ok"])
+		self.assertTrue(preview["can_import"])
+		self.assertEqual(preview["missing_payload_parts"], ["sync_partner"])
+		self.assertEqual(preview["documents"]["Sync Partner Type"]["status"], "conflict")
+		self.assertEqual(preview["documents"]["Sync Definition"]["status"], "create")
+		self.assertEqual(preview["summary"]["conflict"], 1)
+		self.assertEqual(preview["summary"]["create"], 1)
+		self.assertEqual(preview["summary"]["missing_payload"], 1)
+
+	def test_preview_import_yaml_marks_existing_documents_as_updates_with_overwrite(self):
+		payload = {
+			"sync_partner": {"doctype": "Sync Partner", "name": "PARTNER-1"},
+		}
+		yaml_payload = yaml.safe_dump(payload, sort_keys=False)
+
+		with (
+			patch("sync.sync.service.runtime.frappe.db.exists", return_value=True),
+			patch("sync.sync.service.runtime.frappe.get_meta", side_effect=_fake_meta),
+		):
+			preview = self.api.preview_import_sync_yaml(yaml_payload, overwrite=True)
+
+		self.assertEqual(preview["documents"]["Sync Partner"]["status"], "update")
+		self.assertEqual(preview["documents"]["Sync Partner"]["action"], "overwrite")
+		self.assertEqual(preview["summary"]["update"], 1)
+
 
 def _fake_meta(doctype):
 	child_fields = {
-		"Sync Definition": ["sync_type", "frequency_cron", "batch_size", "filter_expression", "name"],
-		"Sync Partner": ["name"],
+		"Sync Definition": ["sync_type", "frequency_cron", "batch_size", "filter_expression", "name", "sync_partner"],
+		"Sync Partner": ["name", "partner_type"],
 		"Sync Partner Type": ["name"],
 	}
 

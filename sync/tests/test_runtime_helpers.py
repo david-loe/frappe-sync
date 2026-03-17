@@ -53,6 +53,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 				"create_new": 1,
 				"delete_missing": 0,
 				"conflict_policy": "newest_wins",
+				"frappe_modified_field_rows": [SimpleNamespace(field_name="modified")],
+				"partner_modified_field_rows": [SimpleNamespace(field_name="updated_at")],
 			}
 		)
 
@@ -64,6 +66,42 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(config.value_mapping, {"state": {"open": "1"}})
 		self.assertIsInstance(config.filters, list)
 		self.assertEqual(config.use_last_sync_date, True)
+		self.assertEqual(config.frappe_modified_fields, ["modified"])
+		self.assertEqual(config.partner_modified_fields, ["updated_at"])
+		self.assertEqual(config.table_name, "tabTask")
+		self.assertIsNone(config.query)
+
+	@patch("sync.sync.service.runtime._get_child_rows_by_options")
+	def test_build_definition_config_falls_back_to_legacy_modified_fields(self, mock_children):
+		def fake_rows(parent, childdoctype):
+			if childdoctype == "Sync Key Field":
+				return [dict(frappe_field="name")]
+			if childdoctype == "Sync Field Mapping":
+				return [dict(frappe_field="name", partner_field="name")]
+			return []
+
+		mock_children.side_effect = fake_rows
+
+		doc = FakeDoc(
+			{
+				"name": "SYNC-LEGACY",
+				"sync_type": "A->B",
+				"partner": "PARTNER-1",
+				"doctype_name": "Task",
+				"table_name": "  tabTask  ",
+				"query": "   ",
+				"frappe_modified_fields": " modified \nchanged_on ",
+				"partner_modified_fields": " updated_at \n partner_changed ",
+			}
+		)
+
+		with patch("sync.sync.service.runtime.frappe.get_meta", return_value=SimpleNamespace(fields=[])):
+			config = runtime._build_definition_config(doc)
+
+		self.assertEqual(config.table_name, "tabTask")
+		self.assertIsNone(config.query)
+		self.assertEqual(config.frappe_modified_fields, ["modified", "changed_on"])
+		self.assertEqual(config.partner_modified_fields, ["updated_at", "partner_changed"])
 
 	def test_build_record_key_consistent(self):
 		key1 = runtime._build_record_key({"name": "AAA", "status": "open"})

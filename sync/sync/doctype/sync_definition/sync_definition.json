@@ -4,11 +4,13 @@
  "autoname": "field:title",
  "doctype": "DocType",
  "engine": "InnoDB",
-  "field_order": [
+ "field_order": [
   "title",
   "enabled",
+  "section_break_identity",
   "partner",
   "sync_type",
+  "column_break_identity",
   "doctype_name",
   "frequency_cron",
   "next_run_at",
@@ -22,9 +24,12 @@
   "section_break_source",
   "table_name",
   "query",
+  "partner_columns_status",
   "section_break_filters",
   "filter_expression",
   "column_break_modified_fields",
+  "frappe_modified_field_rows",
+  "partner_modified_field_rows",
   "frappe_modified_fields",
   "partner_modified_fields",
   "section_break_mapping",
@@ -56,6 +61,11 @@
    "label": "Enabled"
   },
   {
+   "fieldname": "section_break_identity",
+   "fieldtype": "Section Break",
+   "label": "Identity"
+  },
+  {
    "fieldname": "partner",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -71,6 +81,10 @@
    "label": "Sync Type",
    "options": "A->B\nA<->B\nA<-B",
    "reqd": 1
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "doctype_name",
@@ -94,7 +108,8 @@
   },
   {
    "fieldname": "section_break_behavior",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Sync Behavior"
   },
   {
    "default": "250",
@@ -135,7 +150,8 @@
   },
   {
    "fieldname": "section_break_source",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Source"
   },
   {
    "fieldname": "table_name",
@@ -148,8 +164,14 @@
    "label": "Query"
   },
   {
+   "fieldname": "partner_columns_status",
+   "fieldtype": "HTML",
+   "label": "Partner Columns"
+  },
+  {
    "fieldname": "section_break_filters",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Filters"
   },
   {
    "fieldname": "filter_expression",
@@ -161,22 +183,40 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "One field per line.",
+   "description": "Select one or more DocType fields used to detect Frappe-side changes.",
+   "fieldname": "frappe_modified_field_rows",
+   "fieldtype": "Table",
+   "label": "Frappe Modified Fields",
+   "options": "Sync Modified Field"
+  },
+  {
+   "description": "Select one or more partner-side modified fields aligned with the chosen DocType fields.",
+   "fieldname": "partner_modified_field_rows",
+   "fieldtype": "Table",
+   "label": "Partner Modified Fields",
+   "options": "Sync Modified Field"
+  },
+  {
+   "description": "Legacy fallback storage for modified fields.",
    "fieldname": "frappe_modified_fields",
    "fieldtype": "Small Text",
+   "hidden": 1,
    "label": "Frappe Modified Fields"
   },
   {
-   "description": "One field per line.",
+   "description": "Legacy fallback storage for modified fields.",
    "fieldname": "partner_modified_fields",
    "fieldtype": "Small Text",
+   "hidden": 1,
    "label": "Partner Modified Fields"
   },
   {
    "fieldname": "section_break_mapping",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Field Mapping"
   },
   {
+   "description": "Choose the Frappe fields that uniquely identify a record.",
    "fieldname": "key_fields",
    "fieldtype": "Table",
    "label": "Key Fields",
@@ -184,6 +224,7 @@
    "reqd": 1
   },
   {
+   "description": "Map Frappe fields to partner-side columns. Load partner columns above to get suggestions.",
    "fieldname": "field_mapping",
    "fieldtype": "Table",
    "label": "Field Mapping",
@@ -198,7 +239,8 @@
   },
   {
    "fieldname": "section_break_runtime",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Runtime"
   },
   {
    "fieldname": "preview_limit",

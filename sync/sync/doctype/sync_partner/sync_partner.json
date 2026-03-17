@@ -4,30 +4,37 @@
  "autoname": "field:partner_name",
  "doctype": "DocType",
  "engine": "InnoDB",
-  "field_order": [
+ "field_order": [
   "partner_name",
-  "enabled",
+  "section_break_identity",
   "partner_type",
+  "column_break_identity",
+  "enabled",
+  "section_break_status",
+  "last_connection_status",
+  "column_break_status",
+  "last_checked_on",
+  "last_connection_error",
   "section_break_connection",
   "host",
   "port",
-  "database_name",
-  "username",
-  "password",
   "column_break_connection",
+  "database_name",
   "trust_server_certificate",
   "charset",
+  "section_break_connection_options",
   "connection_options",
   "section_break_auth",
   "auth_type",
+  "column_break_auth",
+  "username",
+  "password",
   "api_key",
   "api_secret",
   "certificate_path",
+  "section_break_security",
   "connection_notes",
-  "secret_fields",
-  "last_connection_status",
-  "last_checked_on",
-  "last_connection_error"
+  "secret_fields"
  ],
  "fields": [
   {
@@ -47,17 +54,59 @@
    "label": "Enabled"
   },
   {
+   "fieldname": "section_break_identity",
+   "fieldtype": "Section Break",
+   "label": "Identity"
+  },
+  {
    "fieldname": "partner_type",
    "fieldtype": "Link",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Partner Type",
    "options": "Sync Partner Type",
-   "reqd": 1
+   "reqd": 1,
+   "description": "Select the connector family that drives the connection hints below."
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_status",
+   "fieldtype": "Section Break",
+   "label": "Connection Health"
+  },
+  {
+   "fieldname": "last_connection_status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "\nUnknown\nSuccess\nError",
+   "read_only": 1,
+   "description": "The latest recorded connection test result."
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_checked_on",
+   "fieldtype": "Datetime",
+   "label": "Checked On",
+   "read_only": 1,
+   "description": "Timestamp of the latest recorded connection test."
+  },
+  {
+   "fieldname": "last_connection_error",
+   "fieldtype": "Small Text",
+   "label": "Latest Error",
+   "read_only": 1,
+   "description": "Most recent failure details from the latest connection test."
   },
   {
    "fieldname": "section_break_connection",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Connection Details"
   },
   {
    "fieldname": "host",
@@ -68,23 +117,14 @@
   {
    "fieldname": "port",
    "fieldtype": "Int",
-   "label": "Port"
+   "label": "Port",
+   "description": "Database port. Leave blank to use the connector default."
   },
   {
    "fieldname": "database_name",
    "fieldtype": "Data",
-   "label": "Database Name",
+   "label": "Database",
    "reqd": 1
-  },
-  {
-   "fieldname": "username",
-   "fieldtype": "Data",
-   "label": "Username"
-  },
-  {
-   "fieldname": "password",
-   "fieldtype": "Password",
-   "label": "Password"
   },
   {
    "fieldname": "column_break_connection",
@@ -93,22 +133,31 @@
   {
    "fieldname": "trust_server_certificate",
    "fieldtype": "Check",
-   "label": "Trust Server Certificate"
+   "label": "Trust Server Certificate",
+   "description": "Enable only for trusted internal certificates or self-signed SQL Server endpoints."
   },
   {
    "default": "UTF8",
    "fieldname": "charset",
    "fieldtype": "Data",
-   "label": "Charset"
+   "label": "Charset",
+   "description": "Used by Firebird connections when an explicit charset is needed."
+  },
+  {
+   "fieldname": "section_break_connection_options",
+   "fieldtype": "Section Break",
+   "label": "Driver Options"
   },
   {
    "fieldname": "connection_options",
    "fieldtype": "Code",
-   "label": "Connection Options"
+   "label": "Connection Options",
+   "description": "Optional driver-specific connection options, one per line or JSON."
   },
   {
    "fieldname": "section_break_auth",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Authentication"
   },
   {
    "fieldname": "auth_type",
@@ -118,50 +167,55 @@
    "default": "Password"
   },
   {
+   "fieldname": "column_break_auth",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "username",
+   "fieldtype": "Data",
+   "label": "Username",
+   "description": "Used for password-based authentication."
+  },
+  {
+   "fieldname": "password",
+   "fieldtype": "Password",
+   "label": "Password",
+   "description": "Used for password-based authentication."
+  },
+  {
    "fieldname": "api_key",
    "fieldtype": "Data",
-   "label": "API Key"
+   "label": "API Key",
+   "description": "API key or access token provided by the upstream system."
   },
   {
    "fieldname": "api_secret",
    "fieldtype": "Password",
-   "label": "API Secret"
+   "label": "API Secret",
+   "description": "Secret value paired with the API key."
   },
   {
    "fieldname": "certificate_path",
    "fieldtype": "Data",
-   "label": "Certificate Path"
+   "label": "Certificate Path",
+   "description": "Filesystem path to the client certificate."
+  },
+  {
+   "fieldname": "section_break_security",
+   "fieldtype": "Section Break",
+   "label": "Security Notes"
   },
   {
    "fieldname": "connection_notes",
    "fieldtype": "Small Text",
    "label": "Connection Notes",
-   "description": "Guidance for setting up this partner."
+   "description": "Document setup constraints, special driver notes, and operator guidance."
   },
   {
    "fieldname": "secret_fields",
    "fieldtype": "Small Text",
    "label": "Secret Fields",
-   "description": "Field names to mask when exporting (one per line)."
-  },
-  {
-   "fieldname": "last_connection_status",
-   "fieldtype": "Select",
-   "label": "Last Connection Status",
-   "options": "\nUnknown\nSuccess\nError",
-   "read_only": 1
-  },
-  {
-   "fieldname": "last_checked_on",
-   "fieldtype": "Datetime",
-   "label": "Last Checked On",
-   "read_only": 1
-  },
-  {
-   "fieldname": "last_connection_error",
-   "fieldtype": "Small Text",
-   "label": "Last Connection Error",
-   "read_only": 1
+   "description": "Field names to mask when exporting, one per line."
   }
  ],
  "grid_page_length": 50,

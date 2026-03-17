@@ -12,21 +12,28 @@
   "trigger_type",
   "dry_run",
   "job_id",
+  "section_break_health",
+  "run_health_html",
   "section_break_timing",
   "started_at",
   "finished_at",
+  "column_break_timing",
   "last_sync_at",
   "section_break_counters",
   "processed_count",
   "success_count",
+  "column_break_counters",
   "created_count",
   "updated_count",
   "deleted_count",
   "skipped_count",
   "conflict_count",
   "error_count",
+  "section_break_items",
+  "run_items_html",
   "section_break_details",
   "summary",
+  "column_break_details",
   "error_message"
  ],
  "fields": [
@@ -81,27 +88,46 @@
    "read_only": 1
   },
   {
+   "fieldname": "section_break_health",
+   "fieldtype": "Section Break",
+   "label": "Monitoring"
+  },
+  {
+   "fieldname": "run_health_html",
+   "fieldtype": "HTML",
+   "label": "Run Health"
+  },
+  {
    "fieldname": "section_break_timing",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Execution Timing"
   },
   {
    "fieldname": "started_at",
    "fieldtype": "Datetime",
-   "label": "Started At"
+   "label": "Started At",
+   "read_only": 1
   },
   {
    "fieldname": "finished_at",
    "fieldtype": "Datetime",
-   "label": "Finished At"
+   "label": "Finished At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_timing",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "last_sync_at",
    "fieldtype": "Datetime",
-   "label": "Last Sync At"
+   "label": "Last Sync At",
+   "read_only": 1
   },
   {
    "fieldname": "section_break_counters",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Counters"
   },
   {
    "fieldname": "processed_count",
@@ -114,6 +140,10 @@
    "fieldtype": "Int",
    "label": "Success Count",
    "read_only": 1
+  },
+  {
+   "fieldname": "column_break_counters",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "created_count",
@@ -152,14 +182,29 @@
    "read_only": 1
   },
   {
+   "fieldname": "section_break_items",
+   "fieldtype": "Section Break",
+   "label": "Run Items"
+  },
+  {
+   "fieldname": "run_items_html",
+   "fieldtype": "HTML",
+   "label": "Items"
+  },
+  {
    "fieldname": "section_break_details",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Run Notes"
   },
   {
    "fieldname": "summary",
    "fieldtype": "Small Text",
    "label": "Summary",
    "read_only": 1
+  },
+  {
+   "fieldname": "column_break_details",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "error_message",

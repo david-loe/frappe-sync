@@ -164,6 +164,14 @@ class BasePartnerConnector(ABC):
 			return ConnectorWriteResult(ok=True, message="dry_run")
 		return ConnectorWriteResult(ok=False, message="Connector does not support delete operations")
 
+	def describe_source_columns(
+		self,
+		*,
+		source: str | None = None,
+		query: str | None = None,
+	) -> list[str]:
+		raise RuntimeError("Connector does not support source-column inspection")
+
 
 class RelationalConnector(BasePartnerConnector):
 	partner_type = "relational"
@@ -350,6 +358,30 @@ class RelationalConnector(BasePartnerConnector):
 			return ConnectorWriteResult(ok=True, message=f"{self.dialect} delete succeeded")
 		except Exception as err:
 			return ConnectorWriteResult(ok=False, message=f"{self.dialect} delete failed: {err}")
+
+	def describe_source_columns(
+		self,
+		*,
+		source: str | None = None,
+		query: str | None = None,
+	) -> list[str]:
+		source_name, query_text = self._resolve_source(source=source, query=query)
+		if query_text and not source_name:
+			raise RuntimeError(
+				f"{self.dialect} column inspection currently supports table sources only; query inspection is disabled"
+			)
+		if not source_name:
+			raise RuntimeError(f"{self.dialect} column inspection requires a table source")
+
+		table = self._quote_compound_identifier(source_name)
+		sql = f"SELECT * FROM {table} WHERE 1 = 0"
+		with self._connection() as connection:
+			db_cursor = connection.cursor()
+			db_cursor.execute(sql, [])
+			columns = [column[0] for column in db_cursor.description or []]
+			with suppress(Exception):
+				db_cursor.close()
+		return [str(column) for column in columns if column]
 
 	def _load_driver_module(self):
 		for module_name in self.driver_candidates:

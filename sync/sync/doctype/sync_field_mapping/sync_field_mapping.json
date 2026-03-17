@@ -11,9 +11,11 @@
  "fields": [
   {
    "fieldname": "frappe_field",
-   "fieldtype": "Data",
+   "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Frappe Field",
+   "description": "Select a field from the chosen DocType.",
+   "options": "",
    "reqd": 1
   },
   {
@@ -43,4 +45,3 @@
  "sort_order": "ASC",
  "states": []
 }
-

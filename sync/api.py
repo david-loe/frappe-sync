@@ -17,6 +17,7 @@ from sync.sync.service import (
 	test_sync_partner_connection,
 )
 from sync.sync.service.connectors import get_connector_for_partner
+from sync.sync.service.runtime import preview_import_sync_definition_yaml as service_preview_import_sync_definition_yaml
 
 
 def _as_bool(value: Any) -> bool:
@@ -48,9 +49,82 @@ def _parse_json_payload(value: Any) -> dict[str, Any]:
 	return {}
 
 
+def _clean_string(value: Any) -> str | None:
+	if value is None:
+		return None
+	cleaned = str(value).strip()
+	return cleaned or None
+
+
+_NON_SELECTABLE_FIELD_TYPES = {
+	"Button",
+	"Column Break",
+	"Fold",
+	"HTML",
+	"Section Break",
+	"Tab Break",
+	"Table",
+	"Table MultiSelect",
+}
+
+
+def _build_doctype_field_choices(doctype_name: str) -> list[dict[str, str]]:
+	meta = frappe.get_meta(doctype_name)
+	choices: list[dict[str, str]] = []
+	seen: set[str] = set()
+
+	for fieldname, label in (("name", "Name"), ("modified", "Modified")):
+		choices.append({"fieldname": fieldname, "label": label, "fieldtype": "Data"})
+		seen.add(fieldname)
+
+	for field in getattr(meta, "fields", []) or []:
+		fieldname = str(getattr(field, "fieldname", "") or "").strip()
+		if not fieldname or fieldname in seen:
+			continue
+		if _as_bool(getattr(field, "hidden", 0)):
+			continue
+		fieldtype = str(getattr(field, "fieldtype", "") or "").strip()
+		if fieldtype in _NON_SELECTABLE_FIELD_TYPES:
+			continue
+		label = str(getattr(field, "label", "") or "").strip() or fieldname
+		choices.append({"fieldname": fieldname, "label": label, "fieldtype": fieldtype or "Data"})
+		seen.add(fieldname)
+
+	return choices
+
+
 @frappe.whitelist()
 def list_due_syncs() -> list[str]:
 	return service_list_due_sync_definitions()
+
+
+@frappe.whitelist()
+def get_sync_definition_field_choices(doctype_name: str) -> dict[str, Any]:
+	doctype_name = str(doctype_name or "").strip()
+	if not doctype_name:
+		return {"doctype": "", "fields": []}
+	return {"doctype": doctype_name, "fields": _build_doctype_field_choices(doctype_name)}
+
+
+@frappe.whitelist()
+def get_sync_partner_table_columns(
+	sync_partner_name: str,
+	table_name: str | None = None,
+	query: str | None = None,
+) -> dict[str, Any]:
+	partner_doc = frappe.get_doc("Sync Partner", sync_partner_name)
+	connector = get_connector_for_partner(partner_doc)
+	normalized_table_name = _clean_string(table_name)
+	normalized_query = _clean_string(query)
+	try:
+		columns = connector.describe_source_columns(source=normalized_table_name, query=normalized_query)
+	except Exception as exc:
+		frappe.throw(str(exc), exc=frappe.ValidationError)
+	return {
+		"sync_partner": partner_doc.name,
+		"table_name": normalized_table_name,
+		"columns": columns,
+	}
 
 
 @frappe.whitelist()
@@ -124,6 +198,16 @@ def export_sync_definition_yaml(sync_definition_name: str) -> str:
 @frappe.whitelist()
 def import_sync_yaml(yaml_payload: str, overwrite: bool = False) -> dict[str, Any]:
 	return service_import_sync_definition_yaml(yaml_payload=yaml_payload, overwrite=_as_bool(overwrite))
+
+
+@frappe.whitelist()
+def preview_import_sync_yaml(yaml_payload: str, overwrite: bool = False) -> dict[str, Any]:
+	return service_preview_import_sync_definition_yaml(yaml_payload=yaml_payload, overwrite=_as_bool(overwrite))
+
+
+@frappe.whitelist()
+def preview_import_sync_definition_yaml(yaml_payload: str, overwrite: bool = False) -> dict[str, Any]:
+	return service_preview_import_sync_definition_yaml(yaml_payload=yaml_payload, overwrite=_as_bool(overwrite))
 
 
 @frappe.whitelist()

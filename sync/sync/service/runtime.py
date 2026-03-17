@@ -376,6 +376,135 @@ def export_sync_definition_yaml(sync_definition_name: str) -> str:
 	return yaml.safe_dump(payload, sort_keys=False, allow_unicode=False)
 
 
+def preview_import_sync_definition_yaml(yaml_payload: str, overwrite: bool = False) -> dict[str, Any]:
+	try:
+		data = yaml.safe_load(yaml_payload) or {}
+	except yaml.YAMLError as exc:
+		return {
+			"ok": False,
+			"can_import": False,
+			"overwrite": _as_bool(overwrite),
+			"error": f"Invalid YAML payload: {exc}",
+			"missing_payload_parts": [],
+			"documents": {},
+			"summary": {
+				"create": 0,
+				"update": 0,
+				"conflict": 0,
+				"invalid": 1,
+				"missing_payload": 0,
+			},
+		}
+
+	if not isinstance(data, dict):
+		return {
+			"ok": False,
+			"can_import": False,
+			"overwrite": _as_bool(overwrite),
+			"error": "YAML payload must decode to a mapping/object at the top level.",
+			"missing_payload_parts": [],
+			"documents": {},
+			"summary": {
+				"create": 0,
+				"update": 0,
+				"conflict": 0,
+				"invalid": 1,
+				"missing_payload": 0,
+			},
+		}
+
+	overwrite = _as_bool(overwrite)
+	missing_payload_parts: list[str] = []
+	documents: dict[str, dict[str, Any]] = {}
+	summary = {
+		"create": 0,
+		"update": 0,
+		"conflict": 0,
+		"invalid": 0,
+		"missing_payload": 0,
+	}
+
+	for payload_key, doctype in (
+		("sync_partner_type", "Sync Partner Type"),
+		("sync_partner", SYNC_PARTNER),
+		("sync_definition", SYNC_DEFINITION),
+	):
+		payload = data.get(payload_key)
+		if payload is None:
+			missing_payload_parts.append(payload_key)
+			summary["missing_payload"] += 1
+			documents[doctype] = {
+				"payload_key": payload_key,
+				"doctype": doctype,
+				"name": None,
+				"status": "missing_payload",
+				"exists": False,
+				"action": "skip",
+				"hint": f"Payload section `{payload_key}` is missing.",
+			}
+			continue
+		if not isinstance(payload, dict):
+			summary["invalid"] += 1
+			documents[doctype] = {
+				"payload_key": payload_key,
+				"doctype": doctype,
+				"name": None,
+				"status": "invalid",
+				"exists": False,
+				"action": "skip",
+				"hint": f"Payload section `{payload_key}` must be a mapping/object.",
+			}
+			continue
+
+		normalized = _normalize_doc_payload(doctype, payload)
+		name = _first_value_dict(normalized, ["name"])
+		if not name:
+			summary["invalid"] += 1
+			documents[doctype] = {
+				"payload_key": payload_key,
+				"doctype": doctype,
+				"name": None,
+				"status": "invalid",
+				"exists": False,
+				"action": "skip",
+				"hint": f"Payload section `{payload_key}` is missing a document name.",
+			}
+			continue
+
+		exists = bool(frappe.db.exists(doctype, name))
+		if not exists:
+			status = "create"
+			action = "insert"
+			hint = "Document does not exist and would be created."
+		elif overwrite:
+			status = "update"
+			action = "overwrite"
+			hint = "Document exists and would be updated because overwrite is enabled."
+		else:
+			status = "conflict"
+			action = "keep_existing"
+			hint = "Document exists already. Import without overwrite will keep the current document."
+		summary[status] += 1
+		documents[doctype] = {
+			"payload_key": payload_key,
+			"doctype": doctype,
+			"name": str(name),
+			"status": status,
+			"exists": exists,
+			"action": action,
+			"hint": hint,
+		}
+
+	return {
+		"ok": summary["invalid"] == 0,
+		"can_import": summary["invalid"] == 0,
+		"overwrite": overwrite,
+		"missing_payload_parts": missing_payload_parts,
+		"documents": documents,
+		"summary": summary,
+	}
+
+
 def import_sync_definition_yaml(yaml_payload: str, overwrite: bool = False) -> dict[str, Any]:
 	data = yaml.safe_load(yaml_payload) or {}
 	created_or_updated: dict[str, str] = {}
@@ -1219,8 +1348,8 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 	if not key_fields:
 		key_fields = [next(iter(mapping.keys()))]
 
-	frappe_modified_fields = _parse_lines(_first_value(sync_definition_doc, ["frappe_modified_fields"])) or ["modified"]
-	partner_modified_fields = _parse_lines(_first_value(sync_definition_doc, ["partner_modified_fields"])) or ["modified"]
+	frappe_modified_fields = _get_modified_fields(sync_definition_doc, "frappe_modified_field_rows", "frappe_modified_fields") or ["modified"]
+	partner_modified_fields = _get_modified_fields(sync_definition_doc, "partner_modified_field_rows", "partner_modified_fields") or ["modified"]
 
 	return SyncDefinitionConfig(
 		name=sync_definition_doc.name,
@@ -1235,8 +1364,8 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		use_last_sync_date=use_last_sync_date,
 		conflict_policy=conflict_policy,
 		timestamp_buffer_seconds=timestamp_buffer_seconds,
-		table_name=_first_value(sync_definition_doc, ["table_name", "partner_table"]),
-		query=_first_value(sync_definition_doc, ["query", "partner_query"]),
+		table_name=_clean_string(_first_value(sync_definition_doc, ["table_name", "partner_table"])),
+		query=_clean_string(_first_value(sync_definition_doc, ["query", "partner_query"])),
 		key_fields=key_fields,
 		mapping=mapping,
 		value_mapping=value_mapping,
@@ -1283,6 +1412,21 @@ def _get_field_mapping(sync_definition_doc: Any) -> dict[str, str]:
 	if not mapping and isinstance(top_level, dict):
 		mapping = {str(k): str(v) for k, v in top_level.items()}
 	return mapping
+
+
+def _get_modified_fields(sync_definition_doc: Any, table_fieldname: str, legacy_fieldname: str) -> list[str]:
+	rows = _first_value(sync_definition_doc, [table_fieldname], default=[]) or []
+	values: list[str] = []
+	for row in rows:
+		if hasattr(row, "as_dict"):
+			row = row.as_dict()
+		elif not isinstance(row, dict):
+			row = {"field_name": getattr(row, "field_name", None)}
+		fieldname = _first_value_dict(row, ["field_name", "modified_field", "frappe_field"])
+		fieldname = _clean_string(fieldname)
+		if fieldname:
+			values.append(fieldname)
+	return values or _parse_lines(_first_value(sync_definition_doc, [legacy_fieldname]))
 
 
 def _get_value_mapping(sync_definition_doc: Any) -> dict[str, dict[Any, Any]]:
@@ -1718,6 +1862,13 @@ def _parse_lines(raw: Any) -> list[str]:
 	if not isinstance(raw, str):
 		return []
 	return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
+def _clean_string(raw: Any) -> str | None:
+	if raw is None:
+		return None
+	value = str(raw).strip()
+	return value or None
 
 
 def _first_value(doc: Any, candidates: list[str], default: Any = None) -> Any:

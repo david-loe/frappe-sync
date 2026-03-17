@@ -9,6 +9,8 @@ from frappe.model.document import Document
 
 class SyncDefinition(Document):
 	def validate(self):
+		self.ensure_modified_field_rows_from_legacy()
+		self.sync_modified_fields_legacy_storage()
 		self.validate_key_fields()
 		self.validate_source_settings()
 		self.validate_modified_fields()
@@ -21,11 +23,13 @@ class SyncDefinition(Document):
 			frappe.throw(f"Key fields must exist in field mapping: {', '.join(missing)}")
 
 	def validate_source_settings(self):
-		if self.table_name and self.query:
+		table_name = _clean_value(self.table_name)
+		query = _clean_value(self.query)
+		if table_name and query:
 			frappe.throw("Use either Table Name or Query, not both.")
-		if not self.table_name and not self.query:
+		if not table_name and not query:
 			frappe.throw("Either Table Name or Query is required.")
-		if self.delete_missing and self.query:
+		if self.delete_missing and query:
 			frappe.throw("Delete Missing cannot be enabled when Query is used.")
 
 	def validate_modified_fields(self):
@@ -64,10 +68,24 @@ class SyncDefinition(Document):
 		return result
 
 	def get_frappe_modified_fields(self) -> list[str]:
-		return _split_lines(self.frappe_modified_fields)
+		return _extract_modified_fields(getattr(self, "frappe_modified_field_rows", None)) or _split_lines(self.frappe_modified_fields)
 
 	def get_partner_modified_fields(self) -> list[str]:
-		return _split_lines(self.partner_modified_fields)
+		return _extract_modified_fields(getattr(self, "partner_modified_field_rows", None)) or _split_lines(self.partner_modified_fields)
+
+	def ensure_modified_field_rows_from_legacy(self):
+		self._ensure_modified_field_rows("frappe_modified_field_rows", "frappe_modified_fields")
+		self._ensure_modified_field_rows("partner_modified_field_rows", "partner_modified_fields")
+
+	def _ensure_modified_field_rows(self, table_fieldname: str, legacy_fieldname: str):
+		if self.get(table_fieldname):
+			return
+		for fieldname in _split_lines(self.get(legacy_fieldname)):
+			self.append(table_fieldname, {"field_name": fieldname})
+
+	def sync_modified_fields_legacy_storage(self):
+		self.frappe_modified_fields = "\n".join(self.get_frappe_modified_fields())
+		self.partner_modified_fields = "\n".join(self.get_partner_modified_fields())
 
 	def as_export_dict(self) -> dict:
 		return {
@@ -116,6 +134,27 @@ def _split_lines(value: str | None) -> list[str]:
 	if not value:
 		return []
 	return [line.strip() for line in value.splitlines() if line.strip()]
+
+
+def _clean_value(value: str | None) -> str | None:
+	if value is None:
+		return None
+	value = str(value).strip()
+	return value or None
+
+
+def _extract_modified_fields(rows) -> list[str]:
+	result: list[str] = []
+	for row in rows or []:
+		value = None
+		if hasattr(row, "get"):
+			value = row.get("field_name") or row.get("modified_field") or row.get("frappe_field")
+		else:
+			value = getattr(row, "field_name", None) or getattr(row, "modified_field", None) or getattr(row, "frappe_field", None)
+		clean_value = _clean_value(value)
+		if clean_value:
+			result.append(clean_value)
+	return [value for value in result if value]
 
 
 def cstr(value) -> str:

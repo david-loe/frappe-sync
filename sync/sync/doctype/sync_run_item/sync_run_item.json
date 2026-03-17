@@ -5,20 +5,43 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "section_break_monitoring",
+  "monitoring_html",
+  "section_break_links",
   "sync_run",
   "sync_definition",
+  "column_break_links",
   "record_key",
   "document_name",
   "direction",
   "action",
   "status",
+  "section_break_identifiers",
   "source_id",
   "target_id",
+  "section_break_payloads",
   "frappe_payload",
+  "column_break_payloads",
   "partner_payload",
+  "section_break_message",
   "message"
  ],
  "fields": [
+  {
+   "fieldname": "section_break_monitoring",
+   "fieldtype": "Section Break",
+   "label": "Monitoring"
+  },
+  {
+   "fieldname": "monitoring_html",
+   "fieldtype": "HTML",
+   "label": "Operator Summary"
+  },
+  {
+   "fieldname": "section_break_links",
+   "fieldtype": "Section Break",
+   "label": "Run Context"
+  },
   {
    "fieldname": "sync_run",
    "fieldtype": "Link",
@@ -35,6 +58,10 @@
    "read_only": 1
   },
   {
+   "fieldname": "column_break_links",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "record_key",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -44,37 +71,53 @@
   {
    "fieldname": "document_name",
    "fieldtype": "Data",
-   "label": "Document Name"
+   "label": "Document Name",
+   "read_only": 1
   },
   {
    "fieldname": "direction",
    "fieldtype": "Select",
    "label": "Direction",
-   "options": "A->B\nA<-B\nA<->B"
+   "options": "A->B\nA<-B\nA<->B",
+   "read_only": 1
   },
   {
    "fieldname": "action",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Action",
-   "options": "created\nupdated\ndeleted\nskipped\nconflict\nerror"
+   "options": "created\nupdated\ndeleted\nskipped\nconflict\nerror",
+   "read_only": 1
   },
   {
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "success\nskipped\nconflict\nerror"
+   "options": "success\nskipped\nconflict\nerror",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_identifiers",
+   "fieldtype": "Section Break",
+   "label": "Identifiers"
   },
   {
    "fieldname": "source_id",
    "fieldtype": "Data",
-   "label": "Source ID"
+   "label": "Source ID",
+   "read_only": 1
   },
   {
    "fieldname": "target_id",
    "fieldtype": "Data",
-   "label": "Target ID"
+   "label": "Target ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_payloads",
+   "fieldtype": "Section Break",
+   "label": "Payloads"
   },
   {
    "fieldname": "frappe_payload",
@@ -83,15 +126,25 @@
    "read_only": 1
   },
   {
+   "fieldname": "column_break_payloads",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "partner_payload",
    "fieldtype": "Long Text",
    "label": "Partner Payload",
    "read_only": 1
   },
   {
+   "fieldname": "section_break_message",
+   "fieldtype": "Section Break",
+   "label": "Message"
+  },
+  {
    "fieldname": "message",
    "fieldtype": "Small Text",
-   "label": "Message"
+   "label": "Message",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
