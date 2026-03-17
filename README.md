@@ -1,39 +1,51 @@
-### Sync
+### Overview
 
-Sync anything from and or to frappe
+Sync anything from and to Frappe, allowing a single `Sync Definition` to describe how a DocType mirrors data from MSSQL, PostgreSQL or Firebird sources.
+
+### Prerequisites
+
+1. A Frappe bench (>=16.0) with Python 3.14 from the base repo.
+2. The connector drivers listed below installed globally, because bench apps share the bench-level environment.
+
+### Database driver requirements
+- **MSSQL:** install `pyodbc` plus the Microsoft ODBC driver for SQL Server. On Debian/Ubuntu this is typically `sudo apt install msodbcsql18 unixodbc-dev` and `pip install pyodbc`.
+- **PostgreSQL:** use `psycopg[binary]`; the wheel bundles libpq, so no system package is strictly required, but libssl and libc6 must be modern.
+- **Firebird:** install the Firebird client (`sudo apt install firebird3.0-dev` or equivalent) and the Python `firebird-driver` package.
+- **Auxiliary:** `croniter` is required for cron parsing when computing due sync definitions.
+
+Those packages are declared in the app dependencies so `bench setup requirements` pulls them once the app is added to your bench.
 
 ### Installation
 
-You can install this app using the [bench](https://github.com/frappe/bench) CLI:
+You can install the app with bench:
 
 ```bash
 cd $PATH_TO_YOUR_BENCH
 bench get-app $URL_OF_THIS_REPO --branch develop
 bench install-app sync
+bench setup requirements
 ```
 
-### Contributing
+### Configuration snapshot
 
-This app uses `pre-commit` for code formatting and linting. Please [install pre-commit](https://pre-commit.com/#installation) and enable it for this repository:
+Each sync entry links to a `Sync Partner` (host / port / credentials) plus a `Sync Definition` describing the DocType, cron schedule, batch size, direction (`A->B`, `A<-B`, `A<->B`), field mapping, value mapping and granular options such as `create_new` or `delete_missing`.
 
-```bash
-cd apps/sync
-pre-commit install
-```
+The app ships with Desk helpers (Run, Preview, Export YAML, Import YAML, Open Latest Run, Test Connection). Use the YAML export/import as a transport format, but keep secret values out of shared exports.
 
-Pre-commit is configured to use the following tools for checking and formatting your code:
+### Security considerations
 
-- ruff
-- eslint
-- prettier
-- pyupgrade
-### CI
+- Secrets stored on `Sync Partner` (username/password) remain in Password-type fields and are never serialized into exports unless you manually copy them out; YAML exports filter those fields when provided by the UI.
+- The run history stores JSON payloads of Frappe and partner records for debugging. Rotate file permissions for the site where sensitive data is synchronized.
+- Avoid creating `Sync Partner` entries that share credentials via exposed fixtures; prefer environment-specific secret management.
 
-This app can use GitHub Actions for CI. The following workflows are configured:
+### Testing & validation
 
-- CI: Installs this app and runs unit tests on every push to `develop` branch.
-- Linters: Runs [Frappe Semgrep Rules](https://github.com/frappe/semgrep-rules) and [pip-audit](https://pypi.org/project/pip-audit/) on every pull request.
+- `bench --site <site> run-tests --app sync` exercises the service and API contracts added so far.
+- The app relies on bench for asset building and ensures default partner types during migrations (`after_migrate` hook) so local migrations bring the plan up correctly.
 
+### Contributing & CI
+
+The project uses `pre-commit` with the usual suspects (ruff, eslint, prettier, pyupgrade). Running `bench lint` indirectly benefits from the same setup. CI workflows run unit tests and pip-audit on every push into `develop`.
 
 ### License
 

@@ -1,0 +1,195 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "hash",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sync_definition",
+  "sync_partner",
+  "sync_type",
+  "status",
+  "trigger_type",
+  "dry_run",
+  "job_id",
+  "section_break_timing",
+  "started_at",
+  "finished_at",
+  "last_sync_at",
+  "section_break_counters",
+  "processed_count",
+  "success_count",
+  "created_count",
+  "updated_count",
+  "deleted_count",
+  "skipped_count",
+  "conflict_count",
+  "error_count",
+  "section_break_details",
+  "summary",
+  "error_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "sync_definition",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Sync Definition",
+   "options": "Sync Definition",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sync_partner",
+   "fieldtype": "Link",
+   "label": "Sync Partner",
+   "options": "Sync Partner",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sync_type",
+   "fieldtype": "Select",
+   "label": "Sync Type",
+   "options": "A->B\nA<-B\nA<->B",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Queued\nRunning\nSuccess\nError\nPreview",
+   "reqd": 1
+  },
+  {
+   "fieldname": "trigger_type",
+   "fieldtype": "Select",
+   "label": "Trigger Type",
+   "options": "manual\nscheduler\napi",
+   "reqd": 1
+  },
+  {
+   "fieldname": "dry_run",
+   "fieldtype": "Check",
+   "label": "Dry Run",
+   "read_only": 1
+  },
+  {
+   "fieldname": "job_id",
+   "fieldtype": "Data",
+   "label": "Job ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_timing",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At"
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At"
+  },
+  {
+   "fieldname": "last_sync_at",
+   "fieldtype": "Datetime",
+   "label": "Last Sync At"
+  },
+  {
+   "fieldname": "section_break_counters",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "processed_count",
+   "fieldtype": "Int",
+   "label": "Processed Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "success_count",
+   "fieldtype": "Int",
+   "label": "Success Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_count",
+   "fieldtype": "Int",
+   "label": "Created Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "updated_count",
+   "fieldtype": "Int",
+   "label": "Updated Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "deleted_count",
+   "fieldtype": "Int",
+   "label": "Deleted Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "skipped_count",
+   "fieldtype": "Int",
+   "label": "Skipped Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "conflict_count",
+   "fieldtype": "Int",
+   "label": "Conflict Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_count",
+   "fieldtype": "Int",
+   "label": "Error Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_details",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Long Text",
+   "label": "Error Message",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "module": "Sync",
+ "name": "Sync Run",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

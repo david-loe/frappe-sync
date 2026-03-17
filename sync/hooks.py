@@ -26,7 +26,7 @@ app_license = "agpl-3.0"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/sync/css/sync.css"
-# app_include_js = "/assets/sync/js/sync.js"
+app_include_js = "/assets/sync/js/sync_helpers.js"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/sync/css/sync.css"
@@ -43,7 +43,10 @@ app_license = "agpl-3.0"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {
+	"Sync Definition": "public/js/sync_definition.js",
+	"Sync Partner": "public/js/sync_partner.js",
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -87,6 +90,7 @@ app_license = "agpl-3.0"
 
 # before_install = "sync.install.before_install"
 # after_install = "sync.install.after_install"
+after_migrate = "sync.setup.after_migrate"
 
 # Uninstallation
 # ------------
@@ -143,23 +147,13 @@ app_license = "agpl-3.0"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"sync.tasks.all"
-# 	],
-# 	"daily": [
-# 		"sync.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"sync.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"sync.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"sync.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"cron": {
+		"0/5 * * * *": [
+			"sync.api.run_due_sync_definitions",
+		]
+	}
+}
 
 # Testing
 # -------
@@ -238,6 +232,8 @@ app_license = "agpl-3.0"
 # 	"sync.auth.validate"
 # ]
 
+export_python_type_annotations = True
+
 # Automatically update python controller files with type annotations for this app.
 # export_python_type_annotations = True
 
@@ -249,4 +245,3 @@ app_license = "agpl-3.0"
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-

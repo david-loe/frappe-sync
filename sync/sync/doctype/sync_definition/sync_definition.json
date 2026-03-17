@@ -1,0 +1,262 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:title",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+  "field_order": [
+  "title",
+  "enabled",
+  "partner",
+  "sync_type",
+  "doctype_name",
+  "frequency_cron",
+  "next_run_at",
+  "section_break_behavior",
+  "batch_size",
+  "use_last_sync_date",
+  "timestamp_buffer_seconds",
+  "create_new",
+  "delete_missing",
+  "conflict_policy",
+  "section_break_source",
+  "table_name",
+  "query",
+  "section_break_filters",
+  "filter_expression",
+  "column_break_modified_fields",
+  "frappe_modified_fields",
+  "partner_modified_fields",
+  "section_break_mapping",
+  "key_fields",
+  "field_mapping",
+  "value_mapping",
+  "section_break_runtime",
+  "preview_limit",
+  "export_mask_credentials",
+  "last_run",
+  "last_run_status",
+  "last_run_summary"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Title",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "partner",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Partner",
+   "options": "Sync Partner",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sync_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Sync Type",
+   "options": "A->B\nA<->B\nA<-B",
+   "reqd": 1
+  },
+  {
+   "fieldname": "doctype_name",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "DocType",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "frequency_cron",
+   "fieldtype": "Data",
+   "label": "Frequency Cron",
+   "reqd": 1
+  },
+  {
+   "fieldname": "next_run_at",
+   "fieldtype": "Datetime",
+   "label": "Next Run At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_behavior",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "250",
+   "fieldname": "batch_size",
+   "fieldtype": "Int",
+   "label": "Batch Size"
+  },
+  {
+   "default": "1",
+   "fieldname": "use_last_sync_date",
+   "fieldtype": "Check",
+   "label": "Use Last Sync Date"
+  },
+  {
+   "default": "15",
+   "fieldname": "timestamp_buffer_seconds",
+   "fieldtype": "Int",
+   "label": "Timestamp Buffer Seconds"
+  },
+  {
+   "default": "1",
+   "fieldname": "create_new",
+   "fieldtype": "Check",
+   "label": "Create New"
+  },
+  {
+   "fieldname": "delete_missing",
+   "fieldtype": "Check",
+   "label": "Delete Missing"
+  },
+  {
+   "default": "newest_wins",
+   "fieldname": "conflict_policy",
+   "fieldtype": "Select",
+   "label": "Conflict Policy",
+   "options": "newest_wins",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_source",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "table_name",
+   "fieldtype": "Data",
+   "label": "Table Name"
+  },
+  {
+   "fieldname": "query",
+   "fieldtype": "Code",
+   "label": "Query"
+  },
+  {
+   "fieldname": "section_break_filters",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "filter_expression",
+   "fieldtype": "Code",
+   "label": "Filter Expression"
+  },
+  {
+   "fieldname": "column_break_modified_fields",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "One field per line.",
+   "fieldname": "frappe_modified_fields",
+   "fieldtype": "Small Text",
+   "label": "Frappe Modified Fields"
+  },
+  {
+   "description": "One field per line.",
+   "fieldname": "partner_modified_fields",
+   "fieldtype": "Small Text",
+   "label": "Partner Modified Fields"
+  },
+  {
+   "fieldname": "section_break_mapping",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "key_fields",
+   "fieldtype": "Table",
+   "label": "Key Fields",
+   "options": "Sync Key Field",
+   "reqd": 1
+  },
+  {
+   "fieldname": "field_mapping",
+   "fieldtype": "Table",
+   "label": "Field Mapping",
+   "options": "Sync Field Mapping",
+   "reqd": 1
+  },
+  {
+   "fieldname": "value_mapping",
+   "fieldtype": "Table",
+   "label": "Value Mapping",
+   "options": "Sync Value Mapping"
+  },
+  {
+   "fieldname": "section_break_runtime",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "preview_limit",
+   "fieldtype": "Int",
+   "label": "Preview Limit",
+   "default": "50",
+   "description": "Controls how many records the Preview action requests."
+  },
+  {
+   "fieldname": "export_mask_credentials",
+   "fieldtype": "Check",
+   "label": "Mask Credentials in Export",
+   "default": "1",
+   "description": "When enabled, partner secrets are redacted in YAML exports."
+  },
+  {
+   "fieldname": "last_run",
+   "fieldtype": "Link",
+   "label": "Last Run",
+   "options": "Sync Run",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_run_status",
+   "fieldtype": "Select",
+   "label": "Last Run Status",
+   "options": "\nQueued\nRunning\nSuccess\nError\nPreview\nSkipped",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_run_summary",
+   "fieldtype": "Small Text",
+   "label": "Last Run Summary",
+   "read_only": 1
+  }
+],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "module": "Sync",
+ "name": "Sync Definition",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

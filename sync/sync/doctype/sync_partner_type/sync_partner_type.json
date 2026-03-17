@@ -1,0 +1,104 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:partner_type_code",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+  "field_order": [
+  "partner_type_code",
+  "label",
+  "description",
+  "section_break_capabilities",
+  "supports_table",
+  "supports_query",
+  "default_port",
+  "db_api_module",
+  "connection_notes",
+  "secret_fields"
+ ],
+ "fields": [
+  {
+   "fieldname": "partner_type_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Partner Type Code",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "reqd": 1
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "section_break_capabilities",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "supports_table",
+   "fieldtype": "Check",
+   "label": "Supports Table"
+  },
+  {
+   "default": "1",
+   "fieldname": "supports_query",
+   "fieldtype": "Check",
+   "label": "Supports Query"
+  },
+  {
+   "fieldname": "default_port",
+   "fieldtype": "Int",
+   "label": "Default Port"
+  },
+  {
+   "fieldname": "db_api_module",
+   "fieldtype": "Data",
+   "label": "DB API Module"
+  },
+  {
+   "fieldname": "connection_notes",
+   "fieldtype": "Small Text",
+   "label": "Connection Notes",
+   "description": "Put partner-specific connection hints here."
+  },
+  {
+   "fieldname": "secret_fields",
+   "fieldtype": "Small Text",
+   "label": "Secret Fields",
+   "description": "One field name per line that should be treated as secret when exporting."
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "module": "Sync",
+ "name": "Sync Partner Type",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
