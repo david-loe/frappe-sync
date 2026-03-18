@@ -59,7 +59,9 @@ Important exported functions:
 - batch size
 - create/delete/conflict settings
 - modified-field configuration
-- key fields
+- match fields
+- partner source settings (`table_name` plus optional `read_query`)
+- partner identity and create-ID settings
 - structured field mapping
 - value mapping
 
@@ -133,11 +135,29 @@ This schema is used consistently in:
 - `Partner to Frappe` mappings are only used when building Frappe payloads.
 - `Both` applies in both directions.
 
-Key-field mappings must permit the active sync direction. Runtime config validation rejects invalid combinations early.
+Match-field mappings must permit the active sync direction. Runtime config validation rejects invalid combinations early.
 
 ### Value Mapping
 
 Value mappings are keyed by Frappe field. When syncing toward the partner, Frappe values are translated to partner values. When syncing toward Frappe, the mapping is reversed automatically.
+
+### Identity and Pairing
+
+The runtime distinguishes between logical matching and stored cross-system identity.
+
+- `match_fields` define how records are matched when no stored foreign identity is available yet
+- `partner_identity_field` is the technical key on the partner side, for example `NR`
+- `frappe_partner_identity_field` can store that partner identity back on the Frappe document after a create
+- `partner_frappe_identity_field` can optionally store the Frappe `name` on the partner side
+- subsequent runs prefer the stored foreign identity over re-matching purely through `match_fields`
+
+Partner-side create behavior is configurable through:
+
+- `partner_create_id_strategy`
+- `partner_create_id_source`
+- `partner_create_id_scope_where`
+
+For relational partners this supports payload-driven IDs, connector defaults, sequences, and scoped `max_plus_one` allocation.
 
 ## Source Selection and Safety Rules
 
@@ -145,9 +165,11 @@ Value mappings are keyed by Frappe field. When syncing toward the partner, Frapp
 
 In `Sync Definition`:
 
-- either `table_name` or `query` must be set
-- both at the same time are invalid
-- `delete_missing` is not allowed together with `query`
+- `table_name` is required and is always the write target
+- `read_query` is optional and affects reads only
+- if `read_query` is blank, reads default to `table_name`
+- `delete_missing` is not allowed together with `read_query`
+- partner-side ID allocation scopes are configured separately through `partner_create_id_scope_where`
 
 ### Filter Expression
 
