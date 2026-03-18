@@ -90,6 +90,7 @@ jobs:
         run: |
           bench get-app sync $GITHUB_WORKSPACE
           bench setup requirements --dev
+          ./env/bin/pip install coverage
           bench new-site --db-root-password root --admin-password admin test_site
           bench --site test_site install-app sync
           bench build
@@ -100,6 +101,357 @@ jobs:
         working-directory: /home/runner/frappe-bench
         run: |
           bench --site test_site set-config allow_tests true
-          bench --site test_site run-tests --app sync
+          bench --site test_site run-tests --app sync --coverage
         env:
           TYPE: server
+
+      - name: Enforce Coverage Threshold
+        working-directory: /home/runner/frappe-bench
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          total_threshold = 0.85
+          core_threshold = 0.90
+          root = ET.parse("sites/coverage.xml").getroot()
+          line_rate = float(root.attrib["line-rate"])
+          pct = line_rate * 100
+          print(f"Coverage: {pct:.2f}%")
+          if line_rate < total_threshold:
+              raise SystemExit(f"Coverage below threshold: {pct:.2f}% < {total_threshold * 100:.0f}%")
+
+          expected = {
+              "sync/sync/service/runtime.py": core_threshold,
+              "sync/sync/service/connectors.py": core_threshold,
+          }
+          classes = {cls.attrib["filename"]: float(cls.attrib["line-rate"]) for cls in root.findall(".//class")}
+          for filename, threshold in expected.items():
+              actual = classes.get(filename)
+              if actual is None:
+                  raise SystemExit(f"Missing coverage entry for {filename}")
+              print(f"{filename}: {actual * 100:.2f}%")
+              if actual < threshold:
+                  raise SystemExit(
+                      f"Coverage below threshold for {filename}: {actual * 100:.2f}% < {threshold * 100:.0f}%"
+                  )
+          PY
+
+  connector-integration-postgres:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    name: Connector Integration (Postgres)
+
+    services:
+      redis-cache:
+        image: redis:alpine
+        ports:
+          - 13000:6379
+      redis-queue:
+        image: redis:alpine
+        ports:
+          - 11000:6379
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: sync_test
+          POSTGRES_USER: sync_user
+          POSTGRES_PASSWORD: sync_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U sync_user -d sync_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          check-latest: true
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py', '**/setup.cfg') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            ${{ runner.os }}-
+
+      - name: Get yarn cache directory path
+        id: yarn-cache-dir-path-postgres
+        run: 'echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT'
+
+      - uses: actions/cache@v4
+        id: yarn-cache-postgres
+        with:
+          path: ${{ steps.yarn-cache-dir-path-postgres.outputs.dir }}
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Install MariaDB Client
+        run: |
+          sudo apt update
+          sudo apt-get install mariadb-client
+
+      - name: Setup
+        run: |
+          pip install frappe-bench
+          bench init --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
+
+      - name: Install
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench get-app sync $GITHUB_WORKSPACE
+          bench setup requirements --dev
+          ./env/bin/pip install coverage
+          bench new-site --db-root-password root --admin-password admin test_site
+          bench --site test_site install-app sync
+          bench build
+        env:
+          CI: 'Yes'
+
+      - name: Run Connector Integration Tests
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench --site test_site set-config allow_tests true
+          bench --site test_site run-tests --app sync --module sync.tests.test_connectors
+        env:
+          TYPE: server
+          SYNC_TEST_POSTGRES_HOST: 127.0.0.1
+          SYNC_TEST_POSTGRES_PORT: '5432'
+          SYNC_TEST_POSTGRES_DB: sync_test
+          SYNC_TEST_POSTGRES_USER: sync_user
+          SYNC_TEST_POSTGRES_PASSWORD: sync_password
+          SYNC_TEST_POSTGRES_SSLMODE: disable
+          SYNC_TEST_POSTGRES_TABLE: public.sync_connector_test
+
+  connector-integration-firebird:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    name: Connector Integration (Firebird)
+
+    services:
+      redis-cache:
+        image: redis:alpine
+        ports:
+          - 13000:6379
+      redis-queue:
+        image: redis:alpine
+        ports:
+          - 11000:6379
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+      firebird:
+        image: jacobalberty/firebird:v5
+        env:
+          ISC_PASSWORD: masterkey
+          FIREBIRD_DATABASE: /firebird/data/sync_test.fdb
+        ports:
+          - 3050:3050
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          check-latest: true
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py', '**/setup.cfg') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            ${{ runner.os }}-
+
+      - name: Get yarn cache directory path
+        id: yarn-cache-dir-path-firebird
+        run: 'echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT'
+
+      - uses: actions/cache@v4
+        id: yarn-cache-firebird
+        with:
+          path: ${{ steps.yarn-cache-dir-path-firebird.outputs.dir }}
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Install MariaDB Client
+        run: |
+          sudo apt update
+          sudo apt-get install mariadb-client
+
+      - name: Setup
+        run: |
+          pip install frappe-bench
+          bench init --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
+
+      - name: Install
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench get-app sync $GITHUB_WORKSPACE
+          bench setup requirements --dev
+          bench new-site --db-root-password root --admin-password admin test_site
+          bench --site test_site install-app sync
+          bench build
+        env:
+          CI: 'Yes'
+
+      - name: Run Connector Integration Tests
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench --site test_site set-config allow_tests true
+          bench --site test_site run-tests --app sync --module sync.tests.test_connector_additional
+        env:
+          TYPE: server
+          SYNC_TEST_FIREBIRD_HOST: 127.0.0.1
+          SYNC_TEST_FIREBIRD_PORT: '3050'
+          SYNC_TEST_FIREBIRD_DB: /firebird/data/sync_test.fdb
+          SYNC_TEST_FIREBIRD_USER: sysdba
+          SYNC_TEST_FIREBIRD_PASSWORD: masterkey
+          SYNC_TEST_FIREBIRD_CHARSET: UTF8
+          SYNC_TEST_FIREBIRD_TABLE: SYNC_CONNECTOR_TEST
+
+  connector-integration-mssql:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    name: Connector Integration (MSSQL)
+
+    services:
+      redis-cache:
+        image: redis:alpine
+        ports:
+          - 13000:6379
+      redis-queue:
+        image: redis:alpine
+        ports:
+          - 11000:6379
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: 'Y'
+          MSSQL_SA_PASSWORD: StrongP@ssw0rd123
+          MSSQL_PID: Developer
+        ports:
+          - 1433:1433
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          check-latest: true
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py', '**/setup.cfg') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            ${{ runner.os }}-
+
+      - name: Get yarn cache directory path
+        id: yarn-cache-dir-path-mssql
+        run: 'echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT'
+
+      - uses: actions/cache@v4
+        id: yarn-cache-mssql
+        with:
+          path: ${{ steps.yarn-cache-dir-path-mssql.outputs.dir }}
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Install MariaDB Client And MSSQL ODBC Driver
+        run: |
+          sudo apt update
+          sudo apt-get install -y mariadb-client curl gnupg unixodbc-dev
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          echo "deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/$(. /etc/os-release && echo ${VERSION_ID})/prod $(. /etc/os-release && echo ${VERSION_CODENAME}) main" | sudo tee /etc/apt/sources.list.d/microsoft-prod.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+
+      - name: Setup
+        run: |
+          pip install frappe-bench
+          bench init --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
+
+      - name: Install
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench get-app sync $GITHUB_WORKSPACE
+          bench setup requirements --dev
+          bench new-site --db-root-password root --admin-password admin test_site
+          bench --site test_site install-app sync
+          bench build
+        env:
+          CI: 'Yes'
+
+      - name: Run Connector Integration Tests
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench --site test_site set-config allow_tests true
+          bench --site test_site run-tests --app sync --module sync.tests.test_connector_additional
+        env:
+          TYPE: server
+          SYNC_TEST_MSSQL_SERVER: 127.0.0.1
+          SYNC_TEST_MSSQL_PORT: '1433'
+          SYNC_TEST_MSSQL_DB: master
+          SYNC_TEST_MSSQL_USER: sa
+          SYNC_TEST_MSSQL_PASSWORD: StrongP@ssw0rd123
+          SYNC_TEST_MSSQL_DRIVER: ODBC Driver 18 for SQL Server
+          SYNC_TEST_MSSQL_ENCRYPT: '0'
+          SYNC_TEST_MSSQL_TRUST_SERVER_CERTIFICATE: '1'
+          SYNC_TEST_MSSQL_TABLE: dbo.sync_connector_test

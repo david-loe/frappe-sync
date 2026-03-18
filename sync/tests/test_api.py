@@ -55,6 +55,9 @@ class TestSyncApi(unittest.TestCase):
 		self.assertEqual(response["fields"][0]["label"], "Name")
 		self.assertEqual(response["fields"][1]["label"], "Modified")
 
+	def test_get_sync_definition_field_choices_returns_empty_payload_for_blank_doctype(self):
+		self.assertEqual(self.api.get_sync_definition_field_choices("   "), {"doctype": "", "fields": []})
+
 	def test_get_sync_partner_table_columns_returns_connector_columns(self):
 		partner = SimpleNamespace(doctype="Sync Partner", name="PARTNER-1", get=getattr)
 		connector = SimpleNamespace(describe_source_columns=lambda **kwargs: ["id", "status", "updated_at"])
@@ -68,6 +71,20 @@ class TestSyncApi(unittest.TestCase):
 		self.assertEqual(response["sync_partner"], partner.name)
 		self.assertEqual(response["table_name"], "dbo.SyncTable")
 		self.assertEqual(response["columns"], ["id", "status", "updated_at"])
+
+	def test_get_sync_partner_table_columns_raises_validation_error_on_connector_error(self):
+		partner = SimpleNamespace(doctype="Sync Partner", name="PARTNER-1", get=getattr)
+		connector = SimpleNamespace(describe_source_columns=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("unsafe source")))
+
+		with (
+			patch.object(self.api.frappe, "get_doc", return_value=partner),
+			patch.object(self.api, "get_connector_for_partner", return_value=connector),
+			patch.object(self.api.frappe, "throw", side_effect=frappe.ValidationError("unsafe source")) as mock_throw,
+		):
+			with self.assertRaises(frappe.ValidationError):
+				self.api.get_sync_partner_table_columns(partner.name, query=" select * from x ")
+
+		mock_throw.assert_called_once()
 
 	def test_yaml_export_import_roundtrip(self):
 		sample_definition = {
@@ -126,6 +143,16 @@ class TestSyncApi(unittest.TestCase):
 			self.assertEqual(inserted[0]._payload["doctype"], "Sync Definition")
 			self.assertEqual(inserted[0]._payload["name"], sample_definition["name"])
 
+	def test_import_sync_definition_yaml_returns_definition_document_name_when_present(self):
+		with patch.object(
+			self.api,
+			"service_import_sync_definition_yaml",
+			return_value={"documents": {"Sync Definition": "SYNC-1", "Sync Partner": "PARTNER-1"}},
+		):
+			result = self.api.import_sync_definition_yaml("payload", overwrite=True)
+
+		self.assertEqual(result, "SYNC-1")
+
 	def test_partner_connection_response_shape(self):
 		partner = SimpleNamespace(doctype="Sync Partner", name="PARTNER-1", partner_type="mssql", get=getattr)
 		result = {"status": "ok", "details": "reachable"}
@@ -144,6 +171,20 @@ class TestSyncApi(unittest.TestCase):
 		self.assertIn("details", response)
 		self.assertEqual(response["status"], "ok")
 
+	def test_test_sync_partner_falls_back_to_ping_when_test_connection_missing(self):
+		partner = SimpleNamespace(doctype="Sync Partner", name="PARTNER-1", partner_type="mssql", get=getattr)
+		connector = SimpleNamespace(ping=lambda: SimpleNamespace(ok=False, message="down", details={"host": "db"}))
+
+		with (
+			patch.object(self.api.frappe, "get_doc", return_value=partner),
+			patch.object(self.api, "get_connector_for_partner", return_value=connector),
+		):
+			response = self.api.test_sync_partner(partner.name)
+
+		self.assertEqual(response["status"], "error")
+		self.assertFalse(response["ok"])
+		self.assertEqual(response["message"], "down")
+
 	def test_preview_returns_summary(self):
 		preview_data = {"actions": [{"direction": "A->B", "result": "ok"}]}
 		definition = SimpleNamespace(doctype="Sync Definition", name="SYNC-1")
@@ -155,6 +196,13 @@ class TestSyncApi(unittest.TestCase):
 			out = self.api.preview_sync_definition(definition.name)
 
 		self.assertEqual(out, preview_data)
+
+	def test_preview_sync_coerces_limit_before_delegation(self):
+		with patch.object(self.api, "preview_sync_definition", return_value={"ok": True}) as mock_preview:
+			result = self.api.preview_sync("SYNC-1", limit="7")
+
+		self.assertEqual(result, {"ok": True})
+		mock_preview.assert_called_once_with("SYNC-1", limit=7)
 
 	def test_preview_import_yaml_reports_conflicts_and_missing_sections(self):
 		payload = {
@@ -235,3 +283,41 @@ class ApiContractTests(unittest.TestCase):
 
 		self.assertEqual(response["status"], "queued")
 		mock_enqueue.assert_called_once_with("SYNC-1", trigger="manual", queue=True, dry_run=False)
+
+	def test_run_due_syncs_coerces_limit_and_queue(self):
+		try:
+			import sync.api as api  # noqa: PLC0415
+		except Exception as exc:
+			raise unittest.SkipTest(str(exc))
+
+		with patch("sync.api.service_run_due_sync_definitions", return_value=[{"status": "queued"}]) as mock_run_due:
+			response = api.run_due_syncs(limit="3", queue="0")
+
+		self.assertEqual(response, [{"status": "queued"}])
+		mock_run_due.assert_called_once_with(limit=3, queue=False)
+
+	def test_enqueue_sync_coerces_boolean_flags(self):
+		try:
+			import sync.api as api  # noqa: PLC0415
+		except Exception as exc:
+			raise unittest.SkipTest(str(exc))
+
+		with patch("sync.api.service_enqueue_sync_definition", return_value={"status": "queued"}) as mock_enqueue:
+			response = api.enqueue_sync("SYNC-1", queue="yes", dry_run="1")
+
+		self.assertEqual(response["status"], "queued")
+		mock_enqueue.assert_called_once_with("SYNC-1", trigger="manual", queue=True, dry_run=True)
+
+	def test_import_sync_yaml_from_json_uses_embedded_payload_and_default_overwrite(self):
+		try:
+			import sync.api as api  # noqa: PLC0415
+		except Exception as exc:
+			raise unittest.SkipTest(str(exc))
+
+		payload = {"yaml_payload": "sync_definition:\n  name: SYNC-1\n"}
+
+		with patch("sync.api.import_sync_definition_yaml", return_value={"name": "SYNC-1"}) as mock_import:
+			response = api.import_sync_yaml_from_json(payload, overwrite=True)
+
+		self.assertEqual(response, {"name": "SYNC-1"})
+		mock_import.assert_called_once_with(yaml_payload=payload["yaml_payload"], overwrite=True)
