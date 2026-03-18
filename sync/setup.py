@@ -26,7 +26,7 @@ DEFAULT_PARTNER_TYPES = (
 		"partner_type_code": "firebird",
 		"label": "Firebird",
 		"default_port": 3050,
-		"db_api_module": "firebird-driver",
+		"db_api_module": "fdb",
 		"supports_table": 1,
 		"supports_query": 1,
 		"description": "Firebird SQL connector.",

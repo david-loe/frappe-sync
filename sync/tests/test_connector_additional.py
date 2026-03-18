@@ -151,7 +151,7 @@ class TestConnectorAdditional(unittest.TestCase):
 
 	def test_firebird_connect_builds_expected_kwargs(self):
 		calls = []
-		driver_module = SimpleNamespace(connect=lambda **kwargs: calls.append(kwargs) or kwargs)
+		driver_module = SimpleNamespace(__name__="fdb", connect=lambda **kwargs: calls.append(kwargs) or kwargs)
 		connector = FirebirdConnector(
 			DummyPartner(
 				"firebird",

@@ -190,14 +190,14 @@ class TestConnectorPing(unittest.TestCase):
 		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database="sync", user="tester"))
 
 		with (
-			patch.object(connector, "_load_driver_module", return_value=SimpleNamespace(__name__="firebird.driver")),
+			patch.object(connector, "_load_driver_module", return_value=SimpleNamespace(__name__="fdb")),
 			patch.object(connector, "_connect", side_effect=RuntimeError("boom")),
 		):
 			ping = connector.ping()
 
 		self.assertFalse(ping.ok)
 		self.assertIn("connection test failed", ping.message)
-		self.assertEqual(ping.details["driver"], "firebird.driver")
+		self.assertEqual(ping.details["driver"], "fdb")
 
 
 class TestRelationalConnectorSql(unittest.TestCase):
@@ -608,21 +608,24 @@ class TestConnectorFactoryAndConnectMethods(unittest.TestCase):
 			)
 		)
 		calls = []
-		driver = SimpleNamespace(connect=lambda **kwargs: calls.append(kwargs) or kwargs)
+		driver = SimpleNamespace(__name__="fdb", connect=lambda **kwargs: calls.append(kwargs) or kwargs)
 
 		with patch.object(connector, "_load_driver_module", return_value=driver):
 			result = connector._connect()
 
 		self.assertEqual(result["host"], "db.internal")
 		self.assertEqual(result["port"], 3051)
+		self.assertEqual(result["database"], "/var/lib/firebird/data/sync.fdb")
+		self.assertEqual(result["user"], "SYSDBA")
+		self.assertEqual(result["password"], "masterkey")
 		self.assertEqual(result["charset"], "UTF8")
-		self.assertEqual(calls[0]["database"], "/var/lib/firebird/data/sync.fdb")
+		self.assertEqual(calls[0], result)
 
 	def test_connect_methods_raise_when_drivers_missing(self):
 		for connector, expected in (
 			(MssqlConnector(DummyPartner("mssql", server="db", database="sync")), "pyodbc is not installed"),
 			(PostgresConnector(DummyPartner("postgres", host="db", database="sync", user="tester")), "Neither psycopg nor psycopg2 is installed"),
-			(FirebirdConnector(DummyPartner("firebird", host="db", database="sync", user="tester")), "Neither firebird-driver nor fdb is installed"),
+			(FirebirdConnector(DummyPartner("firebird", host="db", database="sync", user="tester")), "fdb is not installed"),
 		):
 			with (
 				self.subTest(expected=expected),

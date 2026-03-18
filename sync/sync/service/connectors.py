@@ -384,10 +384,31 @@ class RelationalConnector(BasePartnerConnector):
 		return [str(column) for column in columns if column]
 
 	def _load_driver_module(self):
-		for module_name in self.driver_candidates:
+		for module_name in self._get_driver_candidates():
 			with suppress(Exception):
 				return importlib.import_module(module_name)
 		return None
+
+	def _get_driver_candidates(self) -> tuple[str, ...]:
+		candidates: list[str] = []
+		preferred_driver = self.config.get("driver_module") or self.config.get("db_api_module")
+		if not preferred_driver:
+			with suppress(Exception):
+				partner_type_name = self.partner_doc.get("partner_type") or self.partner_doc.get("sync_partner_type")
+				if partner_type_name and frappe.db.exists("Sync Partner Type", partner_type_name):
+					partner_type_doc = frappe.get_doc("Sync Partner Type", partner_type_name)
+					preferred_driver = partner_type_doc.get("db_api_module")
+		if preferred_driver:
+			candidates.append(str(preferred_driver).strip())
+		candidates.extend(self.driver_candidates)
+		seen: set[str] = set()
+		ordered: list[str] = []
+		for module_name in candidates:
+			if not module_name or module_name in seen:
+				continue
+			seen.add(module_name)
+			ordered.append(module_name)
+		return tuple(ordered)
 
 	@contextmanager
 	def _connection(self):
@@ -550,14 +571,14 @@ class FirebirdConnector(RelationalConnector):
 	partner_type = "firebird"
 	dialect = "firebird"
 	required_config = ("host", "database", "user")
-	driver_candidates = ("firebird.driver", "fdb")
+	driver_candidates = ("fdb",)
 	paramstyle = "qmark"
 	healthcheck_sql = "SELECT 1 FROM RDB$DATABASE"
 
 	def _connect(self):
 		driver_module = self._load_driver_module()
 		if not driver_module:
-			raise RuntimeError("Neither firebird-driver nor fdb is installed")
+			raise RuntimeError("fdb is not installed")
 
 		connect_kwargs = {
 			"host": self.config.get("host"),
