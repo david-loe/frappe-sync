@@ -38,6 +38,10 @@ def after_migrate():
 	ensure_default_partner_types()
 
 
+def before_tests():
+	ensure_default_partner_types()
+
+
 def ensure_default_partner_types():
 	for payload in DEFAULT_PARTNER_TYPES:
 		if frappe.db.exists("Sync Partner Type", payload["partner_type_code"]):

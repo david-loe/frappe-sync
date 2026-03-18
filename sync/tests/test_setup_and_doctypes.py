@@ -137,6 +137,12 @@ class TestSetupModule(unittest.TestCase):
 
 		mock_ensure.assert_called_once_with()
 
+	def test_before_tests_delegates_to_default_partner_type_setup(self):
+		with patch("sync.setup.ensure_default_partner_types") as mock_ensure:
+			sync_setup.before_tests()
+
+		mock_ensure.assert_called_once_with()
+
 	def test_ensure_default_partner_types_updates_existing_and_creates_missing(self):
 		existing_doc = MutableDoc()
 		new_doc = MutableDoc()

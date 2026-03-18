@@ -163,7 +163,7 @@ scheduler_events = {
 # Testing
 # -------
 
-# before_tests = "sync.install.before_tests"
+before_tests = "sync.setup.before_tests"
 
 # Extend DocType Class
 # ------------------------------
