@@ -4,7 +4,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -59,6 +59,18 @@ class DummyCroniter:
 		return SimpleNamespace(get_prev=lambda *_args: self.previous, get_next=lambda *_args: self.next_value)
 
 
+def _db_stub(**overrides):
+	values = {"exists": lambda *args, **kwargs: False, "commit": lambda: None}
+	values.update(overrides)
+	return SimpleNamespace(**values)
+
+
+def _runtime_frappe_stub(**overrides):
+	values = {"db": _db_stub()}
+	values.update(overrides)
+	return SimpleNamespace(**values)
+
+
 class TestRuntimeManagement(unittest.TestCase):
 	def test_sync_stats_registers_actions_and_statuses(self):
 		stats = runtime.SyncStats()
@@ -75,8 +87,8 @@ class TestRuntimeManagement(unittest.TestCase):
 				"created_count": 1,
 				"updated_count": 1,
 				"deleted_count": 0,
-				"skipped_count": 2,
-				"conflict_count": 2,
+				"skipped_count": 1,
+				"conflict_count": 1,
 				"error_count": 1,
 			},
 		)
@@ -112,16 +124,19 @@ class TestRuntimeManagement(unittest.TestCase):
 
 	def test_list_due_sync_definitions_uses_next_run_and_cron(self):
 		now = datetime(2026, 3, 17, 12, 0, 0)
-		ready = SimpleNamespace(name="READY", get=lambda key, default=None: {"enabled": 1, "next_run_at": now}.get(key, default))
-		cron_due = SimpleNamespace(
-			name="CRON",
-			get=lambda key, default=None: {"enabled": 1, "frequency_cron": "*/5 * * * *"}.get(key, default),
-		)
-		disabled = SimpleNamespace(name="OFF", get=lambda key, default=None: {"enabled": 0}.get(key, default))
+		meta = DummyMeta([_field("enabled"), _field("next_run_at"), _field("frequency_cron")])
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_all", return_value=["READY", "CRON", "OFF"]),
-			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=[ready, cron_due, disabled]),
+			patch("sync.sync.service.runtime.frappe.get_meta", return_value=meta),
+			patch(
+				"sync.sync.service.runtime.frappe.get_all",
+				return_value=[
+					{"name": "READY", "enabled": 1, "next_run_at": now},
+					{"name": "CRON", "enabled": 1, "frequency_cron": "*/5 * * * *"},
+					{"name": "OFF", "enabled": 0},
+				],
+			),
+			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=AssertionError("get_doc should not be used")),
 			patch("sync.sync.service.runtime._is_due_by_cron", side_effect=[True]),
 		):
 			self.assertEqual(runtime.list_due_sync_definitions(now=now), ["READY", "CRON"])
@@ -208,6 +223,7 @@ class TestRuntimeManagement(unittest.TestCase):
 
 		self.assertEqual(result["frappe_records_sample_count"], 1)
 		self.assertEqual(result["partner_ping"]["ok"], True)
+		self.assertEqual(result["mapping"], {"subject": {"partner_field": "title", "direction": "Both"}})
 		self.assertEqual(result["value_mapping_fields"], ["status"])
 		self.assertEqual(mock_get_all.call_args.kwargs["limit_page_length"], 3)
 
@@ -241,9 +257,14 @@ class TestRuntimeManagement(unittest.TestCase):
 			raise AssertionError((doctype, name))
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=fake_get_doc),
+			patch(
+				"sync.sync.service.runtime.frappe",
+				new=_runtime_frappe_stub(
+					get_doc=fake_get_doc,
+					db=_db_stub(exists=lambda *args, **kwargs: True),
+				),
+			),
 			patch("sync.sync.service.runtime._sanitize_document_dict", side_effect=lambda data, mask_credentials=False: {**data, "masked": mask_credentials}),
-			patch("sync.sync.service.runtime.frappe.db.exists", return_value=True),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0, 0)),
 		):
 			payload = yaml.safe_load(runtime.export_sync_definition_yaml("SYNC-1"))
@@ -339,24 +360,45 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertTrue(coerced.delete_missing)
 		self.assertFalse(coerced.use_last_sync_date)
 		self.assertEqual(coerced.timestamp_buffer_seconds, 3)
+		self.assertEqual(coerced.mapping, {"name": {"partner_field": "id", "direction": "Both"}})
 
 	def test_mapping_helpers_support_top_level_string_payloads_and_value_reversal(self):
 		doc = SimpleNamespace(
 			doctype="Sync Definition",
 			get=lambda key, default=None: {
 				"key_fields": "name, external_id",
-				"field_mapping": '{"name": "id", "status": "state"}',
+				"field_mapping": '{"name": {"partner_field": "id", "direction": "Both"}, "status": {"partner_field": "state", "direction": "Partner to Frappe"}, "subject": {"partner_field": "title", "direction": "Frappe to Partner"}}',
 				"value_mapping": '{"status": {"Open": "1"}}',
 			}.get(key, default),
 		)
 
 		with patch("sync.sync.service.runtime._get_child_rows_by_options", return_value=[]):
+			mapping = runtime._get_field_mapping(doc)
 			self.assertEqual(runtime._get_key_fields(doc), ["name", "external_id"])
-			self.assertEqual(runtime._get_field_mapping(doc), {"name": "id", "status": "state"})
+			self.assertEqual(
+				mapping,
+				{
+					"name": {"partner_field": "id", "direction": "Both"},
+					"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+					"subject": {"partner_field": "title", "direction": "Frappe to Partner"},
+				},
+			)
 			self.assertEqual(runtime._get_value_mapping(doc), {"status": {"Open": "1"}})
 		self.assertEqual(
-			runtime._map_partner_to_frappe({"id": "TASK-1", "state": "1"}, {"name": "id", "status": "state"}, {"status": {"Open": "1"}}),
+			runtime._map_partner_to_frappe(
+				{"id": "TASK-1", "state": "1", "title": "Ignored"},
+				mapping,
+				{"status": {"Open": "1"}},
+			),
 			{"name": "TASK-1", "status": "Open"},
+		)
+		self.assertEqual(
+			runtime._map_frappe_to_partner(
+				{"name": "TASK-1", "status": "Ignored", "subject": "Hello"},
+				mapping,
+				{"status": {"Open": "1"}},
+			),
+			{"id": "TASK-1", "title": "Hello"},
 		)
 
 	def test_helper_functions_cover_string_lookup_and_lock_behaviour(self):
@@ -467,6 +509,50 @@ class TestRuntimeManagement(unittest.TestCase):
 
 		self.assertEqual([entry["action"] for entry in logged], ["skipped", "error", "skipped", "error"])
 
+	def test_run_engine_aborts_before_delete_missing_when_partner_load_is_partial(self):
+		config = runtime.SyncDefinitionConfig(
+			name="SYNC-P2F",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="A<-B",
+			cron=None,
+			filters=None,
+			batch_size=10,
+			create_new=True,
+			delete_missing=True,
+			use_last_sync_date=False,
+			conflict_policy="newest_wins",
+			timestamp_buffer_seconds=0,
+			table_name="dbo.SyncTable",
+			query=None,
+			key_fields=["name"],
+			mapping={"name": "id"},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+
+		def fetch_records(*, source, query, batch_size, cursor, key_fields):
+			if cursor is None:
+				return {"records": [{"id": "TASK-1"}], "next_cursor": "page-2"}
+			raise RuntimeError("fetch failed")
+
+		connector = SimpleNamespace(
+			ping=lambda: SimpleNamespace(ok=True, message="ok", details={}),
+			fetch_records=fetch_records,
+		)
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(name="PARTNER-1")),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=connector),
+			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-2"}]])),
+			patch("sync.sync.service.runtime._sync_partner_to_frappe") as mock_sync,
+		):
+			with self.assertRaisesRegex(RuntimeError, "Partner source load failed at cursor 'page-2' after 1 records."):
+				runtime._run_engine(SimpleNamespace(name="SYNC-P2F"), SimpleNamespace(name="RUN-1"), config=config)
+
+		mock_sync.assert_not_called()
+
 	def test_bidirectional_skips_when_no_differences_and_prefers_partner_when_only_partner_changed(self):
 		config = SimpleNamespace(
 			name="SYNC-BI",
@@ -509,8 +595,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		now = datetime(2026, 3, 17, 12, 0, 0)
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_meta", side_effect=[meta, meta, meta]),
-			patch("sync.sync.service.runtime.frappe.db.commit"),
+			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_meta=lambda *_args, **_kwargs: meta)),
 			patch("sync.sync.service.runtime.now_datetime", return_value=now),
 		):
 			runtime._update_partner_connection_status(partner_doc, status="error", details="boom")
@@ -579,9 +664,13 @@ class TestRuntimeManagement(unittest.TestCase):
 		change_doc = DummyDoc(name="CHG-1", doctype="Sync Run Item Change")
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_meta", side_effect=[run_meta, item_meta, change_meta]),
-			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=[run_doc, run_item_doc, change_doc]),
-			patch("sync.sync.service.runtime.frappe.db.commit"),
+			patch(
+				"sync.sync.service.runtime.frappe",
+				new=_runtime_frappe_stub(
+					get_meta=Mock(side_effect=[run_meta, item_meta, change_meta]),
+					get_doc=Mock(side_effect=[run_doc, run_item_doc, change_doc]),
+				),
+			),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0, 0)),
 		):
 			created_run = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "A->B", "sync_partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="api", dry_run=True)
@@ -615,8 +704,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		next_run = datetime(2026, 3, 17, 12, 15, 0)
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_meta", return_value=meta),
-			patch("sync.sync.service.runtime.frappe.db.commit"),
+			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_meta=lambda *_args, **_kwargs: meta)),
 		):
 			runtime._update_doc_fields(SimpleNamespace(doctype="Sync Run", db_set=doc.db_set), {"status": "Success", "missing": "x"})
 			runtime._update_definition_runtime(doc, last_run="RUN-1", last_sync_at=next_run, summary="ok")
@@ -629,8 +717,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		with (
 			patch("sync.sync.service.runtime.croniter", DummyCroniter(next_value=next_run)),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0, 0)),
-			patch("sync.sync.service.runtime.frappe.get_meta", return_value=meta),
-			patch("sync.sync.service.runtime.frappe.db.commit"),
+			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_meta=lambda *_args, **_kwargs: meta)),
 		):
 			runtime._set_next_run_at(doc, "*/15 * * * *")
 

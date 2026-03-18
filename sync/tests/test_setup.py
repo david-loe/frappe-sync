@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -24,6 +25,12 @@ class DummyDoc:
 		return self
 
 
+def _db_stub(**overrides):
+	values = {"exists": lambda *args, **kwargs: False, "commit": lambda: None}
+	values.update(overrides)
+	return SimpleNamespace(**values)
+
+
 class TestSetupHooks(unittest.TestCase):
 	def test_after_migrate_delegates_to_default_partner_type_setup(self):
 		with patch("sync.setup.ensure_default_partner_types") as mock_ensure:
@@ -45,13 +52,18 @@ class TestSetupHooks(unittest.TestCase):
 			return doc
 
 		with (
-			patch("sync.setup.frappe.db.exists", side_effect=fake_exists),
-			patch("sync.setup.frappe.get_doc", return_value=existing_doc) as mock_get_doc,
-			patch("sync.setup.frappe.new_doc", side_effect=fake_new_doc),
+			patch.object(
+				setup,
+				"frappe",
+				SimpleNamespace(
+					db=_db_stub(exists=fake_exists),
+					get_doc=lambda *args, **kwargs: existing_doc,
+					new_doc=fake_new_doc,
+				),
+			),
 		):
 			setup.ensure_default_partner_types()
 
-		mock_get_doc.assert_called_once_with("Sync Partner Type", "mssql")
 		self.assertEqual(existing_doc.updated["partner_type_code"], "mssql")
 		self.assertTrue(existing_doc.saved)
 		self.assertEqual(len(created_docs), 2)

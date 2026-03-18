@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -12,6 +13,7 @@ class DummyDoc:
 	def __init__(self, payload):
 		self._payload = dict(payload)
 		self.name = self._payload.get("name")
+		self.doctype = self._payload.get("doctype")
 
 	def as_dict(self):
 		return dict(self._payload)
@@ -28,8 +30,11 @@ class DummyDoc:
 	def get(self, key, default=None):
 		return self._payload.get(key, default)
 
+	def check_permission(self, permtype="read"):
+		return None
 
-class TestSyncApi(unittest.TestCase):
+
+class ApiTestCase(unittest.TestCase):
 	def setUp(self):
 		try:
 			import sync.api as api  # noqa: PLC0415
@@ -37,6 +42,15 @@ class TestSyncApi(unittest.TestCase):
 			raise unittest.SkipTest(str(exc))
 		self.api = api
 		self.original_get_doc = self.api.frappe.get_doc
+		self.only_for_patcher = patch.object(self.api.frappe, "only_for", return_value=None)
+		self.mock_only_for = self.only_for_patcher.start()
+		self.addCleanup(self.only_for_patcher.stop)
+		self.has_permission_patcher = patch.object(self.api.frappe, "has_permission", return_value=True)
+		self.mock_has_permission = self.has_permission_patcher.start()
+		self.addCleanup(self.has_permission_patcher.stop)
+
+
+class TestSyncApi(ApiTestCase):
 
 	def test_doctype_field_choices_filters_non_selectable_fields(self):
 		meta = SimpleNamespace(
@@ -59,7 +73,7 @@ class TestSyncApi(unittest.TestCase):
 		self.assertEqual(self.api.get_sync_definition_field_choices("   "), {"doctype": "", "fields": []})
 
 	def test_get_sync_partner_table_columns_returns_connector_columns(self):
-		partner = SimpleNamespace(doctype="Sync Partner", name="PARTNER-1", get=getattr)
+		partner = _doc_stub("Sync Partner", "PARTNER-1")
 		connector = SimpleNamespace(describe_source_columns=lambda **kwargs: ["id", "status", "updated_at"])
 
 		with (
@@ -73,7 +87,7 @@ class TestSyncApi(unittest.TestCase):
 		self.assertEqual(response["columns"], ["id", "status", "updated_at"])
 
 	def test_get_sync_partner_table_columns_raises_validation_error_on_connector_error(self):
-		partner = SimpleNamespace(doctype="Sync Partner", name="PARTNER-1", get=getattr)
+		partner = _doc_stub("Sync Partner", "PARTNER-1")
 		connector = SimpleNamespace(describe_source_columns=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("unsafe source")))
 
 		with (
@@ -107,7 +121,11 @@ class TestSyncApi(unittest.TestCase):
 				return self.original_get_doc(doctype)
 			return self.original_get_doc(doctype, name)
 
-		with patch.object(self.api.frappe, "get_doc", side_effect=fake_get_doc):
+		with (
+			patch.object(self.api.frappe, "get_doc", side_effect=fake_get_doc),
+			patch.object(self.api.frappe, "get_meta", side_effect=_fake_meta),
+			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 18, 12, 0, 0)),
+		):
 			exported_yaml = self.api.export_sync_definition_yaml(sample_definition["name"])
 
 		self.assertIsInstance(exported_yaml, str)
@@ -129,32 +147,70 @@ class TestSyncApi(unittest.TestCase):
 			inserted.append(new_doc)
 			return new_doc
 
+		runtime_frappe = SimpleNamespace(
+			db=SimpleNamespace(exists=lambda *args, **kwargs: False, commit=lambda: None),
+			get_doc=raise_missing,
+			new_doc=fake_new_doc,
+			get_meta=_fake_meta,
+		)
+
 		with (
-			patch.object(self.api.frappe, "get_doc", side_effect=raise_missing),
-			patch.object(self.api.frappe, "new_doc", side_effect=fake_new_doc),
-			patch.object(self.api.frappe.db, "exists", return_value=False),
-			patch.object(self.api.frappe, "get_meta", side_effect=_fake_meta),
-			patch.object(self.api.frappe.db, "commit"),
+			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value={"documents": {}}),
+			patch("sync.sync.service.runtime.frappe", new=runtime_frappe),
 		):
 			result = self.api.import_sync_definition_yaml(exported_yaml, overwrite=False)
 
-		self.assertEqual(result, sample_definition["name"])
+		self.assertEqual(
+			result,
+			{
+				"ok": True,
+				"overwrite": False,
+				"sync_definition": sample_definition["name"],
+				"sync_partner": None,
+				"sync_partner_type": None,
+				"documents": {"Sync Definition": sample_definition["name"]},
+			},
+		)
 		if inserted:
 			self.assertEqual(inserted[0]._payload["doctype"], "Sync Definition")
 			self.assertEqual(inserted[0]._payload["name"], sample_definition["name"])
 
-	def test_import_sync_definition_yaml_returns_definition_document_name_when_present(self):
-		with patch.object(
-			self.api,
-			"service_import_sync_definition_yaml",
-			return_value={"documents": {"Sync Definition": "SYNC-1", "Sync Partner": "PARTNER-1"}},
+	def test_import_sync_definition_yaml_returns_normalized_response_schema(self):
+		with (
+			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value={"documents": {}}),
+			patch.object(
+				self.api,
+				"service_import_sync_definition_yaml",
+				return_value={
+					"ok": True,
+					"documents": {
+						"Sync Definition": "SYNC-1",
+						"Sync Partner": "PARTNER-1",
+						"Sync Partner Type": "MSSQL",
+					},
+				},
+			),
 		):
 			result = self.api.import_sync_definition_yaml("payload", overwrite=True)
 
-		self.assertEqual(result, "SYNC-1")
+		self.assertEqual(
+			result,
+			{
+				"ok": True,
+				"overwrite": True,
+				"sync_definition": "SYNC-1",
+				"sync_partner": "PARTNER-1",
+				"sync_partner_type": "MSSQL",
+				"documents": {
+					"Sync Definition": "SYNC-1",
+					"Sync Partner": "PARTNER-1",
+					"Sync Partner Type": "MSSQL",
+				},
+			},
+		)
 
 	def test_partner_connection_response_shape(self):
-		partner = SimpleNamespace(doctype="Sync Partner", name="PARTNER-1", partner_type="mssql", get=getattr)
+		partner = _doc_stub("Sync Partner", "PARTNER-1", partner_type="mssql")
 		result = {"status": "ok", "details": "reachable"}
 
 		with (
@@ -172,7 +228,7 @@ class TestSyncApi(unittest.TestCase):
 		self.assertEqual(response["status"], "ok")
 
 	def test_test_sync_partner_falls_back_to_ping_when_test_connection_missing(self):
-		partner = SimpleNamespace(doctype="Sync Partner", name="PARTNER-1", partner_type="mssql", get=getattr)
+		partner = _doc_stub("Sync Partner", "PARTNER-1", partner_type="mssql")
 		connector = SimpleNamespace(ping=lambda: SimpleNamespace(ok=False, message="down", details={"host": "db"}))
 
 		with (
@@ -187,22 +243,30 @@ class TestSyncApi(unittest.TestCase):
 
 	def test_preview_returns_summary(self):
 		preview_data = {"actions": [{"direction": "A->B", "result": "ok"}]}
-		definition = SimpleNamespace(doctype="Sync Definition", name="SYNC-1")
+		definition = _doc_stub("Sync Definition", "SYNC-1", doctype_name="Task")
+		partner = _doc_stub("Sync Partner", "PARTNER-1")
+		definition.get = lambda key, default=None: {"doctype_name": "Task", "sync_partner": "PARTNER-1"}.get(key, default)
 
 		with (
 			patch.object(self.api, "SyncPreviewService", SimpleNamespace(predict=lambda definition, limit=50: preview_data)),
-			patch.object(self.api.frappe, "get_doc", return_value=definition),
+			patch.object(self.api.frappe, "get_doc", side_effect=[definition, partner]),
 		):
 			out = self.api.preview_sync_definition(definition.name)
 
 		self.assertEqual(out, preview_data)
 
-	def test_preview_sync_coerces_limit_before_delegation(self):
-		with patch.object(self.api, "preview_sync_definition", return_value={"ok": True}) as mock_preview:
-			result = self.api.preview_sync("SYNC-1", limit="7")
+	def test_preview_sync_definition_coerces_limit_before_delegation(self):
+		definition = _doc_stub("Sync Definition", "SYNC-1", doctype_name="Task")
+		partner = _doc_stub("Sync Partner", "PARTNER-1")
+		definition.get = lambda key, default=None: {"doctype_name": "Task", "sync_partner": "PARTNER-1"}.get(key, default)
 
-		self.assertEqual(result, {"ok": True})
-		mock_preview.assert_called_once_with("SYNC-1", limit=7)
+		with (
+			patch.object(self.api, "SyncPreviewService", SimpleNamespace(predict=lambda definition, limit=50: {"limit": limit})),
+			patch.object(self.api.frappe, "get_doc", side_effect=[definition, partner]),
+		):
+			result = self.api.preview_sync_definition("SYNC-1", limit="7")
+
+		self.assertEqual(result, {"limit": 7})
 
 	def test_preview_import_yaml_reports_conflicts_and_missing_sections(self):
 		payload = {
@@ -219,9 +283,9 @@ class TestSyncApi(unittest.TestCase):
 		def fake_exists(doctype, name):
 			return (doctype, name) == ("Sync Partner Type", "MSSQL")
 
-		with (
-			patch("sync.sync.service.runtime.frappe.db.exists", side_effect=fake_exists),
-			patch("sync.sync.service.runtime.frappe.get_meta", side_effect=_fake_meta),
+		with patch(
+			"sync.sync.service.runtime.frappe",
+			new=SimpleNamespace(db=SimpleNamespace(exists=fake_exists), get_meta=_fake_meta),
 		):
 			preview = self.api.preview_import_sync_definition_yaml(yaml_payload, overwrite=False)
 
@@ -234,21 +298,96 @@ class TestSyncApi(unittest.TestCase):
 		self.assertEqual(preview["summary"]["create"], 1)
 		self.assertEqual(preview["summary"]["missing_payload"], 1)
 
-	def test_preview_import_yaml_marks_existing_documents_as_updates_with_overwrite(self):
+	def test_preview_import_definition_yaml_marks_existing_documents_as_updates_with_overwrite(self):
 		payload = {
 			"sync_partner": {"doctype": "Sync Partner", "name": "PARTNER-1"},
 		}
 		yaml_payload = yaml.safe_dump(payload, sort_keys=False)
 
-		with (
-			patch("sync.sync.service.runtime.frappe.db.exists", return_value=True),
-			patch("sync.sync.service.runtime.frappe.get_meta", side_effect=_fake_meta),
+		with patch(
+			"sync.sync.service.runtime.frappe",
+			new=SimpleNamespace(db=SimpleNamespace(exists=lambda *args, **kwargs: True), get_meta=_fake_meta),
 		):
-			preview = self.api.preview_import_sync_yaml(yaml_payload, overwrite=True)
+			preview = self.api.preview_import_sync_definition_yaml(yaml_payload, overwrite=True)
 
 		self.assertEqual(preview["documents"]["Sync Partner"]["status"], "update")
 		self.assertEqual(preview["documents"]["Sync Partner"]["action"], "overwrite")
 		self.assertEqual(preview["summary"]["update"], 1)
+
+	def test_run_sync_now_denies_without_definition_write_permission(self):
+		definition = _doc_stub("Sync Definition", "SYNC-1")
+		definition.check_permission = _raise_permission_error
+
+		with (
+			patch.object(self.api.frappe, "get_doc", return_value=definition),
+			patch.object(self.api, "service_execute_sync_definition") as mock_execute,
+		):
+			with self.assertRaises(frappe.PermissionError):
+				self.api.run_sync_now("SYNC-1")
+
+		mock_execute.assert_not_called()
+
+	def test_run_due_sync_definitions_denies_without_system_manager_role(self):
+		with (
+			patch.object(self.api.frappe, "only_for", side_effect=frappe.PermissionError),
+			patch.object(self.api, "service_run_due_sync_definitions") as mock_run_due,
+		):
+			with self.assertRaises(frappe.PermissionError):
+				self.api.run_due_sync_definitions()
+
+		mock_run_due.assert_not_called()
+
+	def test_import_sync_definition_yaml_requires_write_permission_for_overwrite_documents(self):
+		preview = {
+			"documents": {
+				"Sync Definition": {
+					"name": "SYNC-1",
+					"status": "update",
+					"exists": True,
+					"action": "overwrite",
+				}
+			}
+		}
+		definition = _doc_stub("Sync Definition", "SYNC-1")
+		definition.check_permission = _raise_permission_error
+
+		with (
+			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value=preview),
+			patch.object(self.api.frappe, "get_doc", return_value=definition),
+			patch.object(self.api, "service_import_sync_definition_yaml") as mock_import,
+		):
+			with self.assertRaises(frappe.PermissionError):
+				self.api.import_sync_definition_yaml("payload", overwrite=True)
+
+		mock_import.assert_not_called()
+
+	def test_import_sync_yaml_from_json_returns_same_schema_as_yaml_import(self):
+		payload = {"yaml_payload": "sync_definition:\n  name: SYNC-1\n"}
+		response_payload = {
+			"ok": True,
+			"overwrite": True,
+			"sync_definition": "SYNC-1",
+			"sync_partner": None,
+			"sync_partner_type": None,
+			"documents": {"Sync Definition": "SYNC-1"},
+		}
+
+		with patch("sync.api.import_sync_definition_yaml", return_value=response_payload) as mock_import:
+			response = self.api.import_sync_yaml_from_json(payload, overwrite=True)
+
+		self.assertEqual(response, response_payload)
+		mock_import.assert_called_once_with(yaml_payload=payload["yaml_payload"], overwrite=True)
+
+	def test_api_surface_keeps_only_canonical_alias_targets(self):
+		for removed_name in (
+			"run_due_syncs",
+			"enqueue_sync",
+			"preview_sync",
+			"export_sync_yaml",
+			"import_sync_yaml",
+			"preview_import_sync_yaml",
+		):
+			self.assertFalse(hasattr(self.api, removed_name), removed_name)
 
 
 def _fake_meta(doctype):
@@ -271,53 +410,52 @@ def _fake_meta(doctype):
 	return _Meta(child_fields.get(doctype, ["name"]))
 
 
-class ApiContractTests(unittest.TestCase):
+class ApiContractTests(ApiTestCase):
 	def test_run_sync_definition_delegates(self):
-		try:
-			import sync.api as api  # noqa: PLC0415
-		except Exception as exc:
-			raise unittest.SkipTest(str(exc))
+		definition = _doc_stub("Sync Definition", "SYNC-1", sync_partner="PARTNER-1")
+		partner = _doc_stub("Sync Partner", "PARTNER-1")
 
-		with patch("sync.api.service_enqueue_sync_definition", return_value={"status": "queued"}) as mock_enqueue:
-			response = api.run_sync_definition("SYNC-1", trigger="manual", queue=True, dry_run=False)
+		with (
+			patch.object(self.api.frappe, "get_doc", side_effect=[definition, partner]),
+			patch("sync.api.service_enqueue_sync_definition", return_value={"status": "queued"}) as mock_enqueue,
+		):
+			response = self.api.run_sync_definition("SYNC-1", trigger="manual", queue=True, dry_run=False)
 
 		self.assertEqual(response["status"], "queued")
 		mock_enqueue.assert_called_once_with("SYNC-1", trigger="manual", queue=True, dry_run=False)
 
-	def test_run_due_syncs_coerces_limit_and_queue(self):
-		try:
-			import sync.api as api  # noqa: PLC0415
-		except Exception as exc:
-			raise unittest.SkipTest(str(exc))
-
+	def test_run_due_sync_definitions_coerces_limit_and_queue(self):
 		with patch("sync.api.service_run_due_sync_definitions", return_value=[{"status": "queued"}]) as mock_run_due:
-			response = api.run_due_syncs(limit="3", queue="0")
+			response = self.api.run_due_sync_definitions(limit="3", queue="0")
 
 		self.assertEqual(response, [{"status": "queued"}])
 		mock_run_due.assert_called_once_with(limit=3, queue=False)
 
-	def test_enqueue_sync_coerces_boolean_flags(self):
-		try:
-			import sync.api as api  # noqa: PLC0415
-		except Exception as exc:
-			raise unittest.SkipTest(str(exc))
-
-		with patch("sync.api.service_enqueue_sync_definition", return_value={"status": "queued"}) as mock_enqueue:
-			response = api.enqueue_sync("SYNC-1", queue="yes", dry_run="1")
-
-		self.assertEqual(response["status"], "queued")
-		mock_enqueue.assert_called_once_with("SYNC-1", trigger="manual", queue=True, dry_run=True)
-
 	def test_import_sync_yaml_from_json_uses_embedded_payload_and_default_overwrite(self):
-		try:
-			import sync.api as api  # noqa: PLC0415
-		except Exception as exc:
-			raise unittest.SkipTest(str(exc))
-
 		payload = {"yaml_payload": "sync_definition:\n  name: SYNC-1\n"}
+		response_payload = {
+			"ok": True,
+			"overwrite": True,
+			"sync_definition": "SYNC-1",
+			"sync_partner": None,
+			"sync_partner_type": None,
+			"documents": {"Sync Definition": "SYNC-1"},
+		}
 
-		with patch("sync.api.import_sync_definition_yaml", return_value={"name": "SYNC-1"}) as mock_import:
-			response = api.import_sync_yaml_from_json(payload, overwrite=True)
+		with patch("sync.api.import_sync_definition_yaml", return_value=response_payload) as mock_import:
+			response = self.api.import_sync_yaml_from_json(payload, overwrite=True)
 
-		self.assertEqual(response, {"name": "SYNC-1"})
+		self.assertEqual(response, response_payload)
 		mock_import.assert_called_once_with(yaml_payload=payload["yaml_payload"], overwrite=True)
+
+
+def _doc_stub(doctype, name, **values):
+	payload = {"doctype": doctype, "name": name, **values}
+	doc = SimpleNamespace(**payload)
+	doc.get = lambda key, default=None: payload.get(key, default)
+	doc.check_permission = lambda permtype="read": None
+	return doc
+
+
+def _raise_permission_error(permtype="read"):
+	raise frappe.PermissionError

@@ -16,8 +16,6 @@ frappe.ui.form.on("Sync Run", {
 sync.run.clearCaches = function (frm) {
 	frm.__sync_run_health_render_id = (frm.__sync_run_health_render_id || 0) + 1;
 	frm.__sync_run_items_render_id = (frm.__sync_run_items_render_id || 0) + 1;
-	frm.__sync_run_doctype_name = null;
-	frm.__sync_run_doctype_promise = null;
 };
 
 sync.run.setupButtons = function (frm) {
@@ -45,40 +43,16 @@ sync.run.setupButtons = function (frm) {
 };
 
 sync.run.getDefinitionDoctype = function (frm) {
-	if (!frm.doc.sync_definition) {
-		return Promise.resolve("");
-	}
-	if (frm.__sync_run_doctype_name) {
-		return Promise.resolve(frm.__sync_run_doctype_name);
-	}
-	if (!frm.__sync_run_doctype_promise) {
-		frm.__sync_run_doctype_promise = frappe.db
-			.get_value("Sync Definition", frm.doc.sync_definition, "doctype_name")
-			.then((response) => {
-				const payload = response?.message;
-				const doctypeName = typeof payload === "string" ? payload : payload?.doctype_name || "";
-				frm.__sync_run_doctype_name = doctypeName;
-				return doctypeName;
-			})
-			.catch(() => "");
-	}
-	return frm.__sync_run_doctype_promise;
+	return sync.helpers.getSyncDefinitionDoctype(frm.doc.sync_definition);
 };
 
 sync.run.fetchItems = function (frm) {
-	return frappe
-		.call({
-			method: "frappe.client.get_list",
-			args: {
-				doctype: "Sync Run Item",
-				fields: ["name", "record_key", "document_name", "action", "status", "message", "creation"],
-				filters: { sync_run: frm.doc.name },
-				order_by: "creation desc",
-				limit_page_length: 50,
-			},
-			freeze: false,
-		})
-		.then((response) => response?.message || []);
+	return sync.helpers.getList("Sync Run Item", {
+		fields: ["name", "record_key", "document_name", "action", "status", "message", "creation"],
+		filters: { sync_run: frm.doc.name },
+		order_by: "creation desc",
+		limit: 50,
+	});
 };
 
 sync.run.renderHealth = function (frm) {

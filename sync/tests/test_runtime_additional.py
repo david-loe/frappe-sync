@@ -4,7 +4,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import frappe
 
@@ -43,6 +43,18 @@ class MetaWithFields:
 		return any(field.fieldname == fieldname for field in self.fields)
 
 
+def _db_stub(**overrides):
+	values = {"exists": lambda *args, **kwargs: False, "commit": lambda: None}
+	values.update(overrides)
+	return SimpleNamespace(**values)
+
+
+def _runtime_frappe_stub(**overrides):
+	values = {"db": _db_stub()}
+	values.update(overrides)
+	return SimpleNamespace(**values)
+
+
 class TestRuntimeAdditional(unittest.TestCase):
 	def test_preview_service_predict_and_run_engine_guard_paths(self):
 		with patch("sync.sync.service.runtime._build_preview", return_value={"ok": True}) as mock_preview:
@@ -73,7 +85,9 @@ class TestRuntimeAdditional(unittest.TestCase):
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
 		)
-		self.assertIs(runtime._coerce_config(config), config)
+		coerced_config = runtime._coerce_config(config)
+		self.assertIsNot(coerced_config, config)
+		self.assertEqual(coerced_config.mapping, {"name": {"partner_field": "id", "direction": "Both"}})
 
 	def test_sync_stats_and_context_properties(self):
 		stats = runtime.SyncStats()
@@ -90,7 +104,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 				"created_count": 1,
 				"updated_count": 1,
 				"deleted_count": 1,
-				"skipped_count": 2,
+				"skipped_count": 1,
 				"conflict_count": 1,
 				"error_count": 1,
 			},
@@ -149,9 +163,14 @@ class TestRuntimeAdditional(unittest.TestCase):
 		partner_type_doc = SimpleNamespace(as_dict=lambda: {"doctype": "Sync Partner Type", "name": "mssql"})
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=[sync_definition_doc, partner_doc, partner_type_doc]),
+			patch(
+				"sync.sync.service.runtime.frappe",
+				new=_runtime_frappe_stub(
+					get_doc=Mock(side_effect=[sync_definition_doc, partner_doc, partner_type_doc]),
+					db=_db_stub(exists=lambda *args, **kwargs: True),
+				),
+			),
 			patch("sync.sync.service.runtime._sanitize_document_dict", side_effect=lambda doc, mask_credentials=False: doc),
-			patch("sync.sync.service.runtime.frappe.db.exists", return_value=True),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
 		):
 			exported = runtime.export_sync_definition_yaml("SYNC-1")
@@ -188,12 +207,14 @@ class TestRuntimeAdditional(unittest.TestCase):
 			preview = runtime._build_preview(definition, limit=5)
 
 		self.assertEqual(preview["frappe_records_sample_count"], 1)
+		self.assertEqual(preview["mapping"], {"subject": {"partner_field": "title", "direction": "Both"}})
 		self.assertEqual(preview["value_mapping_fields"], ["status"])
 
 		coerced = runtime._coerce_config(SimpleNamespace(name="SYNC-2", doctype="Task", partner="PARTNER-1", sync_type="A<-B"))
 		self.assertEqual(coerced.sync_type, "A<-B")
 		self.assertEqual(coerced.batch_size, 100)
 		self.assertEqual(coerced.frappe_modified_fields, ["modified"])
+		self.assertEqual(coerced.mapping, {})
 
 	def test_run_engine_routes_partner_to_frappe_branch(self):
 		config = SimpleNamespace(
@@ -221,14 +242,100 @@ class TestRuntimeAdditional(unittest.TestCase):
 		with (
 			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace()),
 			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
-			patch("sync.sync.service.runtime._get_frappe_source_records", return_value=[]),
-			patch("sync.sync.service.runtime._get_partner_source_records", return_value=[]),
+			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[]])),
+			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[]])),
 			patch("sync.sync.service.runtime._sync_partner_to_frappe") as mock_branch,
 		):
 			result = runtime._run_engine(SimpleNamespace(name="SYNC-1"), SimpleNamespace(name="RUN-1"), config=config)
 
 		mock_branch.assert_called_once()
 		self.assertEqual(result["sync_type"], "A<-B")
+
+	def test_run_engine_streams_a_to_b_batches_without_legacy_list_getters(self):
+		config = SimpleNamespace(
+			name="SYNC-A2B",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="A->B",
+			cron=None,
+			filters=None,
+			batch_size=2,
+			create_new=True,
+			delete_missing=False,
+			use_last_sync_date=False,
+			conflict_policy="newest_wins",
+			timestamp_buffer_seconds=0,
+			table_name="tabTask",
+			query=None,
+			key_fields=["name"],
+			mapping={"name": "id"},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+		recorded_batches = []
+
+		def fake_sync(**kwargs):
+			recorded_batches.append([row["name"] for row in kwargs["frappe_records"]])
+			kwargs["source_keys"].update((row["name"],) for row in kwargs["frappe_records"])
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace()),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
+			patch("sync.sync.service.runtime._get_frappe_source_records", side_effect=AssertionError("legacy list getter should not be used")),
+			patch("sync.sync.service.runtime._get_partner_source_records", side_effect=AssertionError("legacy list getter should not be used")),
+			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1"}], [{"name": "TASK-2"}]])),
+			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-OLD"}]])),
+			patch("sync.sync.service.runtime._sync_frappe_to_partner", side_effect=fake_sync) as mock_sync,
+			patch("sync.sync.service.runtime._flush_pending_run_writes"),
+		):
+			runtime._run_engine(SimpleNamespace(name="SYNC-A2B"), SimpleNamespace(name="RUN-1"), config=config)
+
+		self.assertEqual(recorded_batches, [["TASK-1"], ["TASK-2"]])
+		self.assertEqual(mock_sync.call_count, 2)
+
+	def test_run_engine_streams_bidirectional_batches_into_indexes(self):
+		config = SimpleNamespace(
+			name="SYNC-BI",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="A<->B",
+			cron=None,
+			filters=None,
+			batch_size=2,
+			create_new=True,
+			delete_missing=False,
+			use_last_sync_date=False,
+			conflict_policy="newest_wins",
+			timestamp_buffer_seconds=0,
+			table_name="tabTask",
+			query=None,
+			key_fields=["name"],
+			mapping={"name": "id"},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace()),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
+			patch("sync.sync.service.runtime._get_frappe_source_records", side_effect=AssertionError("legacy list getter should not be used")),
+			patch("sync.sync.service.runtime._get_partner_source_records", side_effect=AssertionError("legacy list getter should not be used")),
+			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1"}], [{"name": "TASK-2"}]])),
+			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-1"}], [{"id": "TASK-3"}]])),
+			patch("sync.sync.service.runtime._sync_bidirectional") as mock_sync,
+		):
+			runtime._run_engine(SimpleNamespace(name="SYNC-BI"), SimpleNamespace(name="RUN-1"), config=config)
+
+		self.assertEqual(
+			mock_sync.call_args.kwargs["frappe_records"],
+			{("TASK-1",): {"name": "TASK-1"}, ("TASK-2",): {"name": "TASK-2"}},
+		)
+		self.assertEqual(
+			mock_sync.call_args.kwargs["partner_records"],
+			{("TASK-1",): {"id": "TASK-1"}, ("TASK-3",): {"id": "TASK-3"}},
+		)
 
 	def test_apply_update_helpers_cover_success_and_error_paths(self):
 		config = SimpleNamespace(doctype="Task", key_fields=["name"], mapping={"name": "id"}, table_name="tabTask", query=None)
@@ -436,9 +543,13 @@ class TestRuntimeAdditional(unittest.TestCase):
 		docs = [FakeInsertDoc(name="RUN-1", doctype="Sync Run"), FakeInsertDoc(name="ITEM-1", doctype="Sync Run Item"), FakeInsertDoc(name="CHANGE-1", doctype="Sync Run Item Change")]
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_meta", side_effect=[run_meta, run_item_meta, change_meta]),
-			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=docs),
-			patch("sync.sync.service.runtime.frappe.db.commit"),
+			patch(
+				"sync.sync.service.runtime.frappe",
+				new=_runtime_frappe_stub(
+					get_meta=Mock(side_effect=[run_meta, run_item_meta, change_meta]),
+					get_doc=Mock(side_effect=docs),
+				),
+			),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
 		):
 			run_doc = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "A->B", "partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="manual", dry_run=True)
@@ -471,8 +582,32 @@ class TestRuntimeAdditional(unittest.TestCase):
 		context = SimpleNamespace(is_delta_sync=False, delta_since=None)
 		records = [{"id": "TASK-1"}]
 
-		with patch("sync.sync.service.runtime._fetch_partner_records", return_value=records):
+		with patch("sync.sync.service.runtime._iter_partner_record_batches", return_value=iter([records])):
 			self.assertEqual(runtime._get_partner_source_records(config, object(), context), records)
+
+	def test_fetch_partner_records_raises_on_partial_load_failure(self):
+		class FlakyConnector:
+			def __init__(self):
+				self.calls = []
+
+			def fetch_records(self, *, source, query, batch_size, cursor, key_fields):
+				self.calls.append(cursor)
+				if cursor is None:
+					return {"records": [{"id": "TASK-1"}], "next_cursor": "page-2"}
+				raise RuntimeError("partner fetch exploded")
+
+		connector = FlakyConnector()
+
+		with self.assertRaisesRegex(RuntimeError, "Partner source load failed at cursor 'page-2' after 1 records."):
+			runtime._fetch_partner_records(
+				connector=connector,
+				source="tabTask",
+				query=None,
+				batch_size=1,
+				key_fields=["name"],
+			)
+
+		self.assertEqual(connector.calls, [None, "page-2"])
 
 	def test_runtime_metadata_helpers_cover_noops_and_status_updates(self):
 		doc = FakeDoc(name="SYNC-1", doctype="Sync Definition")
@@ -487,8 +622,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_meta", return_value=meta),
-			patch("sync.sync.service.runtime.frappe.db.commit"),
+			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_meta=lambda *_args, **_kwargs: meta)),
 			patch("sync.sync.service.runtime.croniter", side_effect=lambda expr, now: SimpleNamespace(get_next=lambda _: datetime(2026, 3, 17, 13, 0))),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
 		):

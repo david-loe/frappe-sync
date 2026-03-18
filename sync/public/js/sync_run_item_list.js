@@ -53,16 +53,15 @@ frappe.listview_settings["Sync Run Item"] = {
 			return __("Resolve the Sync Definition target DocType and open {0}", [doc.document_name]);
 		},
 		action(doc) {
-			frappe.db
-				.get_value("Sync Definition", doc.sync_definition, "doctype_name")
-				.then((response) => {
-					const payload = response?.message;
-					const doctypeName = typeof payload === "string" ? payload : payload?.doctype_name || "";
-					if (!doctypeName) {
+			sync.helpers
+				.getSyncDefinitionDoctype(doc.sync_definition)
+				.then((doctypeName) => {
+					const resolvedDoctype = doctypeName || "";
+					if (!resolvedDoctype) {
 						frappe.show_alert({ message: __("No target DocType configured on the Sync Definition."), indicator: "orange" });
 						return;
 					}
-					frappe.set_route("Form", doctypeName, doc.document_name);
+					frappe.set_route("Form", resolvedDoctype, doc.document_name);
 				})
 				.catch((error) => {
 					frappe.show_alert({

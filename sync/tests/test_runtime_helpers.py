@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import frappe
 
@@ -77,6 +77,18 @@ class LegacyConnector:
 		return [{"name": "LEGACY"}]
 
 
+def _db_stub(**overrides):
+	values = {"exists": lambda *args, **kwargs: False, "commit": lambda: None}
+	values.update(overrides)
+	return SimpleNamespace(**values)
+
+
+def _runtime_frappe_stub(**overrides):
+	values = {"db": _db_stub()}
+	values.update(overrides)
+	return SimpleNamespace(**values)
+
+
 class TestRuntimeHelpers(unittest.TestCase):
 	@patch("sync.sync.service.runtime._get_child_rows_by_options")
 	def test_build_definition_config_parses_filters_and_mappings(self, mock_children):
@@ -114,7 +126,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			config = runtime._build_definition_config(doc)
 
 		self.assertEqual(config.key_fields, ["name"])
-		self.assertEqual(config.mapping, {"name": "name"})
+		self.assertEqual(config.mapping, {"name": {"partner_field": "name", "direction": "Both"}})
 		self.assertEqual(config.value_mapping, {"state": {"open": "1"}})
 		self.assertIsInstance(config.filters, list)
 		self.assertEqual(config.use_last_sync_date, True)
@@ -170,7 +182,28 @@ class TestRuntimeHelpers(unittest.TestCase):
 			config = runtime._build_definition_config(doc)
 
 		self.assertEqual(config.key_fields, ["subject"])
-		self.assertEqual(config.mapping, {"subject": "title"})
+		self.assertEqual(config.mapping, {"subject": {"partner_field": "title", "direction": "Both"}})
+
+	@patch("sync.sync.service.runtime._get_child_rows_by_options", return_value=[])
+	def test_build_definition_config_rejects_key_mapping_direction_mismatch(self, _mock_children):
+		doc = FakeDoc(
+			{
+				"name": "SYNC-DIR",
+				"sync_type": "A->B",
+				"partner": "PARTNER-1",
+				"doctype_name": "Task",
+				"key_fields": "name",
+				"field_mapping": {
+					"name": {"partner_field": "id", "direction": "Partner to Frappe"},
+				},
+			}
+		)
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_meta", return_value=SimpleNamespace(fields=[])),
+			self.assertRaisesRegex(frappe.ValidationError, "name \\(Frappe to Partner\\)"),
+		):
+			runtime._build_definition_config(doc)
 
 	@patch("sync.sync.service.runtime._get_child_rows_by_options", return_value=[])
 	def test_build_definition_config_requires_mapping(self, _mock_children):
@@ -249,12 +282,17 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(sanitized["api_secret"], "***")
 		self.assertEqual(sanitized["mappings"], [{"doctype": "Sync Field Mapping", "field_name": "status"}])
 
-	@patch("sync.sync.service.runtime.frappe.db.exists", return_value=True)
-	@patch("sync.sync.service.runtime.frappe.get_doc")
-	@patch("sync.sync.service.runtime.frappe.get_meta", return_value=DummyMeta([]))
-	def test_upsert_document_returns_existing(self, *_):
+	def test_upsert_document_returns_existing(self):
 		payload = {"doctype": "Sync Definition", "name": "SYNC-EXISTING", "status": "open"}
-		name = runtime._upsert_document_from_payload("Sync Definition", payload, overwrite=False)
+		with patch(
+			"sync.sync.service.runtime.frappe",
+			new=_runtime_frappe_stub(
+				get_doc=lambda *args, **kwargs: None,
+				get_meta=lambda *args, **kwargs: DummyMeta([]),
+				db=_db_stub(exists=lambda *args, **kwargs: True),
+			),
+		):
+			name = runtime._upsert_document_from_payload("Sync Definition", payload, overwrite=False)
 		self.assertEqual(name, "SYNC-EXISTING")
 
 	def test_upsert_document_overwrite_updates_scalar_and_table_fields(self):
@@ -268,10 +306,14 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		with (
 			patch("sync.sync.service.runtime._normalize_doc_payload", return_value={"name": "SYNC-EXISTING", "status": "Closed", "rows": [{"doctype": "Child"}]}),
-			patch("sync.sync.service.runtime.frappe.db.exists", return_value=True),
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=doc),
-			patch("sync.sync.service.runtime.frappe.get_meta", return_value=meta),
-			patch("sync.sync.service.runtime.frappe.db.commit"),
+			patch(
+				"sync.sync.service.runtime.frappe",
+				new=_runtime_frappe_stub(
+					get_doc=lambda *args, **kwargs: doc,
+					get_meta=lambda *args, **kwargs: meta,
+					db=_db_stub(exists=lambda *args, **kwargs: True),
+				),
+			),
 		):
 			name = runtime._upsert_document_from_payload("Sync Definition", {"name": "SYNC-EXISTING"}, overwrite=True)
 
@@ -330,7 +372,11 @@ class TestRuntimeHelpers(unittest.TestCase):
 	def test_get_frappe_source_records_builds_delta_or_filters_from_existing_fields(self):
 		config = SimpleNamespace(
 			doctype="Task",
-			mapping={"subject": "title"},
+			sync_type="A->B",
+			mapping={
+				"subject": {"partner_field": "title", "direction": "Frappe to Partner"},
+				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+			},
 			key_fields=["name"],
 			frappe_modified_fields=["modified", "changed_on", "missing_field"],
 			filters=[["status", "=", "Open"]],
@@ -340,7 +386,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		with (
 			patch("sync.sync.service.runtime._doctype_has_field", side_effect=lambda doctype, field: field != "missing_field"),
-			patch("sync.sync.service.runtime._get_frappe_records", return_value=[{"name": "TASK-1"}]) as mock_records,
+			patch("sync.sync.service.runtime._iter_frappe_record_batches", return_value=iter([[{"name": "TASK-1"}]])) as mock_records,
 		):
 			out = runtime._get_frappe_source_records(config, context)
 
@@ -365,7 +411,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			{"name": "TASK-2", "updated_at": datetime(2026, 3, 16, 8, 0)},
 		]
 
-		with patch("sync.sync.service.runtime._fetch_partner_records", return_value=records):
+		with patch("sync.sync.service.runtime._iter_partner_record_batches", return_value=iter([records])):
 			out = runtime._get_partner_source_records(config, object(), context)
 
 		self.assertEqual(out, [records[0]])
@@ -428,9 +474,10 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 	@patch("sync.sync.service.runtime._create_run_item")
 	@patch("sync.sync.service.runtime._create_run_item_change")
+	@patch("sync.sync.service.runtime._flush_pending_run_writes")
 	@patch("sync.sync.service.runtime._update_doc_fields")
-	@patch("sync.sync.service.runtime._get_partner_source_records", return_value=[])
-	@patch("sync.sync.service.runtime._get_frappe_source_records", return_value=[{"name": "TASK-1", "status": "open"}])
+	@patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[]]))
+	@patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1", "status": "open"}]]))
 	@patch("sync.sync.service.runtime.get_connector_for_partner")
 	@patch("sync.sync.service.runtime.frappe.get_doc")
 	def test_run_engine_classifies_create_action(
@@ -474,8 +521,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(result["created_count"], 1)
 		self.assertEqual(result["error_count"], 0)
 
-	@patch("sync.sync.service.runtime._get_partner_source_records", return_value=[])
-	@patch("sync.sync.service.runtime._get_frappe_source_records", return_value=[])
+	@patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[]]))
+	@patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[]]))
 	@patch("sync.sync.service.runtime.get_connector_for_partner")
 	@patch("sync.sync.service.runtime.frappe.get_doc")
 	def test_run_engine_rejects_failed_connector_ping(
@@ -551,6 +598,62 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual([entry["action"] for entry in logged], ["error", "skipped", "deleted"])
 		self.assertEqual(connector.deleted[0]["key_values"], {"id": "TASK-2"})
 
+	def test_sync_frappe_to_partner_enforces_mapping_direction_and_batches_commits(self):
+		config = SimpleNamespace(
+			name="SYNC-F2P-DIR",
+			key_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Both"},
+				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+				"subject": {"partner_field": "title", "direction": "Frappe to Partner"},
+			},
+			value_mapping={},
+			create_new=True,
+			delete_missing=False,
+			table_name="dbo.SyncTable",
+			query=None,
+			batch_size=20,
+		)
+		upsert_calls = []
+
+		def upsert_record(**kwargs):
+			upsert_calls.append(kwargs)
+			return ConnectorWriteResult(ok=True, message="ok")
+
+		mock_commit = Mock()
+		with (
+			patch(
+				"sync.sync.service.runtime._create_run_item",
+				side_effect=[SimpleNamespace(name="ITEM-1"), SimpleNamespace(name="ITEM-2")],
+			),
+			patch("sync.sync.service.runtime._create_run_item_change"),
+			patch("sync.sync.service.runtime.frappe", SimpleNamespace(db=SimpleNamespace(commit=mock_commit))),
+		):
+			runtime._sync_frappe_to_partner(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=SimpleNamespace(upsert_record=upsert_record),
+				frappe_records=[
+					{"name": "TASK-1", "status": "Open", "subject": "Hello"},
+					{"name": "TASK-2", "status": "Closed", "subject": "World"},
+				],
+				partner_records=[],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="A->B",
+				full_sync=False,
+			)
+
+		self.assertEqual(mock_commit.call_count, 1)
+		self.assertEqual(
+			[call["record"] for call in upsert_calls],
+			[
+				{"id": "TASK-1", "title": "Hello"},
+				{"id": "TASK-2", "title": "World"},
+			],
+		)
+		self.assertEqual(upsert_calls[0]["mapping"], {"name": "id", "subject": "title"})
+
 	def test_sync_partner_to_frappe_updates_and_deletes(self):
 		config = SimpleNamespace(
 			name="SYNC-P2F",
@@ -584,6 +687,42 @@ class TestRuntimeHelpers(unittest.TestCase):
 		mock_upsert.assert_called_once()
 		mock_delete.assert_called_once_with("Task", "TASK-2", ignore_permissions=True, force=True)
 		self.assertEqual([entry["action"] for entry in logged], ["updated", "deleted"])
+
+	def test_sync_partner_to_frappe_enforces_mapping_direction(self):
+		config = SimpleNamespace(
+			name="SYNC-P2F-DIR",
+			doctype="Task",
+			key_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Both"},
+				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+				"subject": {"partner_field": "title", "direction": "Frappe to Partner"},
+			},
+			value_mapping={"status": {"Open": "1"}},
+			create_new=True,
+			delete_missing=False,
+		)
+
+		with (
+			patch("sync.sync.service.runtime._register_and_log"),
+			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-1") as mock_upsert,
+		):
+			runtime._sync_partner_to_frappe(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=object(),
+				partner_records=[{"id": "TASK-1", "state": "1", "title": "Ignored"}],
+				frappe_records=[{"name": "TASK-1", "status": "Closed", "subject": "Old"}],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="A<-B",
+				full_sync=False,
+			)
+
+		self.assertEqual(
+			mock_upsert.call_args.kwargs["payload"],
+			{"name": "TASK-1", "status": "Open"},
+		)
 
 	def test_sync_bidirectional_resolves_conflicts_and_unsupported_policy(self):
 		config = SimpleNamespace(

@@ -16,8 +16,6 @@ frappe.ui.form.on("Sync Run Item", {
 
 sync.run_item.clearCache = function (frm) {
 	frm.__sync_run_item_summary_render_id = (frm.__sync_run_item_summary_render_id || 0) + 1;
-	frm.__sync_run_item_doctype_name = null;
-	frm.__sync_run_item_doctype_promise = null;
 };
 
 sync.run_item.setupButtons = function (frm) {
@@ -48,24 +46,7 @@ sync.run_item.setupButtons = function (frm) {
 };
 
 sync.run_item.getTargetDoctype = function (frm) {
-	if (!frm.doc.sync_definition) {
-		return Promise.resolve("");
-	}
-	if (frm.__sync_run_item_doctype_name) {
-		return Promise.resolve(frm.__sync_run_item_doctype_name);
-	}
-	if (!frm.__sync_run_item_doctype_promise) {
-		frm.__sync_run_item_doctype_promise = frappe.db
-			.get_value("Sync Definition", frm.doc.sync_definition, "doctype_name")
-			.then((response) => {
-				const payload = response?.message;
-				const doctypeName = typeof payload === "string" ? payload : payload?.doctype_name || "";
-				frm.__sync_run_item_doctype_name = doctypeName;
-				return doctypeName;
-			})
-			.catch(() => "");
-	}
-	return frm.__sync_run_item_doctype_promise;
+	return sync.helpers.getSyncDefinitionDoctype(frm.doc.sync_definition);
 };
 
 sync.run_item.renderSummary = function (frm) {

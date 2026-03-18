@@ -13,6 +13,65 @@ sync.helpers.callApi = function (method, args = {}, opts = {}) {
 	});
 };
 
+sync.helpers.getList = function (doctype, args = {}) {
+	const listArgs = Object.assign({}, args);
+	if (listArgs.limit == null && listArgs.limit_page_length != null) {
+		listArgs.limit = listArgs.limit_page_length;
+		delete listArgs.limit_page_length;
+	}
+	return frappe.db.get_list(doctype, listArgs);
+};
+
+sync.helpers.getSyncDefinitionDoctype = function (syncDefinitionName, opts = {}) {
+	const name = String(syncDefinitionName || "").trim();
+	if (!name) {
+		return Promise.resolve("");
+	}
+
+	const useCache = opts.use_cache !== false;
+	sync.helpers._sync_definition_doctype_cache = sync.helpers._sync_definition_doctype_cache || {};
+	sync.helpers._sync_definition_doctype_promises = sync.helpers._sync_definition_doctype_promises || {};
+
+	if (useCache && Object.prototype.hasOwnProperty.call(sync.helpers._sync_definition_doctype_cache, name)) {
+		return Promise.resolve(sync.helpers._sync_definition_doctype_cache[name]);
+	}
+
+	if (useCache && sync.helpers._sync_definition_doctype_promises[name]) {
+		return sync.helpers._sync_definition_doctype_promises[name];
+	}
+
+	const request = frappe.db
+		.get_value("Sync Definition", name, "doctype_name")
+		.then((response) => {
+			const payload = response?.message;
+			const doctypeName = typeof payload === "string" ? payload : payload?.doctype_name || "";
+			sync.helpers._sync_definition_doctype_cache[name] = doctypeName;
+			return doctypeName;
+		})
+		.catch(() => "")
+		.finally(() => {
+			delete sync.helpers._sync_definition_doctype_promises[name];
+		});
+
+	if (useCache) {
+		sync.helpers._sync_definition_doctype_promises[name] = request;
+	}
+
+	return request;
+};
+
+sync.helpers.persistDocValues = function (doctype, name, values) {
+	return frappe.call({
+		method: "frappe.client.set_value",
+		args: {
+			doctype,
+			name,
+			fieldname: values,
+		},
+		freeze: false,
+	});
+};
+
 sync.helpers.extractApiErrorMessage = function (error) {
 	const directMessage =
 		error?.message ||
@@ -63,7 +122,8 @@ sync.helpers.isMissingApiMethodError = function (error) {
 		message.includes("failed to get method") ||
 		message.includes("failed to get method for command") ||
 		message.includes("does not exist in module") ||
-		message.includes("does not exist")
+		message.includes("does not exist") ||
+		message.includes("is not whitelisted")
 	);
 };
 
@@ -265,6 +325,7 @@ sync.helpers.renderPreviewModal = function (payload) {
 	const data = payload || {};
 	const ping = data.partner_ping || {};
 	const records = Array.isArray(data.frappe_records_sample) ? data.frappe_records_sample : [];
+	const mapping = sync.helpers.getPreviewMapping(data);
 	const summaryRows = [
 		["Sync Definition", data.sync_definition],
 		["Sync Type", data.sync_type],
@@ -294,7 +355,7 @@ sync.helpers.renderPreviewModal = function (payload) {
 		`
 			<div class="mb-3">
 				<h5 class="mb-2">${__("Mapping")}</h5>
-				${sync.helpers.renderMappingTable(data.mapping)}
+				${sync.helpers.renderMappingTable(mapping)}
 			</div>
 		`,
 		`
@@ -354,8 +415,87 @@ sync.helpers.renderChipList = function (label, values) {
 	`;
 };
 
+sync.helpers.getPreviewMapping = function (payload) {
+	const data = payload || {};
+	const nestedSyncDefinition =
+		data.sync_definition && typeof data.sync_definition === "object" ? data.sync_definition : null;
+	const source =
+		data.mapping ??
+		data.field_mapping ??
+		nestedSyncDefinition?.mapping ??
+		nestedSyncDefinition?.field_mapping ??
+		{};
+	const structuredSource =
+		Array.isArray(source) ||
+		(
+			source &&
+			typeof source === "object" &&
+			Object.values(source).some((entry) => entry && typeof entry === "object")
+		);
+	return sync.helpers.normalizeFieldMapping(source, {
+		default_direction: structuredSource ? "Both" : "",
+	});
+};
+
+sync.helpers.normalizeFieldMappingDirection = function (direction, options = {}) {
+	const fallback = options.default_direction ?? "";
+	const value = String(direction || "").trim();
+	const allowed = new Set(["Both", "Frappe to Partner", "Partner to Frappe"]);
+	if (!value) {
+		return fallback;
+	}
+	return allowed.has(value) ? value : fallback;
+};
+
+sync.helpers.normalizeFieldMapping = function (mapping, options = {}) {
+	const normalized = {};
+	const addEntry = (frappeField, partnerField, direction) => {
+		const sourceField = String(frappeField || "").trim();
+		const targetField = String(partnerField || "").trim();
+		if (!sourceField || !targetField) {
+			return;
+		}
+		normalized[sourceField] = {
+			partner_field: targetField,
+			direction: sync.helpers.normalizeFieldMappingDirection(direction, options),
+		};
+	};
+
+	if (Array.isArray(mapping)) {
+		mapping.forEach((entry) => {
+			if (!entry || typeof entry !== "object") {
+				return;
+			}
+			addEntry(
+				entry.frappe_field ?? entry.frappeField ?? entry.source_field ?? entry.field_name,
+				entry.partner_field ?? entry.partnerField ?? entry.target_field ?? entry.column_name,
+				entry.direction
+			);
+		});
+		return normalized;
+	}
+
+	if (!mapping || typeof mapping !== "object") {
+		return normalized;
+	}
+
+	Object.entries(mapping).forEach(([frappeField, entry]) => {
+		if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+			addEntry(
+				frappeField,
+				entry.partner_field ?? entry.partnerField ?? entry.partner ?? entry.target_field ?? entry.value,
+				entry.direction
+			);
+			return;
+		}
+		addEntry(frappeField, entry, options.default_direction);
+	});
+
+	return normalized;
+};
+
 sync.helpers.renderMappingTable = function (mapping) {
-	const entries = Object.entries(mapping || {});
+	const entries = Object.entries(sync.helpers.normalizeFieldMapping(mapping));
 	if (!entries.length) {
 		return `<div class="text-muted">${__("No field mapping configured.")}</div>`;
 	}
@@ -827,21 +967,44 @@ sync.helpers.importDefinitionYaml = function (frm, initialValues = {}) {
 };
 
 sync.helpers.testPartnerConnection = function (frm) {
-	sync.helpers
-		.callApi("test_sync_partner", { sync_partner_name: frm.doc.name }, { freeze_message: "Testing connection…" })
+	const ensureSaved = frm.is_new() || frm.is_dirty() ? frm.save() : Promise.resolve();
+
+	return ensureSaved
+		.then(() =>
+			sync.helpers.callFirstAvailableApi(
+				["test_sync_partner_connection", "test_sync_partner"],
+				{ sync_partner_name: frm.doc.name },
+				{ freeze_message: "Testing connection…" }
+			)
+		)
 		.then((response) => {
 			const payload = response?.message;
+			const method = response?._sync_method || "";
 			const message =
 				typeof payload === "string"
 					? payload
 					: `<pre>${frappe.utils.escape_html(JSON.stringify(payload || {}, null, 2))}</pre>`;
-			frappe.msgprint({
-				title: __("Connection Test"),
-				message,
-				indicator: payload?.status === "error" ? "red" : "green",
-			});
+
+			const persistResult =
+				method === "test_sync_partner_connection"
+					? Promise.resolve()
+					: sync.helpers.persistDocValues("Sync Partner", frm.doc.name, {
+							last_connection_status: payload?.status === "ok" ? "Success" : "Error",
+							last_checked_on: frappe.datetime.now_datetime(),
+							last_connection_error: payload?.status === "ok" ? "" : payload?.message || "",
+					  });
+
+			return persistResult.then(() =>
+				frm.reload_doc().then(() => {
+					frappe.msgprint({
+						title: __("Connection Test"),
+						message,
+						indicator: payload?.status === "error" ? "red" : "green",
+					});
+				})
+			);
 		})
-		.catch((error) => frappe.msgprint(error?.message ?? "Connection test failed"));
+		.catch((error) => frappe.msgprint(sync.helpers.extractApiErrorMessage(error) || "Connection test failed"));
 };
 
 sync.helpers.toggleSourceFields = function (frm) {
@@ -877,22 +1040,18 @@ sync.helpers.openLatestRun = function (frm) {
 		["Sync Run", "sync_definition", "=", frm.doc.name],
 		["Sync Run", "docstatus", "=", 0],
 	];
-	frappe.call({
-		method: "frappe.client.get_list",
-		args: {
-			doctype: "Sync Run",
+	sync.helpers
+		.getList("Sync Run", {
 			fields: ["name"],
 			filters,
 			order_by: "creation desc",
-			limit_page_length: 1,
-		},
-		callback: (response) => {
-			const runs = response?.message || [];
+			limit: 1,
+		})
+		.then((runs) => {
 			if (!runs.length) {
 				frappe.msgprint(__("No runs found yet."));
 				return;
 			}
 			frappe.set_route("Form", "Sync Run", runs[0].name);
-		},
-	});
+		});
 };
