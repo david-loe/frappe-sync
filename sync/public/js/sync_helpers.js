@@ -157,6 +157,211 @@ sync.helpers.callFirstAvailableApi = function (methods, args = {}, opts = {}) {
 	return attempt(0);
 };
 
+sync.helpers.getDefinitionFieldName = function (frm, candidates) {
+	const names = Array.isArray(candidates) ? candidates : [candidates];
+	return names.find((fieldname) => Boolean(frm?.fields_dict?.[fieldname]));
+};
+
+sync.helpers.getDefinitionFieldValue = function (frm, candidates) {
+	const fieldname = sync.helpers.getDefinitionFieldName(frm, candidates);
+	return fieldname ? String(frm.doc?.[fieldname] || "").trim() : "";
+};
+
+sync.helpers.getDefinitionMatchFieldName = function (frm) {
+	return sync.helpers.getDefinitionFieldName(frm, ["match_fields", "key_fields"]);
+};
+
+sync.helpers.getDefinitionReadQueryFieldName = function (frm) {
+	return sync.helpers.getDefinitionFieldName(frm, ["read_query", "query"]);
+};
+
+sync.helpers.getDefinitionSourceReadQuery = function (frm) {
+	return sync.helpers.getDefinitionFieldValue(frm, ["read_query", "query"]);
+};
+
+sync.helpers.setDefinitionFieldProperty = function (frm, fieldname, property, value) {
+	if (!fieldname || !frm?.fields_dict?.[fieldname]) {
+		return;
+	}
+	frm.set_df_property(fieldname, property, value);
+};
+
+sync.helpers.toggleDefinitionField = function (frm, fieldname, visible, reqd) {
+	if (!fieldname || !frm?.fields_dict?.[fieldname]) {
+		return;
+	}
+	frm.toggle_display(fieldname, visible);
+	if (reqd !== undefined) {
+		frm.toggle_reqd(fieldname, reqd);
+	}
+};
+
+sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
+	const readQueryField = sync.helpers.getDefinitionReadQueryFieldName(frm);
+	const matchFieldsField = sync.helpers.getDefinitionMatchFieldName(frm);
+	const hasReadQuery = Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
+	const canWritePartner = (frm.doc.sync_type || "").toLowerCase() !== "a<-b";
+	const identityFieldNames = [
+		"partner_identity_field",
+		"frappe_partner_identity_field",
+		"partner_frappe_identity_field",
+		"partner_create_id_strategy",
+		"partner_create_id_source",
+		"partner_create_id_scope_where",
+	];
+
+	sync.helpers.setDefinitionFieldProperty(
+		frm,
+		"table_name",
+		"label",
+		__("Table Name")
+	);
+	sync.helpers.setDefinitionFieldProperty(
+		frm,
+		"table_name",
+		"description",
+		hasReadQuery
+			? __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Read Query is active, so reads are limited by the query while writes still target Table Name.")
+			: __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Leave Read Query blank to read the full table.")
+	);
+
+	if (readQueryField) {
+		sync.helpers.setDefinitionFieldProperty(
+			frm,
+			readQueryField,
+			"label",
+			__("Read Query")
+		);
+		sync.helpers.setDefinitionFieldProperty(
+			frm,
+			readQueryField,
+			"description",
+			__("Optional read-only query used to load partner rows. Leave blank to read the full table. Writes still target Table Name.")
+		);
+	}
+	if (readQueryField === "read_query" && frm.fields_dict.query) {
+		sync.helpers.toggleDefinitionField(frm, "query", false, false);
+	}
+
+	if (matchFieldsField) {
+		sync.helpers.setDefinitionFieldProperty(
+			frm,
+			matchFieldsField,
+			"label",
+			__("Match Fields")
+		);
+		sync.helpers.setDefinitionFieldProperty(
+			frm,
+			matchFieldsField,
+			"description",
+			__("Logical fields used to match source and partner records. These are not the partner's technical identity field.")
+		);
+	}
+	if (matchFieldsField === "match_fields" && frm.fields_dict.key_fields) {
+		sync.helpers.toggleDefinitionField(frm, "key_fields", false, false);
+	}
+
+	identityFieldNames.forEach((fieldname) => {
+		if (!frm?.fields_dict?.[fieldname]) {
+			return;
+		}
+		switch (fieldname) {
+			case "partner_identity_field":
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"label",
+					__("Partner Identity Field")
+				);
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"description",
+					__("Technical partner key column used when a new partner row is created.")
+				);
+				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner, false);
+				break;
+			case "frappe_partner_identity_field":
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"label",
+					__("Frappe Partner ID Field")
+				);
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"description",
+					__("Optional Frappe field that stores the partner-generated identity after create.")
+				);
+				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner, false);
+				break;
+			case "partner_frappe_identity_field":
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"label",
+					__("Partner Frappe ID Field")
+				);
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"description",
+					__("Optional partner field that stores the Frappe document name for traceability.")
+				);
+				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner, false);
+				break;
+			case "partner_create_id_strategy":
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"label",
+					__("Partner Create ID Strategy")
+				);
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"description",
+					__("Controls how a new partner identity is produced when the partner does not generate it from the payload.")
+				);
+				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner, false);
+				break;
+			case "partner_create_id_source":
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"label",
+					__("Partner Create ID Source")
+				);
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"description",
+					__("Additional strategy input such as a database sequence name or allocation source.")
+				);
+				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner, false);
+				break;
+			case "partner_create_id_scope_where":
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"label",
+					__("Partner Create ID Scope")
+				);
+				sync.helpers.setDefinitionFieldProperty(
+					frm,
+					fieldname,
+					"description",
+					__("SQL WHERE condition that limits the rows considered when generating the next partner ID, for example `NR BETWEEN 1 AND 89999`.")
+				);
+				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner, false);
+				break;
+			default:
+				break;
+		}
+	});
+};
+
 sync.helpers.normalizePartnerColumnChoices = function (payload) {
 	const candidates = Array.isArray(payload)
 		? payload
@@ -222,6 +427,8 @@ sync.helpers.renderPartnerColumnStatusPanel = function (state, context = {}) {
 	const ready = Boolean(context.ready);
 	const columns = Array.isArray(state?.columns) ? state.columns : [];
 	const missing = Array.isArray(context.missing) ? context.missing.filter(Boolean) : [];
+	const sourceLabel = context.source_label || __("current source");
+	const sourceDetails = context.source_details || "";
 	const previewColumns = columns.slice(0, 12);
 	const buttonLabel = columns.length ? __("Refresh Columns") : __("Load Columns");
 	const button = ready
@@ -231,7 +438,7 @@ sync.helpers.renderPartnerColumnStatusPanel = function (state, context = {}) {
 	if (!ready) {
 		const details = missing.length
 			? __("Set {0} first.", [missing.join(", ")])
-			: __("Partner column loading is only available for table-based definitions.");
+			: __("Partner column loading is only available after a partner and table name are set.");
 		return `
 			<div class="border rounded p-3 bg-light">
 				<div class="d-flex justify-content-between align-items-start gap-3">
@@ -250,7 +457,7 @@ sync.helpers.renderPartnerColumnStatusPanel = function (state, context = {}) {
 				<div class="d-flex justify-content-between align-items-start gap-3">
 					<div>
 						<div class="fw-semibold mb-1">${__("Partner Columns")}</div>
-						<div class="text-muted small">${__("Loading partner columns from the source table...")}</div>
+						<div class="text-muted small">${__("Loading partner columns from the configured source...")}</div>
 					</div>
 					<div class="text-muted small">${__("Working")}</div>
 				</div>
@@ -264,8 +471,8 @@ sync.helpers.renderPartnerColumnStatusPanel = function (state, context = {}) {
 		: state?.stale
 			? __("Source settings changed. Refresh the column list before editing partner-side mappings.")
 			: columns.length
-				? __("Loaded {0} partner columns for the current table.", [columns.length])
-				: __("Load the partner table columns to get guided partner-side field selection.");
+				? __("Loaded {0} partner columns from {1}.", [columns.length, sourceLabel])
+				: __("Load partner columns from {0} to get guided partner-side field selection.", [sourceLabel]);
 	const refreshedAt = state?.loaded_at ? __("Last refresh: {0}", [state.loaded_at]) : "";
 	const columnBadges = previewColumns
 		.map((column) => {
@@ -281,6 +488,7 @@ sync.helpers.renderPartnerColumnStatusPanel = function (state, context = {}) {
 				<div class="flex-grow-1">
 					<div class="fw-semibold mb-1">${__("Partner Columns")}</div>
 					<div class="small ${state?.error ? "text-danger" : state?.stale ? "text-warning-emphasis" : "text-muted"}">${frappe.utils.escape_html(statusText)}</div>
+					${sourceDetails ? `<div class="small text-muted mt-1">${frappe.utils.escape_html(sourceDetails)}</div>` : ""}
 					${refreshedAt ? `<div class="small text-muted mt-1">${frappe.utils.escape_html(refreshedAt)}</div>` : ""}
 				</div>
 				${button}
@@ -393,7 +601,7 @@ sync.helpers.renderPreviewModal = function (payload) {
 			<div class="mb-3">
 				<h5 class="mb-2">${__("Fields")}</h5>
 				<div class="d-flex flex-wrap gap-2">
-					${sync.helpers.renderChipList(__("Key Fields"), data.key_fields)}
+					${sync.helpers.renderChipList(__("Match Fields"), data.match_fields || data.key_fields)}
 					${sync.helpers.renderChipList(__("Value Mapping"), data.value_mapping_fields)}
 				</div>
 			</div>
@@ -1063,11 +1271,29 @@ sync.helpers.testPartnerConnection = function (frm) {
 };
 
 sync.helpers.toggleSourceFields = function (frm) {
-	const usesQuery = Boolean(frm.doc.query);
-	frm.toggle_display("query", true);
-	frm.toggle_display("table_name", !usesQuery);
-	frm.toggle_reqd("table_name", !usesQuery);
-	frm.toggle_reqd("query", usesQuery);
+	const readQueryField = sync.helpers.getDefinitionReadQueryFieldName(frm);
+	const matchFieldsField = sync.helpers.getDefinitionMatchFieldName(frm);
+	const hasReadQuery = Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
+
+	sync.helpers.toggleDefinitionField(frm, readQueryField || "query", true, false);
+	if (readQueryField === "read_query" && frm.fields_dict.query) {
+		sync.helpers.toggleDefinitionField(frm, "query", false, false);
+	}
+
+	sync.helpers.toggleDefinitionField(frm, "table_name", true, true);
+	sync.helpers.setDefinitionFieldProperty(
+		frm,
+		"table_name",
+		"description",
+		hasReadQuery
+			? __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Read Query is active, so reads are limited by the query while writes still target Table Name.")
+			: __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Leave Read Query blank to read the full table.")
+	);
+
+	sync.helpers.toggleDefinitionField(frm, matchFieldsField || "key_fields", true, true);
+	if (matchFieldsField === "match_fields" && frm.fields_dict.key_fields) {
+		sync.helpers.toggleDefinitionField(frm, "key_fields", false, false);
+	}
 };
 
 sync.helpers.toggleSyncTypeSections = function (frm) {

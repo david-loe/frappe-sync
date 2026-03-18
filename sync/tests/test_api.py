@@ -96,7 +96,7 @@ class TestSyncApi(ApiTestCase):
 			patch.object(self.api.frappe, "throw", side_effect=frappe.ValidationError("unsafe source")) as mock_throw,
 		):
 			with self.assertRaises(frappe.ValidationError):
-				self.api.get_sync_partner_table_columns(partner.name, query=" select * from x ")
+				self.api.get_sync_partner_table_columns(partner.name, read_query=" select * from x ")
 
 		mock_throw.assert_called_once()
 

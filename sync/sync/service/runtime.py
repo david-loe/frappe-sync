@@ -12,7 +12,7 @@ import frappe
 from frappe.utils import cint, get_datetime, get_system_timezone, now_datetime
 import yaml
 
-from .connectors import get_connector_for_partner
+from .connectors import ConnectorCreateOptions, get_connector_for_partner
 
 try:
 	from croniter import croniter
@@ -65,13 +65,27 @@ class SyncDefinitionConfig:
 	conflict_policy: str
 	timestamp_buffer_seconds: int
 	table_name: str | None
-	query: str | None
-	key_fields: list[str]
+	read_query: str | None
+	match_fields: list[str]
 	mapping: dict[str, dict[str, str]]
 	value_mapping: dict[str, dict[Any, Any]]
 	frappe_modified_fields: list[str]
 	partner_modified_fields: list[str]
+	partner_identity_field: str | None = None
+	frappe_partner_identity_field: str | None = None
+	partner_frappe_identity_field: str | None = None
+	partner_create_id_strategy: str = "payload"
+	partner_create_id_source: str | None = None
+	partner_create_id_scope_where: str | None = None
 	partner_time_zone: str | None = None
+
+	@property
+	def key_fields(self) -> list[str]:
+		return self.match_fields
+
+	@property
+	def query(self) -> str | None:
+		return self.read_query
 
 
 @dataclass(slots=True)
@@ -351,7 +365,12 @@ def _build_preview(sync_definition: Any, *, limit: int) -> dict[str, Any]:
 	connector = get_connector_for_partner(partner_doc)
 	ping = connector.ping()
 
-	fields = sorted(set(mapping.keys()) | set(config.key_fields) | {"name", "modified"})
+	fields = sorted(
+		set(mapping.keys())
+		| set(_config_match_fields(config))
+		| {"name", "modified"}
+		| ({_config_frappe_partner_identity_field(config)} if _config_frappe_partner_identity_field(config) else set())
+	)
 	filters = config.filters
 	frappe_records = frappe.get_all(
 		config.doctype,
@@ -369,7 +388,9 @@ def _build_preview(sync_definition: Any, *, limit: int) -> dict[str, Any]:
 		"frappe_records_sample_count": len(frappe_records),
 		"frappe_records_sample": frappe_records,
 		"mapping": mapping,
-		"key_fields": config.key_fields,
+		"match_fields": _config_match_fields(config),
+		"read_query": _config_read_query(config),
+		"partner_identity_field": _config_partner_identity_field(config),
 		"value_mapping_fields": sorted(config.value_mapping.keys()),
 		"actions": [{"direction": config.sync_type, "result": "preview"}],
 	}
@@ -702,12 +723,18 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		conflict_policy=str(getattr(config, "conflict_policy", "newest_wins")),
 		timestamp_buffer_seconds=cint(getattr(config, "timestamp_buffer_seconds", 15)) or 0,
 		table_name=getattr(config, "table_name", None),
-		query=getattr(config, "query", None),
-		key_fields=list(getattr(config, "key_fields", []) or []),
+		read_query=getattr(config, "read_query", None) or getattr(config, "query", None),
+		match_fields=list(getattr(config, "match_fields", []) or getattr(config, "key_fields", []) or []),
 		mapping=_normalize_field_mapping(getattr(config, "mapping", {}) or {}),
 		value_mapping=dict(getattr(config, "value_mapping", {}) or {}),
 		frappe_modified_fields=list(getattr(config, "frappe_modified_fields", ["modified"]) or ["modified"]),
 		partner_modified_fields=list(getattr(config, "partner_modified_fields", ["modified"]) or ["modified"]),
+		partner_identity_field=_clean_string(getattr(config, "partner_identity_field", None)),
+		frappe_partner_identity_field=_clean_string(getattr(config, "frappe_partner_identity_field", None)),
+		partner_frappe_identity_field=_clean_string(getattr(config, "partner_frappe_identity_field", None)),
+		partner_create_id_strategy=_clean_string(getattr(config, "partner_create_id_strategy", None)) or "payload",
+		partner_create_id_source=_clean_string(getattr(config, "partner_create_id_source", None)),
+		partner_create_id_scope_where=_clean_string(getattr(config, "partner_create_id_scope_where", None)),
 		partner_time_zone=_normalize_time_zone_name(getattr(config, "partner_time_zone", None)),
 	)
 	_validate_runtime_mapping(normalized)
@@ -748,11 +775,12 @@ def _sync_frappe_to_partner(
 	source_keys: set[tuple[Any, ...]] | None = None,
 ):
 	partner_index = partner_records if isinstance(partner_records, dict) else _index_partner_records(config, partner_records)
+	partner_identity_index = _build_partner_identity_index(config, partner_records)
 	collected_source_keys = source_keys if source_keys is not None else set()
 	connector_mapping = _flatten_mapping_for_direction(config.mapping, MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
 
 	for frappe_record in frappe_records:
-		key = _key_tuple_from_frappe(frappe_record, config.key_fields)
+		key = _key_tuple_from_frappe(frappe_record, _config_match_fields(config))
 		if not _valid_key(key):
 			_register_and_log(
 				stats=stats,
@@ -769,14 +797,18 @@ def _sync_frappe_to_partner(
 			continue
 
 		collected_source_keys.add(key)
-		partner_payload = _map_frappe_to_partner(
+		partner_payload = _apply_partner_link_fields(
+			config,
 			frappe_record,
-			config.mapping,
-			config.value_mapping,
-			doctype=getattr(config, "doctype", None),
-			partner_time_zone=getattr(config, "partner_time_zone", None),
+			_map_frappe_to_partner(
+				frappe_record,
+				config.mapping,
+				config.value_mapping,
+				doctype=getattr(config, "doctype", None),
+				partner_time_zone=getattr(config, "partner_time_zone", None),
+			),
 		)
-		existing_partner = partner_index.get(key)
+		existing_partner = _find_existing_partner_record(config, frappe_record, partner_index, partner_identity_index)
 		exists = existing_partner is not None
 
 		if not exists and not config.create_new:
@@ -821,14 +853,15 @@ def _sync_frappe_to_partner(
 		try:
 			write = connector.upsert_record(
 				record=partner_payload,
-				key_fields=config.key_fields,
+				key_values=_partner_key_values_for_write(config, frappe_record, key),
 				mapping=connector_mapping,
 				dry_run=dry_run,
 				source=config.table_name,
-				query=config.query,
+				create_options=_build_partner_create_options(config),
 			)
 			if not write.ok:
 				raise RuntimeError(write.message or "Partner upsert failed.")
+			_persist_frappe_partner_identity(config, frappe_record, write, dry_run=dry_run)
 		except Exception as exc:
 			_register_and_log(
 				stats=stats,
@@ -853,7 +886,7 @@ def _sync_frappe_to_partner(
 			message="Dry run upsert." if dry_run else "Upserted partner record.",
 			direction=label_direction,
 			frappe_record=frappe_record,
-			partner_record=partner_payload,
+			partner_record=getattr(write, "record", None) or partner_payload,
 			changes=changes,
 			commit=False,
 		)
@@ -887,6 +920,7 @@ def _sync_partner_to_frappe(
 	source_keys: set[tuple[Any, ...]] | None = None,
 ):
 	frappe_index = frappe_records if isinstance(frappe_records, dict) else _index_frappe_records(config, frappe_records)
+	frappe_partner_identity_index = _build_frappe_partner_identity_index(config, frappe_records)
 	partner_index = _index_partner_records(config, partner_records)
 	collected_source_keys = source_keys if source_keys is not None else set()
 
@@ -914,7 +948,18 @@ def _sync_partner_to_frappe(
 			doctype=getattr(config, "doctype", None),
 			partner_time_zone=getattr(config, "partner_time_zone", None),
 		)
-		existing_frappe = frappe_index.get(key)
+		frappe_partner_field = _config_frappe_partner_identity_field(config)
+		partner_identity_field = _config_partner_identity_field(config)
+		if frappe_partner_field and partner_identity_field:
+			partner_id = partner_record.get(partner_identity_field)
+			if partner_id not in (None, ""):
+				frappe_payload[frappe_partner_field] = partner_id
+		existing_frappe = _find_existing_frappe_record(
+			config,
+			partner_record,
+			frappe_index,
+			frappe_partner_identity_index,
+		)
 		exists = existing_frappe is not None
 
 		if not exists and not config.create_new:
@@ -1111,8 +1156,8 @@ def _sync_bidirectional(
 	stats: SyncStats,
 	last_successful_sync: datetime | None,
 ):
-	frappe_index = frappe_records if isinstance(frappe_records, dict) else _index_frappe_records(config, frappe_records)
-	partner_index = partner_records if isinstance(partner_records, dict) else _index_partner_records(config, partner_records)
+	frappe_index = _index_paired_frappe_records(config, frappe_records)
+	partner_index = _index_paired_partner_records(config, partner_records)
 	all_keys = set(frappe_index.keys()) | set(partner_index.keys())
 
 	for key in sorted(all_keys, key=lambda item: json.dumps(item, default=str, ensure_ascii=True)):
@@ -1325,18 +1370,21 @@ def _apply_partner_update(
 	message: str,
 	commit: bool = True,
 ):
+	key = _key_tuple_from_frappe(frappe_record, _config_match_fields(config))
+	partner_payload = _apply_partner_link_fields(config, frappe_record, partner_payload)
 	connector_mapping = _flatten_mapping_for_direction(config.mapping, MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
 	try:
 		write = connector.upsert_record(
 			record=partner_payload,
-			key_fields=config.key_fields,
+			key_values=_partner_key_values_for_write(config, frappe_record, key),
 			mapping=connector_mapping,
 			dry_run=dry_run,
 			source=config.table_name,
-			query=config.query,
+			create_options=_build_partner_create_options(config),
 		)
 		if not write.ok:
 			raise RuntimeError(write.message or "Partner upsert failed.")
+		_persist_frappe_partner_identity(config, frappe_record, write, dry_run=dry_run)
 		_register_and_log(
 			stats=stats,
 			run_doc=run_doc,
@@ -1346,7 +1394,7 @@ def _apply_partner_update(
 			message=("Dry run update." if dry_run else message),
 			direction=direction,
 			frappe_record=frappe_record,
-			partner_record=partner_payload,
+			partner_record=getattr(write, "record", None) or partner_payload,
 			changes=changes,
 			commit=commit,
 		)
@@ -1429,9 +1477,10 @@ def _get_frappe_source_records(config: SyncDefinitionConfig, context: SyncContex
 def _iter_frappe_source_batches(config: SyncDefinitionConfig, context: SyncContext):
 	fields = sorted(
 		_mapping_fields_for_sync_type(config.mapping, config.sync_type)
-		| set(config.key_fields)
+		| set(_config_match_fields(config))
 		| set(config.frappe_modified_fields)
 		| {"name", "modified"}
+		| ({_config_frappe_partner_identity_field(config)} if _config_frappe_partner_identity_field(config) else set())
 	)
 	valid_fields = [field for field in fields if _doctype_has_field(config.doctype, field)]
 	or_filters = None
@@ -1464,9 +1513,9 @@ def _iter_partner_source_batches(config: SyncDefinitionConfig, connector: Any, c
 	record_batches = _iter_partner_record_batches(
 		connector=connector,
 		source=config.table_name,
-		query=config.query,
+		query=_config_read_query(config),
 		batch_size=config.batch_size,
-		key_fields=config.key_fields,
+		key_fields=_partner_fetch_key_fields(config),
 	)
 	if not context.is_delta_sync:
 		return record_batches
@@ -1650,16 +1699,16 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 	conflict_policy = str(_first_value(sync_definition_doc, ["conflict_policy"], default="newest_wins"))
 	timestamp_buffer_seconds = cint(_first_value(sync_definition_doc, ["timestamp_buffer_seconds"], default=15)) or 0
 
-	key_fields = _get_key_fields(sync_definition_doc)
+	match_fields = _get_match_fields(sync_definition_doc)
 	mapping = _get_field_mapping(sync_definition_doc)
 	value_mapping = _get_value_mapping(sync_definition_doc)
 	if not mapping:
 		raise frappe.ValidationError("Sync Definition has no field mapping entries.")
-	if not key_fields:
-		key_fields = [next(iter(mapping.keys()))]
+	if not match_fields:
+		match_fields = [next(iter(mapping.keys()))]
 
-	frappe_modified_fields = _get_modified_fields(sync_definition_doc, "frappe_modified_field_rows", "frappe_modified_fields") or ["modified"]
-	partner_modified_fields = _get_modified_fields(sync_definition_doc, "partner_modified_field_rows", "partner_modified_fields") or ["modified"]
+	frappe_modified_fields = _get_modified_fields(sync_definition_doc, "frappe_modified_field_rows") or ["modified"]
+	partner_modified_fields = _get_modified_fields(sync_definition_doc, "partner_modified_field_rows") or ["modified"]
 
 	config = SyncDefinitionConfig(
 		name=sync_definition_doc.name,
@@ -1674,29 +1723,39 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		use_last_sync_date=use_last_sync_date,
 		conflict_policy=conflict_policy,
 		timestamp_buffer_seconds=timestamp_buffer_seconds,
-		table_name=_clean_string(_first_value(sync_definition_doc, ["table_name", "partner_table"])),
-		query=_clean_string(_first_value(sync_definition_doc, ["query", "partner_query"])),
-		key_fields=key_fields,
+		table_name=_clean_string(_first_value(sync_definition_doc, ["table_name"])),
+		read_query=_clean_string(_first_value(sync_definition_doc, ["read_query"])),
+		match_fields=match_fields,
 		mapping=mapping,
 		value_mapping=value_mapping,
 		frappe_modified_fields=frappe_modified_fields,
 		partner_modified_fields=partner_modified_fields,
+		partner_identity_field=_clean_string(_first_value(sync_definition_doc, ["partner_identity_field"])),
+		frappe_partner_identity_field=_clean_string(_first_value(sync_definition_doc, ["frappe_partner_identity_field"])),
+		partner_frappe_identity_field=_clean_string(_first_value(sync_definition_doc, ["partner_frappe_identity_field"])),
+		partner_create_id_strategy=_clean_string(_first_value(sync_definition_doc, ["partner_create_id_strategy"])) or "payload",
+		partner_create_id_source=_clean_string(_first_value(sync_definition_doc, ["partner_create_id_source"])),
+		partner_create_id_scope_where=_clean_string(_first_value(sync_definition_doc, ["partner_create_id_scope_where"])),
 	)
 	_validate_runtime_mapping(config)
 	return config
 
 
-def _get_key_fields(sync_definition_doc: Any) -> list[str]:
+def _get_match_fields(sync_definition_doc: Any) -> list[str]:
 	rows = _get_child_rows_by_options(sync_definition_doc, "Sync Key Field")
-	key_fields: list[str] = []
+	match_fields: list[str] = []
 	for row in rows:
 		fieldname = _first_value_dict(row, ["field_name", "key_field", "frappe_field", "fieldname"])
 		if fieldname:
-			key_fields.append(str(fieldname))
-	top_level = _first_value(sync_definition_doc, ["key_fields"])
-	if not key_fields and isinstance(top_level, str):
-		key_fields = [entry.strip() for entry in top_level.split(",") if entry.strip()]
-	return key_fields
+			match_fields.append(str(fieldname).strip())
+	top_level = _first_value(sync_definition_doc, ["match_fields", "key_fields"])
+	if not match_fields and isinstance(top_level, str):
+		match_fields = [entry.strip() for entry in top_level.split(",") if entry.strip()]
+	return [field for field in match_fields if field]
+
+
+def _get_key_fields(sync_definition_doc: Any) -> list[str]:
+	return _get_match_fields(sync_definition_doc)
 
 
 def _get_field_mapping(sync_definition_doc: Any) -> dict[str, dict[str, str]]:
@@ -1833,20 +1892,20 @@ def _required_mapping_directions(sync_type: str) -> list[str]:
 def _validate_runtime_mapping(config: SyncDefinitionConfig) -> None:
 	mapping = _normalize_field_mapping(config.mapping)
 	missing_or_invalid: list[str] = []
-	for key_field in config.key_fields:
-		entry = mapping.get(key_field)
+	for match_field in _config_match_fields(config):
+		entry = mapping.get(match_field)
 		if not entry:
 			continue
 		for required_direction in _required_mapping_directions(config.sync_type):
 			if not _mapping_allows_direction(entry, required_direction):
-				missing_or_invalid.append(f"{key_field} ({required_direction})")
+				missing_or_invalid.append(f"{match_field} ({required_direction})")
 	if missing_or_invalid:
 		raise frappe.ValidationError(
-			"Key field mappings must allow the active sync direction(s): " + ", ".join(missing_or_invalid)
+			"Match field mappings must allow the active sync direction(s): " + ", ".join(missing_or_invalid)
 		)
 
 
-def _get_modified_fields(sync_definition_doc: Any, table_fieldname: str, legacy_fieldname: str) -> list[str]:
+def _get_modified_fields(sync_definition_doc: Any, table_fieldname: str) -> list[str]:
 	rows = _first_value(sync_definition_doc, [table_fieldname], default=[]) or []
 	values: list[str] = []
 	for row in rows:
@@ -1858,7 +1917,7 @@ def _get_modified_fields(sync_definition_doc: Any, table_fieldname: str, legacy_
 		fieldname = _clean_string(fieldname)
 		if fieldname:
 			values.append(fieldname)
-	return values or _parse_lines(_first_value(sync_definition_doc, [legacy_fieldname]))
+	return values
 
 
 def _get_value_mapping(sync_definition_doc: Any) -> dict[str, dict[Any, Any]]:
@@ -2123,7 +2182,7 @@ def _iter_frappe_record_batches(
 def _index_frappe_records(config: SyncDefinitionConfig, records: list[dict[str, Any]]) -> dict[tuple[Any, ...], dict[str, Any]]:
 	index: dict[tuple[Any, ...], dict[str, Any]] = {}
 	for record in records:
-		key = _key_tuple_from_frappe(record, config.key_fields)
+		key = _key_tuple_from_frappe(record, _config_match_fields(config))
 		if _valid_key(key):
 			index[key] = record
 	return index
@@ -2132,7 +2191,7 @@ def _index_frappe_records(config: SyncDefinitionConfig, records: list[dict[str, 
 def _index_partner_records(config: SyncDefinitionConfig, records: list[dict[str, Any]]) -> dict[tuple[Any, ...], dict[str, Any]]:
 	index: dict[tuple[Any, ...], dict[str, Any]] = {}
 	for record in records:
-		key = _key_tuple_from_partner(record, config.key_fields, config.mapping)
+		key = _key_tuple_from_partner(record, _config_match_fields(config), config.mapping)
 		if _valid_key(key):
 			index[key] = record
 	return index
@@ -2152,10 +2211,233 @@ def _valid_key(key: tuple[Any, ...]) -> bool:
 
 def _partner_key_values_from_tuple(config: SyncDefinitionConfig, key_values: tuple[Any, ...]) -> dict[str, Any]:
 	result = {}
-	for idx, frappe_key in enumerate(config.key_fields):
+	for idx, frappe_key in enumerate(_config_match_fields(config)):
 		partner_field = _partner_field_for_mapping(config.mapping, frappe_key, frappe_key)
 		result[partner_field] = key_values[idx]
 	return result
+
+
+def _partner_fetch_key_fields(config: SyncDefinitionConfig) -> list[str]:
+	mapping = getattr(config, "mapping", {}) or {}
+	fields = [
+		_partner_field_for_mapping(mapping, frappe_field, frappe_field)
+		for frappe_field in _config_match_fields(config)
+	]
+	if _config_partner_identity_field(config):
+		fields.append(_config_partner_identity_field(config) or "")
+	return [field for field in fields if field]
+
+
+def _config_match_fields(config: Any) -> list[str]:
+	return list(getattr(config, "match_fields", None) or getattr(config, "key_fields", None) or [])
+
+
+def _config_read_query(config: Any) -> str | None:
+	return getattr(config, "read_query", None) or getattr(config, "query", None)
+
+
+def _config_partner_identity_field(config: Any) -> str | None:
+	return getattr(config, "partner_identity_field", None)
+
+
+def _config_frappe_partner_identity_field(config: Any) -> str | None:
+	return getattr(config, "frappe_partner_identity_field", None)
+
+
+def _config_partner_frappe_identity_field(config: Any) -> str | None:
+	return getattr(config, "partner_frappe_identity_field", None)
+
+
+def _config_partner_create_strategy(config: Any) -> str:
+	return getattr(config, "partner_create_id_strategy", None) or "payload"
+
+
+def _frappe_partner_identity_value(config: SyncDefinitionConfig, frappe_record: dict[str, Any] | None) -> Any:
+	fieldname = _config_frappe_partner_identity_field(config)
+	if not fieldname or not frappe_record:
+		return None
+	return frappe_record.get(fieldname)
+
+
+def _partner_identity_value(config: SyncDefinitionConfig, partner_record: dict[str, Any] | None) -> Any:
+	fieldname = _config_partner_identity_field(config)
+	if not fieldname or not partner_record:
+		return None
+	return partner_record.get(fieldname)
+
+
+def _build_partner_identity_index(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> dict[Any, dict[str, Any]]:
+	iterable = records.values() if isinstance(records, dict) else records
+	index: dict[Any, dict[str, Any]] = {}
+	for record in iterable:
+		identity = _partner_identity_value(config, record)
+		if identity not in (None, ""):
+			index[identity] = record
+	return index
+
+
+def _build_frappe_partner_identity_index(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> dict[Any, dict[str, Any]]:
+	fieldname = _config_frappe_partner_identity_field(config)
+	if not fieldname:
+		return {}
+	iterable = records.values() if isinstance(records, dict) else records
+	index: dict[Any, dict[str, Any]] = {}
+	for record in iterable:
+		identity = record.get(fieldname)
+		if identity not in (None, ""):
+			index[identity] = record
+	return index
+
+
+def _find_existing_partner_record(
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any],
+	partner_index: dict[tuple[Any, ...], dict[str, Any]],
+	partner_identity_index: dict[Any, dict[str, Any]],
+) -> dict[str, Any] | None:
+	frappe_partner_id = _frappe_partner_identity_value(config, frappe_record)
+	if frappe_partner_id not in (None, ""):
+		existing = partner_identity_index.get(frappe_partner_id)
+		if existing:
+			return existing
+	key = _key_tuple_from_frappe(frappe_record, _config_match_fields(config))
+	if _valid_key(key):
+		return partner_index.get(key)
+	return None
+
+
+def _find_existing_frappe_record(
+	config: SyncDefinitionConfig,
+	partner_record: dict[str, Any],
+	frappe_index: dict[tuple[Any, ...], dict[str, Any]],
+	frappe_partner_identity_index: dict[Any, dict[str, Any]],
+) -> dict[str, Any] | None:
+	partner_identity = _partner_identity_value(config, partner_record)
+	if partner_identity not in (None, ""):
+		existing = frappe_partner_identity_index.get(partner_identity)
+		if existing:
+			return existing
+	key = _key_tuple_from_partner(partner_record, _config_match_fields(config), config.mapping)
+	if _valid_key(key):
+		return frappe_index.get(key)
+	return None
+
+
+def _pair_token_from_frappe(config: SyncDefinitionConfig, record: dict[str, Any]) -> tuple[Any, ...] | None:
+	identity = _frappe_partner_identity_value(config, record)
+	if _config_partner_identity_field(config) and identity not in (None, ""):
+		return ("partner_identity", identity)
+	key = _key_tuple_from_frappe(record, _config_match_fields(config))
+	if _valid_key(key):
+		return ("match", *key)
+	return None
+
+
+def _pair_token_from_partner(config: SyncDefinitionConfig, record: dict[str, Any]) -> tuple[Any, ...] | None:
+	identity = _partner_identity_value(config, record)
+	if _config_partner_identity_field(config) and identity not in (None, ""):
+		return ("partner_identity", identity)
+	key = _key_tuple_from_partner(record, _config_match_fields(config), config.mapping)
+	if _valid_key(key):
+		return ("match", *key)
+	return None
+
+
+def _index_paired_frappe_records(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> dict[tuple[Any, ...], dict[str, Any]]:
+	iterable = records.values() if isinstance(records, dict) else records
+	index: dict[tuple[Any, ...], dict[str, Any]] = {}
+	for record in iterable:
+		token = _pair_token_from_frappe(config, record)
+		if token:
+			index[token] = record
+	return index
+
+
+def _index_paired_partner_records(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> dict[tuple[Any, ...], dict[str, Any]]:
+	iterable = records.values() if isinstance(records, dict) else records
+	index: dict[tuple[Any, ...], dict[str, Any]] = {}
+	for record in iterable:
+		token = _pair_token_from_partner(config, record)
+		if token:
+			index[token] = record
+	return index
+
+
+def _partner_key_values_for_write(
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any],
+	key: tuple[Any, ...],
+) -> dict[str, Any]:
+	frappe_partner_id = _frappe_partner_identity_value(config, frappe_record)
+	partner_identity_field = _config_partner_identity_field(config)
+	if partner_identity_field and frappe_partner_id not in (None, ""):
+		return {partner_identity_field: frappe_partner_id}
+	return _partner_key_values_from_tuple(config, key)
+
+
+def _build_partner_create_options(config: SyncDefinitionConfig) -> ConnectorCreateOptions:
+	return ConnectorCreateOptions(
+		identity_field=_config_partner_identity_field(config),
+		strategy=_config_partner_create_strategy(config),
+		source=getattr(config, "partner_create_id_source", None),
+		scope_where=getattr(config, "partner_create_id_scope_where", None),
+	)
+
+
+def _apply_partner_link_fields(
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any],
+	partner_payload: dict[str, Any],
+) -> dict[str, Any]:
+	payload = dict(partner_payload)
+	partner_frappe_field = _config_partner_frappe_identity_field(config)
+	if partner_frappe_field and frappe_record.get("name") not in (None, ""):
+		payload[partner_frappe_field] = frappe_record.get("name")
+	return payload
+
+
+def _persist_frappe_partner_identity(
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any],
+	write_result: Any,
+	*,
+	dry_run: bool,
+) -> None:
+	frappe_partner_field = _config_frappe_partner_identity_field(config)
+	partner_identity_field = _config_partner_identity_field(config)
+	if dry_run or not frappe_partner_field or not partner_identity_field:
+		return
+	doc_name = frappe_record.get("name")
+	if not doc_name:
+		return
+	resolved = {}
+	if isinstance(getattr(write_result, "resolved_key_values", None), dict):
+		resolved = write_result.resolved_key_values
+	partner_id = resolved.get(partner_identity_field)
+	record = getattr(write_result, "record", None)
+	if partner_id in (None, "") and isinstance(record, dict):
+		partner_id = record.get(partner_identity_field)
+	if partner_id in (None, ""):
+		return
+	if frappe_record.get(frappe_partner_field) == partner_id:
+		return
+	doc = frappe.get_doc(config.doctype, doc_name)
+	if _doctype_has_field(config.doctype, frappe_partner_field):
+		doc.set(frappe_partner_field, partner_id)
+		doc.save(ignore_permissions=True)
+		frappe_record[frappe_partner_field] = partner_id
 
 
 def _register_and_log(
@@ -2613,7 +2895,7 @@ def _compact_record_key(
 ) -> str:
 	if config:
 		parts = []
-		for frappe_field in config.key_fields:
+		for frappe_field in _config_match_fields(config):
 			value = None
 			if frappe_record:
 				value = frappe_record.get(frappe_field)
@@ -2631,7 +2913,7 @@ def _compact_source_id(config: SyncDefinitionConfig | None, *, frappe_record: di
 	if frappe_record and frappe_record.get("name"):
 		return str(frappe_record["name"])
 	if config and frappe_record:
-		parts = [f"{field}={frappe_record.get(field)}" for field in config.key_fields if frappe_record.get(field) not in (None, "")]
+		parts = [f"{field}={frappe_record.get(field)}" for field in _config_match_fields(config) if frappe_record.get(field) not in (None, "")]
 		if parts:
 			return " | ".join(parts)
 	return _build_record_key(frappe_record or {})
@@ -2640,7 +2922,7 @@ def _compact_source_id(config: SyncDefinitionConfig | None, *, frappe_record: di
 def _compact_target_id(config: SyncDefinitionConfig | None, *, partner_record: dict[str, Any] | None) -> str:
 	if config and partner_record:
 		parts = []
-		for frappe_field in config.key_fields:
+		for frappe_field in _config_match_fields(config):
 			partner_field = _partner_field_for_mapping(config.mapping, frappe_field, frappe_field)
 			value = partner_record.get(partner_field)
 			if value not in (None, ""):

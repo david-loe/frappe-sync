@@ -198,20 +198,21 @@ def get_sync_definition_field_choices(doctype_name: str) -> dict[str, Any]:
 def get_sync_partner_table_columns(
 	sync_partner_name: str,
 	table_name: str | None = None,
-	query: str | None = None,
+	read_query: str | None = None,
 ) -> dict[str, Any]:
 	_require_system_manager()
 	partner_doc = _require_doc_permission(SYNC_PARTNER_DOCTYPE, sync_partner_name, permtype="write")
 	connector = get_connector_for_partner(partner_doc)
 	normalized_table_name = _clean_string(table_name)
-	normalized_query = _clean_string(query)
+	normalized_read_query = _clean_string(read_query)
 	try:
-		columns = connector.describe_source_columns(source=normalized_table_name, query=normalized_query)
+		columns = connector.describe_source_columns(source=normalized_table_name, query=normalized_read_query)
 	except Exception as exc:
 		frappe.throw(str(exc), exc=frappe.ValidationError)
 	return {
 		"sync_partner": partner_doc.name,
 		"table_name": normalized_table_name,
+		"read_query": normalized_read_query,
 		"columns": columns,
 	}
 

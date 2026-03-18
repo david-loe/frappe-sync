@@ -23,19 +23,25 @@
   "conflict_policy",
   "section_break_source",
   "table_name",
-  "query",
+  "read_query",
   "partner_columns_status",
   "section_break_filters",
   "filter_expression",
   "column_break_modified_fields",
   "frappe_modified_field_rows",
   "partner_modified_field_rows",
-  "frappe_modified_fields",
-  "partner_modified_fields",
   "section_break_mapping",
-  "key_fields",
+  "match_fields",
   "field_mapping",
   "value_mapping",
+  "section_break_partner_identity",
+  "partner_identity_field",
+  "frappe_partner_identity_field",
+  "partner_frappe_identity_field",
+  "column_break_partner_identity",
+  "partner_create_id_strategy",
+  "partner_create_id_source",
+  "partner_create_id_scope_where",
   "section_break_runtime",
   "preview_limit",
   "export_mask_credentials",
@@ -156,12 +162,15 @@
   {
    "fieldname": "table_name",
    "fieldtype": "Data",
-   "label": "Table Name"
+   "label": "Table Name",
+   "reqd": 1,
+   "description": "Writable partner table used for inserts, updates, deletes, and as the default read source when Read Query is blank."
   },
   {
-   "fieldname": "query",
+   "fieldname": "read_query",
    "fieldtype": "Code",
-   "label": "Query"
+   "label": "Read Query",
+   "description": "Optional SELECT query used only for reading partner records. Writes always target Table Name."
   },
   {
    "fieldname": "partner_columns_status",
@@ -197,29 +206,15 @@
    "options": "Sync Modified Field"
   },
   {
-   "description": "Legacy fallback storage for modified fields.",
-   "fieldname": "frappe_modified_fields",
-   "fieldtype": "Small Text",
-   "hidden": 1,
-   "label": "Frappe Modified Fields"
-  },
-  {
-   "description": "Legacy fallback storage for modified fields.",
-   "fieldname": "partner_modified_fields",
-   "fieldtype": "Small Text",
-   "hidden": 1,
-   "label": "Partner Modified Fields"
-  },
-  {
    "fieldname": "section_break_mapping",
    "fieldtype": "Section Break",
    "label": "Field Mapping"
   },
   {
-   "description": "Choose the Frappe fields that uniquely identify a record.",
-   "fieldname": "key_fields",
+   "description": "Choose the Frappe fields that define a logical match between Frappe and partner records.",
+   "fieldname": "match_fields",
    "fieldtype": "Table",
-   "label": "Key Fields",
+   "label": "Match Fields",
    "options": "Sync Key Field",
    "reqd": 1
   },
@@ -236,6 +231,53 @@
    "fieldtype": "Table",
    "label": "Value Mapping",
    "options": "Sync Value Mapping"
+  },
+  {
+   "fieldname": "section_break_partner_identity",
+   "fieldtype": "Section Break",
+   "label": "Partner Identity"
+  },
+  {
+   "fieldname": "partner_identity_field",
+   "fieldtype": "Data",
+   "label": "Partner Identity Field",
+   "description": "Technical partner-side identifier, for example NR or id. Used for scoped ID generation and stable link-back into Frappe."
+  },
+  {
+   "fieldname": "frappe_partner_identity_field",
+   "fieldtype": "Select",
+   "label": "Frappe Partner Identity Field",
+   "description": "Optional Frappe field that stores the resolved partner identifier after a successful partner write."
+  },
+  {
+   "fieldname": "partner_frappe_identity_field",
+   "fieldtype": "Data",
+   "label": "Partner Frappe Identity Field",
+   "description": "Optional partner-side column that receives the Frappe document name for a symmetric cross-link."
+  },
+  {
+   "fieldname": "column_break_partner_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "payload",
+   "fieldname": "partner_create_id_strategy",
+   "fieldtype": "Select",
+   "label": "Partner Create ID Strategy",
+   "options": "payload\nconnector_default\nsequence\nmax_plus_one",
+   "description": "How the partner identifier is produced when a new partner record must be created."
+  },
+  {
+   "fieldname": "partner_create_id_source",
+   "fieldtype": "Data",
+   "label": "Partner Create ID Source",
+   "description": "Strategy-specific source value, for example a database sequence name."
+  },
+  {
+   "fieldname": "partner_create_id_scope_where",
+   "fieldtype": "Code",
+   "label": "Partner Create ID Scope Where",
+   "description": "Optional SQL predicate that limits ID allocation, for example NR BETWEEN 1 AND 89999."
   },
   {
    "fieldname": "section_break_runtime",

@@ -113,7 +113,8 @@
    "fieldname": "host",
    "fieldtype": "Data",
    "label": "Host",
-   "reqd": 1
+   "reqd": 1,
+   "description": "Hostname or IP address of the partner system. For SQL Server use the server name without the database."
   },
   {
    "fieldname": "port",
@@ -125,7 +126,8 @@
    "fieldname": "database_name",
    "fieldtype": "Data",
    "label": "Database",
-   "reqd": 1
+   "reqd": 1,
+   "description": "Database or catalog name used by the connector."
   },
   {
    "fieldname": "column_break_connection",
@@ -181,7 +183,7 @@
    "fieldname": "username",
    "fieldtype": "Data",
    "label": "Username",
-   "description": "Used for password-based authentication."
+   "description": "Login name used for database or API authentication when the selected auth type requires it."
   },
   {
    "fieldname": "password",

@@ -43,16 +43,14 @@ def _db_stub(**overrides):
 class FakeSyncDefinitionDoc:
 	def __init__(self, **values):
 		self.__dict__.update(values)
-		self.key_fields = values.get("key_fields", [])
+		self.match_fields = values.get("match_fields", values.get("key_fields", []))
 		self.field_mapping = values.get("field_mapping", [])
 		self.value_mapping = values.get("value_mapping", [])
 		self.frappe_modified_field_rows = values.get("frappe_modified_field_rows", [])
 		self.partner_modified_field_rows = values.get("partner_modified_field_rows", [])
-		self.frappe_modified_fields = values.get("frappe_modified_fields", "")
-		self.partner_modified_fields = values.get("partner_modified_fields", "")
 		self.preview_limit = values.get("preview_limit", 50)
 		self.delete_missing = values.get("delete_missing", 0)
-		self.query = values.get("query")
+		self.read_query = values.get("read_query", values.get("query"))
 		self.table_name = values.get("table_name")
 		self.use_last_sync_date = values.get("use_last_sync_date", 1)
 		self.title = values.get("title", "SYNC-DEF")
@@ -71,12 +69,21 @@ class FakeSyncDefinitionDoc:
 		self.next_run_at = values.get("next_run_at")
 		self.last_run_status = values.get("last_run_status")
 		self.last_run_summary = values.get("last_run_summary")
+		self.partner_identity_field = values.get("partner_identity_field")
+		self.frappe_partner_identity_field = values.get("frappe_partner_identity_field")
+		self.partner_frappe_identity_field = values.get("partner_frappe_identity_field")
+		self.partner_create_id_strategy = values.get("partner_create_id_strategy", "payload")
+		self.partner_create_id_source = values.get("partner_create_id_source")
+		self.partner_create_id_scope_where = values.get("partner_create_id_scope_where")
 
 	def get(self, key, default=None):
 		return getattr(self, key, default)
 
 	def append(self, fieldname, payload):
 		getattr(self, fieldname).append(SimpleNamespace(**payload))
+
+	def get_match_fields(self):
+		return sync_definition_module.SyncDefinition.get_match_fields(self)
 
 	def get_key_fields(self):
 		return sync_definition_module.SyncDefinition.get_key_fields(self)
@@ -99,17 +106,11 @@ class FakeSyncDefinitionDoc:
 	def as_export_dict(self):
 		return sync_definition_module.SyncDefinition.as_export_dict(self)
 
-	def _ensure_modified_field_rows(self, table_fieldname: str, legacy_fieldname: str):
-		return sync_definition_module.SyncDefinition._ensure_modified_field_rows(self, table_fieldname, legacy_fieldname)
-
-	def ensure_modified_field_rows_from_legacy(self):
-		return sync_definition_module.SyncDefinition.ensure_modified_field_rows_from_legacy(self)
-
-	def sync_modified_fields_legacy_storage(self):
-		return sync_definition_module.SyncDefinition.sync_modified_fields_legacy_storage(self)
-
 	def validate_field_mapping(self):
 		return sync_definition_module.SyncDefinition.validate_field_mapping(self)
+
+	def validate_match_fields(self):
+		return sync_definition_module.SyncDefinition.validate_match_fields(self)
 
 	def validate_key_fields(self):
 		return sync_definition_module.SyncDefinition.validate_key_fields(self)
@@ -174,15 +175,15 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 			with self.assertRaises(frappe.ValidationError):
 				sync_partner_module.SyncPartner.validate(SimpleNamespace(time_zone="Mars/Olympus"))
 
-	def test_validate_key_fields_throws_for_missing_mapping(self):
+	def test_validate_match_fields_throws_for_missing_mapping(self):
 		doc = FakeSyncDefinitionDoc(
-			key_fields=[SimpleNamespace(frappe_field="name"), SimpleNamespace(frappe_field="status")],
+			match_fields=[SimpleNamespace(frappe_field="name"), SimpleNamespace(frappe_field="status")],
 			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id")],
 		)
 
 		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("missing")):
 			with self.assertRaises(frappe.ValidationError):
-				sync_definition_module.SyncDefinition.validate_key_fields(doc)
+				sync_definition_module.SyncDefinition.validate_match_fields(doc)
 
 	def test_validate_field_mapping_normalizes_rows_and_rejects_duplicates(self):
 		doc = FakeSyncDefinitionDoc(
@@ -219,28 +220,24 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 			"Direction must be one of: Both, Frappe to Partner, Partner to Frappe"
 		)
 
-	def test_validate_source_settings_rejects_invalid_source_combinations(self):
+	def test_validate_source_settings_requires_table_name(self):
 		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
 			with self.assertRaises(frappe.ValidationError):
-				sync_definition_module.SyncDefinition.validate_source_settings(
-					FakeSyncDefinitionDoc(table_name="tabTask", query="select * from tabTask")
-				)
-			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_source_settings(FakeSyncDefinitionDoc())
-			with self.assertRaises(frappe.ValidationError):
-				sync_definition_module.SyncDefinition.validate_source_settings(
-					FakeSyncDefinitionDoc(query="select * from tabTask", delete_missing=1)
-				)
+		doc = FakeSyncDefinitionDoc(table_name=" tabTask ", read_query=" select * from tabTask ")
+		sync_definition_module.SyncDefinition.validate_source_settings(doc)
+		self.assertEqual(doc.table_name, "tabTask")
+		self.assertEqual(doc.read_query, "select * from tabTask")
 
 	def test_validate_modified_fields_and_preview_limit_reject_invalid_values(self):
 		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_modified_fields(
-					FakeSyncDefinitionDoc(use_last_sync_date=1, frappe_modified_fields="", partner_modified_fields="updated_at")
+					FakeSyncDefinitionDoc(use_last_sync_date=1, frappe_modified_field_rows=[], partner_modified_field_rows=[SimpleNamespace(field_name="updated_at")])
 				)
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_modified_fields(
-					FakeSyncDefinitionDoc(use_last_sync_date=1, frappe_modified_fields="modified", partner_modified_fields="")
+					FakeSyncDefinitionDoc(use_last_sync_date=1, frappe_modified_field_rows=[SimpleNamespace(field_name="modified")], partner_modified_field_rows=[])
 				)
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_preview_limit(FakeSyncDefinitionDoc(preview_limit=0))
@@ -278,9 +275,9 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 
 		mock_throw.assert_called_once_with("Filter Expression must decode to a JSON array or object.")
 
-	def test_getters_and_legacy_modified_fields_are_normalized(self):
+	def test_getters_and_modified_field_rows_are_normalized(self):
 		doc = FakeSyncDefinitionDoc(
-			key_fields=[SimpleNamespace(frappe_field=" name "), SimpleNamespace(frappe_field="")],
+			match_fields=[SimpleNamespace(frappe_field=" name "), SimpleNamespace(frappe_field="")],
 			field_mapping=[
 				SimpleNamespace(frappe_field=" name ", partner_field=" id ", direction=None),
 				SimpleNamespace(frappe_field="", partner_field="status", direction="Both"),
@@ -289,34 +286,24 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 				SimpleNamespace(frappe_field=" status ", frappe_value="Open", partner_value="1"),
 				SimpleNamespace(frappe_field="", frappe_value="Closed", partner_value="0"),
 			],
-			frappe_modified_fields="modified\nchanged_on",
-			partner_modified_fields="updated_at\npartner_changed",
+			frappe_modified_field_rows=[SimpleNamespace(field_name="modified"), SimpleNamespace(field_name="changed_on")],
+			partner_modified_field_rows=[SimpleNamespace(field_name="updated_at"), SimpleNamespace(field_name="partner_changed")],
 		)
 
-		self.assertEqual(sync_definition_module.SyncDefinition.get_key_fields(doc), ["name"])
+		self.assertEqual(sync_definition_module.SyncDefinition.get_match_fields(doc), ["name"])
 		self.assertEqual(
 			sync_definition_module.SyncDefinition.get_field_mapping(doc),
 			{"name": {"partner_field": "id", "direction": "Both"}},
 		)
 		self.assertEqual(sync_definition_module.SyncDefinition.get_value_mapping(doc), {"status": {"Open": "1"}})
-		sync_definition_module.SyncDefinition.ensure_modified_field_rows_from_legacy(doc)
-		self.assertEqual(
-			[row.field_name for row in doc.frappe_modified_field_rows],
-			["modified", "changed_on"],
-		)
-		self.assertEqual(
-			[row.field_name for row in doc.partner_modified_field_rows],
-			["updated_at", "partner_changed"],
-		)
-		sync_definition_module.SyncDefinition.sync_modified_fields_legacy_storage(doc)
-		self.assertEqual(doc.frappe_modified_fields, "modified\nchanged_on")
-		self.assertEqual(doc.partner_modified_fields, "updated_at\npartner_changed")
+		self.assertEqual(sync_definition_module.SyncDefinition.get_frappe_modified_fields(doc), ["modified", "changed_on"])
+		self.assertEqual(sync_definition_module.SyncDefinition.get_partner_modified_fields(doc), ["updated_at", "partner_changed"])
 
 	def test_export_payload_helpers_cover_preview_limit_and_serialization(self):
 		doc = FakeSyncDefinitionDoc(
 			value_mapping=[SimpleNamespace(frappe_field="status", frappe_value={"a": 1}, partner_value=["x"])],
 			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id", direction="Partner to Frappe")],
-			key_fields=[SimpleNamespace(frappe_field="name")],
+			match_fields=[SimpleNamespace(frappe_field="name")],
 			frappe_modified_field_rows=[SimpleNamespace(field_name="modified")],
 			partner_modified_field_rows=[SimpleNamespace(field_name="updated_at")],
 			preview_limit="invalid",

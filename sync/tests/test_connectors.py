@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from sync.sync.service.connectors import (
 	FirebirdConnector,
+	ConnectorCreateOptions,
 	MssqlConnector,
 	PostgresConnector,
 	get_connector_for_partner,
@@ -399,6 +400,78 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 
 		self.assertTrue(result.ok)
 		self.assertEqual(result.changed_fields, ["id", "status"])
+		self.assertEqual(result.action, "updated")
+		self.assertEqual(result.resolved_key_values, {})
+
+	def test_upsert_record_uses_sequence_strategy_and_returns_resolved_identity(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		cursor = _FakeCursor(rowcount=0)
+		connection = _FakeConnection(cursor)
+
+		with (
+			patch.object(connector, "_connect", return_value=connection),
+			patch.object(connector, "_next_sequence_value", return_value=42) as mock_sequence,
+			patch.object(connector, "_load_record_by_key_values", return_value={"id": 42, "status": "open"}) as mock_load,
+		):
+			result = connector.upsert_record(
+				record={"status": "open"},
+				key_values={"id": "TEMP"},
+				key_fields=[],
+				mapping={},
+				source="public.people",
+				create_options=ConnectorCreateOptions(identity_field="id", strategy="sequence", source="people_seq"),
+			)
+
+		self.assertTrue(result.ok)
+		self.assertEqual(result.action, "created")
+		self.assertEqual(result.record, {"id": 42, "status": "open"})
+		self.assertEqual(result.resolved_key_values, {"id": 42})
+		self.assertEqual(
+			cursor.executed,
+			[
+				('UPDATE "public"."people" SET "status" = %s WHERE "id" = %s', ["open", "TEMP"]),
+				('INSERT INTO "public"."people" ("status", "id") VALUES (%s, %s)', ["open", 42]),
+			],
+		)
+		mock_sequence.assert_called_once_with(connection, "people_seq")
+		mock_load.assert_called_once_with("public.people", {"id": 42})
+
+	def test_upsert_record_uses_scoped_max_plus_one_strategy_and_returns_resolved_identity(self):
+		connector = MssqlConnector(DummyPartner("mssql", server="localhost", database="sync"))
+		cursor = _FakeCursor(rowcount=0)
+		connection = _FakeConnection(cursor)
+
+		with (
+			patch.object(connector, "_connect", return_value=connection),
+			patch.object(connector, "_next_scoped_max_plus_one", return_value=90001) as mock_next,
+			patch.object(connector, "_load_record_by_key_values", return_value={"NR": 90001, "NAME": "Alice"}) as mock_load,
+		):
+			result = connector.upsert_record(
+				record={"NAME": "Alice"},
+				key_values={"NR": "TEMP"},
+				key_fields=[],
+				mapping={},
+				source="dbo.Persons",
+				create_options=ConnectorCreateOptions(
+					identity_field="NR",
+					strategy="max_plus_one",
+					scope_where="NR >= 1 AND NR < 90000",
+				),
+			)
+
+		self.assertTrue(result.ok)
+		self.assertEqual(result.action, "created")
+		self.assertEqual(result.record, {"NR": 90001, "NAME": "Alice"})
+		self.assertEqual(result.resolved_key_values, {"NR": 90001})
+		self.assertEqual(
+			cursor.executed,
+			[
+				('UPDATE [dbo].[Persons] SET [NAME] = ? WHERE [NR] = ?', ["Alice", "TEMP"]),
+				('INSERT INTO [dbo].[Persons] ([NAME], [NR]) VALUES (?, ?)', ["Alice", 90001]),
+			],
+		)
+		mock_next.assert_called_once_with(connection, source_name="dbo.Persons", identity_field="NR", scope_where="NR >= 1 AND NR < 90000")
+		mock_load.assert_called_once_with("dbo.Persons", {"NR": 90001})
 
 	def test_upsert_record_uses_update_path_when_rowcount_is_positive(self):
 		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
@@ -437,6 +510,9 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 
 		self.assertTrue(result.ok)
 		self.assertEqual(result.message, "postgres insert succeeded")
+		self.assertEqual(result.action, "created")
+		self.assertEqual(result.record, {"id": "A1", "status": "open"})
+		self.assertEqual(result.resolved_key_values, {"id": "A1"})
 		self.assertEqual(
 			cursor.executed,
 			[
@@ -485,6 +561,82 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertFalse(result.ok)
 		self.assertIn("upsert failed", result.message)
 		self.assertEqual(connection.rollback_count, 1)
+
+	def test_upsert_record_sequence_strategy_returns_resolved_identity(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		cursor = _FakeCursor(
+			rowcount=0,
+			rows=[(41, "open")],
+			description=[("id",), ("status",)],
+			fetchone_row=(41,),
+		)
+		connection = _FakeConnection(cursor)
+
+		with patch.object(connector, "_connect", return_value=connection):
+			result = connector.upsert_record(
+				record={"status": "open"},
+				key_values={},
+				source="public.sync_records",
+				create_options=ConnectorCreateOptions(identity_field="id", strategy="sequence", source="sync_records_id_seq"),
+			)
+
+		self.assertTrue(result.ok)
+		self.assertEqual(result.action, "created")
+		self.assertEqual(result.resolved_key_values, {"id": 41})
+		self.assertEqual(result.record, {"id": 41, "status": "open"})
+		self.assertEqual(cursor.executed[0], ("SELECT nextval(%s)", ["sync_records_id_seq"]))
+		self.assertEqual(
+			cursor.executed[1],
+			('INSERT INTO "public"."sync_records" ("status", "id") VALUES (%s, %s)', ["open", 41]),
+		)
+
+	def test_upsert_record_scoped_max_plus_one_uses_scope_and_returns_identity(self):
+		connector = MssqlConnector(DummyPartner("mssql", server="localhost", database="sync"))
+		cursor = _FakeCursor(
+			rowcount=0,
+			rows=[(900, "open")],
+			description=[("NR",), ("status",)],
+			fetchone_row=(900,),
+		)
+		connection = _FakeConnection(cursor)
+
+		with patch.object(connector, "_connect", return_value=connection):
+			result = connector.upsert_record(
+				record={"status": "open"},
+				key_values={},
+				source="dbo.Address",
+				create_options=ConnectorCreateOptions(
+					identity_field="NR",
+					strategy="max_plus_one",
+					scope_where="NR BETWEEN 1 AND 89999",
+				),
+			)
+
+		self.assertTrue(result.ok)
+		self.assertEqual(result.action, "created")
+		self.assertEqual(result.resolved_key_values, {"NR": 900})
+		self.assertIn("NR BETWEEN 1 AND 89999", cursor.executed[0][0])
+		self.assertEqual(
+			cursor.executed[1],
+			('INSERT INTO [dbo].[Address] ([status], [NR]) VALUES (?, ?)', ["open", 900]),
+		)
+
+	def test_upsert_record_connector_default_returns_loaded_identity_record(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		cursor = _FakeCursor(rowcount=0, rows=[("AUTO-7", "open")], description=[("id",), ("status",)])
+		connection = _FakeConnection(cursor)
+
+		with patch.object(connector, "_connect", return_value=connection):
+			result = connector.upsert_record(
+				record={"status": "open"},
+				key_values={"id": "AUTO-7"},
+				source="public.sync_records",
+				create_options=ConnectorCreateOptions(identity_field="id", strategy="connector_default"),
+			)
+
+		self.assertTrue(result.ok)
+		self.assertEqual(result.resolved_key_values, {"id": "AUTO-7"})
+		self.assertEqual(result.record, {"id": "AUTO-7", "status": "open"})
 
 	def test_delete_record_validates_inputs_and_supports_dry_run(self):
 		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database="sync", user="tester"))
@@ -663,8 +815,13 @@ class TestConnectorFactoryAndConnectMethods(unittest.TestCase):
 
 		lookup_partner = DummyPartner("ignored", sync_partner_type="ExternalType")
 		with (
-			patch("sync.sync.service.connectors.frappe.db.exists", return_value=True),
-			patch("sync.sync.service.connectors.frappe.get_doc", return_value=SimpleNamespace(get=lambda key, default=None: "firebird")),
+			patch(
+				"sync.sync.service.connectors.frappe",
+				new=SimpleNamespace(
+					db=SimpleNamespace(exists=lambda *args, **kwargs: True),
+					get_doc=lambda *args, **kwargs: SimpleNamespace(get=lambda key, default=None: "firebird"),
+				),
+			),
 		):
 			self.assertEqual(get_partner_type(lookup_partner), "firebird")
 
@@ -785,11 +942,12 @@ class TestPostgresConnectorIntegration(unittest.TestCase):
 
 
 class _FakeCursor:
-	def __init__(self, description=None, rows=None, rowcount=0, raise_on_execute: Exception | None = None):
+	def __init__(self, description=None, rows=None, rowcount=0, raise_on_execute: Exception | None = None, fetchone_row=None):
 		self.description = description or []
 		self.rows = rows or []
 		self.rowcount = rowcount
 		self.raise_on_execute = raise_on_execute
+		self.fetchone_row = fetchone_row
 		self.executed = []
 
 	def execute(self, sql, params=None):
@@ -799,6 +957,9 @@ class _FakeCursor:
 
 	def fetchall(self):
 		return list(self.rows)
+
+	def fetchone(self):
+		return self.fetchone_row
 
 	def close(self):
 		return None

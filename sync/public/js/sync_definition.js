@@ -8,6 +8,7 @@ sync.forms.DEFINITION_PARTNER_COLUMN_METHODS = [
 
 frappe.ui.form.on("Sync Definition", {
 	refresh(frm) {
+		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.forms.setupButtons(frm);
 		sync.helpers.ensureModifiedFieldRowsFromLegacy(frm);
 		sync.helpers.toggleSourceFields(frm);
@@ -25,6 +26,7 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
 	},
 	sync_type(frm) {
+		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.toggleSyncTypeSections(frm);
 		sync.helpers.toggleDefinitionModifiedFieldRows(frm);
 	},
@@ -32,7 +34,16 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.ensureModifiedFieldRowsFromLegacy(frm);
 		sync.helpers.refreshDefinitionFieldChoices(frm);
 	},
+	read_query(frm) {
+		sync.helpers.refreshDefinitionFieldPresentation(frm);
+		sync.helpers.toggleSourceFields(frm);
+		sync.helpers.refreshDefinitionSourceValidation(frm);
+		sync.helpers.refreshDefinitionPartnerColumnState(frm);
+		sync.helpers.setupDefinitionPartnerColumnPanel(frm);
+		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
+	},
 	query(frm) {
+		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.toggleSourceFields(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 		sync.helpers.refreshDefinitionPartnerColumnState(frm);
@@ -40,6 +51,7 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
 	},
 	table_name(frm) {
+		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.toggleSourceFields(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 		sync.helpers.refreshDefinitionPartnerColumnState(frm);
@@ -51,6 +63,7 @@ frappe.ui.form.on("Sync Definition", {
 	},
 	validate(frm) {
 		sync.helpers.ensureModifiedFieldRowsFromLegacy(frm);
+		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.validateDefinitionSourceSettings(frm);
 	},
 });
@@ -79,7 +92,8 @@ sync.forms.setupButtons = function (frm) {
 
 sync.helpers.collectDefinitionFieldChoiceValues = function (frm) {
 	const values = [];
-	["key_fields", "field_mapping", "value_mapping"].forEach((tableField) => {
+	const matchFieldTables = ["match_fields", "key_fields"].filter((tableField) => Boolean(frm.fields_dict[tableField]));
+	[...matchFieldTables, "field_mapping", "value_mapping"].forEach((tableField) => {
 		(frm.doc[tableField] || []).forEach((row) => {
 			if (row?.frappe_field) {
 				values.push(row.frappe_field);
@@ -106,7 +120,8 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields) {
 		? __("Field choices loaded from {0}.", [frm.doc.doctype_name])
 		: __("Select a DocType to load guided field choices.");
 
-	["key_fields", "field_mapping", "value_mapping"].forEach((tableField) => {
+	const matchFieldTables = ["match_fields", "key_fields"].filter((tableField) => Boolean(frm.fields_dict[tableField]));
+	[...matchFieldTables, "field_mapping", "value_mapping"].forEach((tableField) => {
 		const grid = frm.fields_dict[tableField]?.grid;
 		if (!grid) {
 			return;
@@ -156,19 +171,26 @@ sync.helpers.getDefinitionPartnerColumnState = function (frm) {
 };
 
 sync.helpers.getDefinitionPartnerColumnSignature = function (frm) {
-	return [frm.doc.partner, frm.doc.table_name].map((value) => String(value || "").trim()).join("::");
+	return [frm.doc.partner, frm.doc.table_name, sync.helpers.getDefinitionSourceReadQuery(frm)]
+		.map((value) => String(value || "").trim())
+		.join("::");
 };
 
 sync.helpers.isDefinitionPartnerColumnReady = function (frm) {
-	return Boolean((frm.doc.partner || "").trim() && (frm.doc.table_name || "").trim() && !String(frm.doc.query || "").trim());
+	return Boolean((frm.doc.partner || "").trim() && (frm.doc.table_name || "").trim());
 };
 
 sync.helpers.getDefinitionPartnerColumnRequestArgs = function (frm) {
-	return {
+	const args = {
 		sync_partner_name: frm.doc.partner,
 		partner: frm.doc.partner,
 		table_name: frm.doc.table_name,
 	};
+	const readQuery = sync.helpers.getDefinitionSourceReadQuery(frm);
+	if (readQuery) {
+		args.query = readQuery;
+	}
+	return args;
 };
 
 sync.helpers.refreshDefinitionPartnerColumnState = function (frm) {
@@ -205,6 +227,10 @@ sync.helpers.applyDefinitionPartnerColumnChoices = function (frm) {
 	const state = sync.helpers.getDefinitionPartnerColumnState(frm);
 	const columns = Array.isArray(state.columns) ? state.columns : [];
 	const currentValues = sync.helpers.collectDefinitionPartnerFieldValues(frm);
+	const sourceLabel = sync.helpers.getDefinitionSourceReadQuery(frm) ? __("Read Query") : __("Table Name");
+	const sourceDetails = sync.helpers.getDefinitionSourceReadQuery(frm)
+		? __("Partner rows are loaded from the Read Query, while writes still target Table Name.")
+		: __("Partner rows are loaded directly from Table Name.");
 	const augmentedColumns = [
 		...columns,
 		...currentValues
@@ -214,11 +240,11 @@ sync.helpers.applyDefinitionPartnerColumnChoices = function (frm) {
 	const autocompleteOptions = JSON.stringify(augmentedColumns);
 	const modifiedFieldOptions = ["", ...new Set(augmentedColumns.map((column) => column?.value).filter(Boolean))].join("\n");
 	const partnerFieldDescription = columns.length
-		? __("Autocomplete suggestions loaded from the partner table columns.")
-		: __("Load partner columns from the Source section to get mapping suggestions.");
+		? __("Autocomplete suggestions loaded from the current partner source.")
+		: __("Load partner columns from the current source to get mapping suggestions.");
 	const partnerModifiedDescription = columns.length
-		? __("Select partner-side modified fields from the loaded partner columns.")
-		: __("Load partner columns from the Source section to guide partner-side modified fields.");
+		? __("Select partner-side modified fields from the loaded partner source columns.")
+		: __("Load partner columns from the current source to guide partner-side modified fields.");
 
 	const fieldMappingGrid = frm.fields_dict.field_mapping?.grid;
 	if (fieldMappingGrid) {
@@ -253,9 +279,7 @@ sync.helpers.renderDefinitionPartnerColumnPanel = function (frm) {
 	if (!frm.doc.partner) {
 		missing.push(__("Partner"));
 	}
-	if (frm.doc.query) {
-		missing.push(__("Table Name instead of Query"));
-	} else if (!frm.doc.table_name) {
+	if (!frm.doc.table_name) {
 		missing.push(__("Table Name"));
 	}
 
@@ -263,6 +287,10 @@ sync.helpers.renderDefinitionPartnerColumnPanel = function (frm) {
 		sync.helpers.renderPartnerColumnStatusPanel(state, {
 			ready: sync.helpers.isDefinitionPartnerColumnReady(frm),
 			missing,
+			source_label: sync.helpers.getDefinitionSourceReadQuery(frm) ? __("Read Query") : __("Table Name"),
+			source_details: sync.helpers.getDefinitionSourceReadQuery(frm)
+				? __("Partner rows are loaded from the Read Query, while writes still target Table Name.")
+				: __("Partner rows are loaded directly from Table Name."),
 		})
 	);
 };
@@ -414,17 +442,21 @@ sync.helpers.refreshDefinitionFieldChoices = function (frm) {
 
 sync.helpers.getDefinitionSourceSettingsIssue = function (frm) {
 	const hasTableName = Boolean((frm.doc.table_name || "").trim());
-	const hasQuery = Boolean((frm.doc.query || "").trim());
-	if (hasTableName && hasQuery) {
-		return __("Use either Table Name or Query, not both.");
-	}
-	if (!hasTableName && !hasQuery) {
-		return __("Either Table Name or Query is required.");
+	const hasQuery = Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
+	if (!hasTableName) {
+		return __("Table Name is required.");
 	}
 	if (frm.doc.delete_missing && hasQuery) {
-		return __("Delete Missing cannot be enabled when Query is used.");
+		return __("Delete Missing cannot be enabled when Read Query is used.");
 	}
 	return null;
+};
+
+sync.helpers.getDefinitionSourceSettingsNotice = function (frm) {
+	if (!sync.helpers.getDefinitionSourceReadQuery(frm)) {
+		return "";
+	}
+	return __("Read Query is active. Partner rows are loaded from the query, while inserts and updates still target Table Name.");
 };
 
 sync.helpers.refreshDefinitionSourceValidation = function (frm) {
@@ -433,7 +465,8 @@ sync.helpers.refreshDefinitionSourceValidation = function (frm) {
 		frm.set_intro(issue, "orange");
 		return;
 	}
-	frm.set_intro("");
+	const notice = sync.helpers.getDefinitionSourceSettingsNotice(frm);
+	frm.set_intro(notice, notice ? "blue" : "");
 };
 
 sync.helpers.validateDefinitionSourceSettings = function (frm) {

@@ -11,14 +11,13 @@ MAPPING_DIRECTIONS = ("Both", "Frappe to Partner", "Partner to Frappe")
 
 class SyncDefinition(Document):
 	def validate(self):
-		self.ensure_modified_field_rows_from_legacy()
-		self.sync_modified_fields_legacy_storage()
-		self.validate_field_mapping()
-		self.validate_key_fields()
-		self.validate_source_settings()
-		self.validate_filter_expression()
-		self.validate_modified_fields()
-		self.validate_preview_limit()
+		SyncDefinition.validate_field_mapping(self)
+		SyncDefinition.validate_match_fields(self)
+		SyncDefinition.validate_source_settings(self)
+		SyncDefinition.validate_filter_expression(self)
+		SyncDefinition.validate_modified_fields(self)
+		SyncDefinition.validate_identity_settings(self)
+		SyncDefinition.validate_preview_limit(self)
 
 	def validate_field_mapping(self):
 		seen: set[str] = set()
@@ -37,21 +36,19 @@ class SyncDefinition(Document):
 		if duplicates:
 			frappe.throw(f"Field Mapping contains duplicate Frappe fields: {', '.join(sorted(set(duplicates)))}")
 
-	def validate_key_fields(self):
+	def validate_match_fields(self):
 		mapping_fields = set(self.get_field_mapping().keys())
-		missing = [field for field in self.get_key_fields() if field not in mapping_fields]
+		missing = [field for field in SyncDefinition.get_match_fields(self) if field not in mapping_fields]
 		if missing:
-			frappe.throw(f"Key fields must exist in field mapping: {', '.join(missing)}")
+			frappe.throw(f"Match fields must exist in field mapping: {', '.join(missing)}")
 
 	def validate_source_settings(self):
 		table_name = _clean_value(self.table_name)
-		query = _clean_value(self.query)
-		if table_name and query:
-			frappe.throw("Use either Table Name or Query, not both.")
-		if not table_name and not query:
-			frappe.throw("Either Table Name or Query is required.")
-		if self.delete_missing and query:
-			frappe.throw("Delete Missing cannot be enabled when Query is used.")
+		read_query = _clean_value(getattr(self, "read_query", None))
+		if not table_name:
+			frappe.throw("Table Name is required.")
+		self.table_name = table_name
+		self.read_query = read_query
 
 	def validate_modified_fields(self):
 		if not self.use_last_sync_date:
@@ -61,6 +58,38 @@ class SyncDefinition(Document):
 		if not self.get_partner_modified_fields():
 			frappe.throw("At least one Partner Modified Field is required when delta sync is enabled.")
 
+	def validate_identity_settings(self):
+		strategy = _clean_value(self.partner_create_id_strategy) or "payload"
+		identity_field = _clean_value(self.partner_identity_field)
+		source = _clean_value(self.partner_create_id_source)
+		scope_where = _clean_value(self.partner_create_id_scope_where)
+
+		self.partner_create_id_strategy = strategy
+		self.partner_identity_field = identity_field
+		self.partner_create_id_source = source
+		self.partner_create_id_scope_where = scope_where
+		self.frappe_partner_identity_field = _clean_value(self.frappe_partner_identity_field)
+		self.partner_frappe_identity_field = _clean_value(self.partner_frappe_identity_field)
+
+		if strategy not in {"payload", "connector_default", "sequence", "max_plus_one"}:
+			frappe.throw("Partner Create ID Strategy must be one of: payload, connector_default, sequence, max_plus_one.")
+		if strategy != "payload" and not identity_field:
+			frappe.throw("Partner Identity Field is required when the partner ID is not taken from the payload.")
+		if strategy == "sequence" and not source:
+			frappe.throw("Partner Create ID Source is required for the sequence strategy.")
+		if strategy != "sequence" and source:
+			frappe.throw("Partner Create ID Source is only allowed for the sequence strategy.")
+		if strategy == "max_plus_one" and not scope_where:
+			frappe.throw("Partner Create ID Scope Where is required for the max_plus_one strategy.")
+		if strategy != "max_plus_one" and scope_where:
+			frappe.throw("Partner Create ID Scope Where is only allowed for the max_plus_one strategy.")
+		doctype_name = _clean_value(getattr(self, "doctype_name", None))
+		if self.frappe_partner_identity_field and doctype_name:
+			meta = frappe.get_meta(doctype_name)
+			valid_fields = {"name"} | {field.fieldname for field in getattr(meta, "fields", []) or []}
+			if self.frappe_partner_identity_field not in valid_fields:
+				frappe.throw(f"Frappe Partner Identity Field does not exist on {doctype_name}.")
+
 	def validate_filter_expression(self):
 		self.filter_expression = _normalize_filter_expression(self.filter_expression)
 
@@ -68,13 +97,16 @@ class SyncDefinition(Document):
 		if self.preview_limit is not None and self.preview_limit < 1:
 			frappe.throw("Preview Limit must be at least 1.")
 
-	def get_key_fields(self) -> list[str]:
+	def get_match_fields(self) -> list[str]:
 		fields: list[str] = []
-		for row in self.key_fields or []:
+		for row in getattr(self, "match_fields", None) or getattr(self, "key_fields", None) or []:
 			field = _clean_value(_get_row_value(row, "frappe_field"))
 			if field:
 				fields.append(field)
 		return fields
+
+	def get_key_fields(self) -> list[str]:
+		return SyncDefinition.get_match_fields(self)
 
 	def get_field_mapping(self) -> dict[str, dict[str, str]]:
 		mapping = {}
@@ -99,24 +131,22 @@ class SyncDefinition(Document):
 		return result
 
 	def get_frappe_modified_fields(self) -> list[str]:
-		return _extract_modified_fields(getattr(self, "frappe_modified_field_rows", None)) or _split_lines(self.frappe_modified_fields)
+		return _extract_modified_fields(getattr(self, "frappe_modified_field_rows", None))
 
 	def get_partner_modified_fields(self) -> list[str]:
-		return _extract_modified_fields(getattr(self, "partner_modified_field_rows", None)) or _split_lines(self.partner_modified_fields)
+		return _extract_modified_fields(getattr(self, "partner_modified_field_rows", None))
 
 	def ensure_modified_field_rows_from_legacy(self):
-		self._ensure_modified_field_rows("frappe_modified_field_rows", "frappe_modified_fields")
-		self._ensure_modified_field_rows("partner_modified_field_rows", "partner_modified_fields")
+		return None
 
 	def _ensure_modified_field_rows(self, table_fieldname: str, legacy_fieldname: str):
-		if self.get(table_fieldname):
-			return
-		for fieldname in _split_lines(self.get(legacy_fieldname)):
-			self.append(table_fieldname, {"field_name": fieldname})
+		return None
 
 	def sync_modified_fields_legacy_storage(self):
-		self.frappe_modified_fields = "\n".join(self.get_frappe_modified_fields())
-		self.partner_modified_fields = "\n".join(self.get_partner_modified_fields())
+		return None
+
+	def validate_key_fields(self):
+		return SyncDefinition.validate_match_fields(self)
 
 	def as_export_dict(self) -> dict:
 		return {
@@ -136,14 +166,20 @@ class SyncDefinition(Document):
 			"delete_missing": self.delete_missing,
 			"conflict_policy": self.conflict_policy,
 			"table_name": self.table_name,
-			"query": self.query,
+			"read_query": getattr(self, "read_query", None),
 			"preview_limit": self.get_preview_limit(),
 			"export_mask_credentials": bool(self.export_mask_credentials),
-			"frappe_modified_fields": self.get_frappe_modified_fields(),
-			"partner_modified_fields": self.get_partner_modified_fields(),
-			"key_fields": self.get_key_fields(),
-			"field_mapping": self.get_field_mapping(),
-			"value_mapping": self.get_value_mapping(),
+			"frappe_modified_fields": SyncDefinition.get_frappe_modified_fields(self),
+			"partner_modified_fields": SyncDefinition.get_partner_modified_fields(self),
+			"match_fields": SyncDefinition.get_match_fields(self),
+			"field_mapping": SyncDefinition.get_field_mapping(self),
+			"value_mapping": SyncDefinition.get_value_mapping(self),
+			"partner_identity_field": getattr(self, "partner_identity_field", None),
+			"frappe_partner_identity_field": getattr(self, "frappe_partner_identity_field", None),
+			"partner_frappe_identity_field": getattr(self, "partner_frappe_identity_field", None),
+			"partner_create_id_strategy": getattr(self, "partner_create_id_strategy", "payload"),
+			"partner_create_id_source": getattr(self, "partner_create_id_source", None),
+			"partner_create_id_scope_where": getattr(self, "partner_create_id_scope_where", None),
 			"last_run_status": self.last_run_status,
 			"last_run_summary": self.last_run_summary,
 		}

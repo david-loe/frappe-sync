@@ -40,6 +40,17 @@ class ConnectorWriteResult:
 	ok: bool
 	message: str = ""
 	changed_fields: list[str] | None = None
+	action: str | None = None
+	record: dict[str, Any] | None = None
+	resolved_key_values: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class ConnectorCreateOptions:
+	identity_field: str | None = None
+	strategy: str = "payload"
+	source: str | None = None
+	scope_where: str | None = None
 
 
 class BasePartnerConnector(ABC):
@@ -143,11 +154,13 @@ class BasePartnerConnector(ABC):
 		self,
 		*,
 		record: dict[str, Any],
-		key_fields: list[str],
-		mapping: dict[str, str],
+		key_values: dict[str, Any] | None = None,
+		key_fields: list[str] | None = None,
+		mapping: dict[str, str] | None = None,
 		dry_run: bool = False,
 		source: str | None = None,
 		query: str | None = None,
+		create_options: ConnectorCreateOptions | None = None,
 	) -> ConnectorWriteResult:
 		if dry_run:
 			return ConnectorWriteResult(ok=True, message="dry_run")
@@ -250,11 +263,13 @@ class RelationalConnector(BasePartnerConnector):
 		self,
 		*,
 		record: dict[str, Any],
-		key_fields: list[str],
-		mapping: dict[str, str],
+		key_values: dict[str, Any] | None = None,
+		key_fields: list[str] | None = None,
+		mapping: dict[str, str] | None = None,
 		dry_run: bool = False,
 		source: str | None = None,
 		query: str | None = None,
+		create_options: ConnectorCreateOptions | None = None,
 	) -> ConnectorWriteResult:
 		source_name, query_text = self._resolve_source(source=source, query=query)
 		if query_text and not source_name:
@@ -267,60 +282,95 @@ class RelationalConnector(BasePartnerConnector):
 		if not record:
 			return ConnectorWriteResult(ok=False, message=f"{self.dialect} upsert received empty record")
 		if dry_run:
-			return ConnectorWriteResult(ok=True, message="dry_run", changed_fields=list(record.keys()))
-
-		partner_key_fields = [mapping.get(field, field) for field in key_fields]
-		missing_key_values = [field for field in partner_key_fields if record.get(field) in (None, "")]
-		if missing_key_values:
 			return ConnectorWriteResult(
-				ok=False,
-				message=f"{self.dialect} upsert missing key values for: {', '.join(missing_key_values)}",
+				ok=True,
+				message="dry_run",
+				changed_fields=list(record.keys()),
+				action="updated",
+				record=dict(record),
+				resolved_key_values=dict(key_values or {}),
 			)
 
+		create_options = create_options or ConnectorCreateOptions()
+		try:
+			key_values = self._normalize_key_values(
+				key_values=key_values,
+				key_fields=key_fields or [],
+				mapping=mapping or {},
+				record=record,
+			)
+		except RuntimeError as err:
+			return ConnectorWriteResult(ok=False, message=str(err))
+
 		table = self._quote_compound_identifier(source_name)
-		record_columns = list(record.keys())
-		non_key_columns = [column for column in record_columns if column not in partner_key_fields]
 
 		try:
 			with self._connection() as connection:
 				db_cursor = connection.cursor()
 				updated_rows = 0
-				if non_key_columns:
+				record_to_write = dict(record)
+				record_columns = list(record_to_write.keys())
+				non_key_columns = [column for column in record_columns if column not in key_values]
+				if key_values and non_key_columns:
 					set_clause = ", ".join(
 						f"{self._quote_compound_identifier(column)} = {self._placeholder()}" for column in non_key_columns
 					)
 					where_clause = " AND ".join(
 						f"{self._quote_compound_identifier(column)} = {self._placeholder()}"
-						for column in partner_key_fields
+						for column in key_values
 					)
 					update_sql = f"UPDATE {table} SET {set_clause} WHERE {where_clause}"
-					update_params = [record[column] for column in non_key_columns] + [
-						record[column] for column in partner_key_fields
-					]
+					update_params = [record_to_write[column] for column in non_key_columns] + list(key_values.values())
 					db_cursor.execute(update_sql, update_params)
 					updated_rows = max(cint(getattr(db_cursor, "rowcount", 0)), 0)
 
 				if updated_rows == 0:
+					record_to_write, insert_lookup_values = self._prepare_insert_record(
+						connection=connection,
+						source_name=source_name,
+						record=record_to_write,
+						key_values=key_values,
+						create_options=create_options,
+					)
+					record_columns = list(record_to_write.keys())
+					if not record_columns:
+						return ConnectorWriteResult(ok=False, message=f"{self.dialect} upsert received empty record")
 					insert_columns = ", ".join(self._quote_compound_identifier(column) for column in record_columns)
 					insert_values = ", ".join(self._placeholder() for _ in record_columns)
 					insert_sql = f"INSERT INTO {table} ({insert_columns}) VALUES ({insert_values})"
-					db_cursor.execute(insert_sql, [record[column] for column in record_columns])
+					db_cursor.execute(insert_sql, [record_to_write[column] for column in record_columns])
 					connection.commit()
+					resolved_record = (
+						self._load_record_by_key_values(source_name, insert_lookup_values)
+						if create_options.identity_field or create_options.strategy != "payload"
+						else None
+					) or dict(record_to_write)
 					with suppress(Exception):
 						db_cursor.close()
 					return ConnectorWriteResult(
 						ok=True,
 						message=f"{self.dialect} insert succeeded",
 						changed_fields=record_columns,
+						action="created",
+						record=resolved_record,
+						resolved_key_values=self._resolved_key_values(create_options, insert_lookup_values, resolved_record),
 					)
 
 				connection.commit()
+				resolved_record = (
+					self._load_record_by_key_values(source_name, key_values)
+					if create_options.identity_field or create_options.strategy != "payload"
+					else None
+				) or dict(record_to_write)
 				with suppress(Exception):
 					db_cursor.close()
 				return ConnectorWriteResult(
 					ok=True,
 					message=f"{self.dialect} update succeeded",
 					changed_fields=non_key_columns,
+					action="updated",
+					record=resolved_record,
+					resolved_key_values=self._resolved_key_values(create_options, key_values, resolved_record),
 				)
 		except Exception as err:
 			return ConnectorWriteResult(ok=False, message=f"{self.dialect} upsert failed: {err}")
@@ -358,6 +408,137 @@ class RelationalConnector(BasePartnerConnector):
 			return ConnectorWriteResult(ok=True, message=f"{self.dialect} delete succeeded")
 		except Exception as err:
 			return ConnectorWriteResult(ok=False, message=f"{self.dialect} delete failed: {err}")
+
+	def _normalize_key_values(
+		self,
+		*,
+		key_values: dict[str, Any] | None,
+		key_fields: list[str],
+		mapping: dict[str, str],
+		record: dict[str, Any],
+	) -> dict[str, Any]:
+		if isinstance(key_values, dict) and key_values:
+			return {str(field): value for field, value in key_values.items() if field and value not in (None, "")}
+		partner_key_fields = [mapping.get(field, field) for field in key_fields]
+		result = {field: record.get(field) for field in partner_key_fields if record.get(field) not in (None, "")}
+		missing = [field for field in partner_key_fields if field not in result]
+		if missing:
+			raise RuntimeError(f"{self.dialect} upsert missing key values for: {', '.join(missing)}")
+		return result
+
+	def _prepare_insert_record(
+		self,
+		*,
+		connection: Any,
+		source_name: str,
+		record: dict[str, Any],
+		key_values: dict[str, Any],
+		create_options: ConnectorCreateOptions,
+	) -> tuple[dict[str, Any], dict[str, Any]]:
+		record_to_write = dict(record)
+		lookup_values = dict(key_values)
+		identity_field = (create_options.identity_field or "").strip()
+		strategy = (create_options.strategy or "payload").strip().lower()
+
+		if strategy == "connector_default":
+			if identity_field and record_to_write.get(identity_field) in (None, ""):
+				record_to_write.pop(identity_field, None)
+			return record_to_write, lookup_values
+
+		if strategy == "sequence":
+			if not identity_field:
+				raise RuntimeError(f"{self.dialect} sequence create requires an identity field")
+			next_value = self._next_sequence_value(connection, create_options.source or "")
+			record_to_write[identity_field] = next_value
+			lookup_values = {identity_field: next_value}
+			return record_to_write, lookup_values
+
+		if strategy == "max_plus_one":
+			if not identity_field:
+				raise RuntimeError(f"{self.dialect} max_plus_one create requires an identity field")
+			next_value = self._next_scoped_max_plus_one(
+				connection,
+				source_name=source_name,
+				identity_field=identity_field,
+				scope_where=create_options.scope_where or "",
+			)
+			record_to_write[identity_field] = next_value
+			lookup_values = {identity_field: next_value}
+			return record_to_write, lookup_values
+
+		if identity_field and record_to_write.get(identity_field) not in (None, ""):
+			lookup_values = {identity_field: record_to_write[identity_field]}
+		return record_to_write, lookup_values
+
+	def _resolved_key_values(
+		self,
+		create_options: ConnectorCreateOptions,
+		lookup_values: dict[str, Any],
+		record: dict[str, Any] | None,
+	) -> dict[str, Any]:
+		result = dict(lookup_values)
+		identity_field = (create_options.identity_field or "").strip()
+		if identity_field and isinstance(record, dict) and record.get(identity_field) not in (None, ""):
+			result[identity_field] = record.get(identity_field)
+		return result
+
+	def _load_record_by_key_values(self, source_name: str, key_values: dict[str, Any]) -> dict[str, Any] | None:
+		if not key_values:
+			return None
+		table = self._quote_compound_identifier(source_name)
+		where_clause = " AND ".join(
+			f"{self._quote_compound_identifier(column)} = {self._placeholder()}" for column in key_values
+		)
+		sql = f"SELECT * FROM {table} WHERE {where_clause}"
+		rows = self._run_select(sql, list(key_values.values()))
+		return rows[0] if rows else None
+
+	def _next_sequence_value(self, connection: Any, sequence_name: str) -> Any:
+		clean_sequence = str(sequence_name or "").strip()
+		if not clean_sequence:
+			raise RuntimeError(f"{self.dialect} sequence create requires a source name")
+		db_cursor = connection.cursor()
+		try:
+			if self.dialect == "postgres":
+				db_cursor.execute("SELECT nextval(%s)", [clean_sequence])
+			elif self.dialect == "firebird":
+				db_cursor.execute(f"SELECT NEXT VALUE FOR {self._quote_compound_identifier(clean_sequence)} FROM RDB$DATABASE", [])
+			else:
+				db_cursor.execute(f"SELECT NEXT VALUE FOR {self._quote_compound_identifier(clean_sequence)}", [])
+			row = db_cursor.fetchone()
+			if not row:
+				raise RuntimeError(f"{self.dialect} sequence returned no value")
+			return row[0]
+		finally:
+			with suppress(Exception):
+				db_cursor.close()
+
+	def _next_scoped_max_plus_one(
+		self,
+		connection: Any,
+		*,
+		source_name: str,
+		identity_field: str,
+		scope_where: str,
+	) -> int:
+		clean_scope = _validate_scope_where(scope_where)
+		if not clean_scope:
+			raise RuntimeError(f"{self.dialect} max_plus_one create requires a scope predicate")
+		table = self._quote_compound_identifier(source_name)
+		field = self._quote_compound_identifier(identity_field)
+		lock_clause = " WITH (UPDLOCK, HOLDLOCK)" if self.dialect == "mssql" else ""
+		null_fn = "ISNULL" if self.dialect == "mssql" else "COALESCE"
+		sql = f"SELECT {null_fn}(MAX({field}), 0) + 1 FROM {table}{lock_clause} WHERE {clean_scope}"
+		db_cursor = connection.cursor()
+		try:
+			db_cursor.execute(sql, [])
+			row = db_cursor.fetchone()
+			if not row:
+				raise RuntimeError(f"{self.dialect} max_plus_one returned no value")
+			return cint(row[0]) or 0
+		finally:
+			with suppress(Exception):
+				db_cursor.close()
 
 	def describe_source_columns(
 		self,
@@ -600,9 +781,10 @@ def get_partner_type(partner_doc: Any) -> str:
 			value = str(value).strip().lower()
 			if value in {"mssql", "postgres", "firebird"}:
 				return value
-			if frappe.db.exists("Sync Partner Type", value):
-				partner_type_doc = frappe.get_doc("Sync Partner Type", value)
-				return str(partner_type_doc.get("partner_type_code") or value).strip().lower()
+			with suppress(Exception):
+				if frappe.db.exists("Sync Partner Type", value):
+					partner_type_doc = frappe.get_doc("Sync Partner Type", value)
+					return str(partner_type_doc.get("partner_type_code") or value).strip().lower()
 			return value
 	return ""
 
@@ -661,3 +843,15 @@ def _to_non_negative_int(value: Any) -> int:
 
 def _strip_trailing_semicolon(query: str) -> str:
 	return query[:-1].strip() if query.endswith(";") else query
+
+
+def _validate_scope_where(value: str | None) -> str | None:
+	if value is None:
+		return None
+	cleaned = _strip_trailing_semicolon(str(value).strip())
+	if not cleaned:
+		return None
+	for forbidden in (";", "--", "/*", "*/"):
+		if forbidden in cleaned:
+			raise ValueError("Unsafe scope predicate")
+	return cleaned
