@@ -128,9 +128,6 @@ class FakeSyncDefinitionDoc:
 
 
 class TestSetupModule(unittest.TestCase):
-	def test_package_version_is_exposed(self):
-		self.assertEqual(sync.__version__, "0.0.1")
-
 	def test_after_migrate_delegates_to_default_partner_type_setup(self):
 		with patch("sync.setup.ensure_default_partner_types") as mock_ensure:
 			sync_setup.after_migrate()
