@@ -1289,6 +1289,14 @@ sync.helpers.toggleSourceFields = function (frm) {
 			? __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Read Query is active, so reads are limited by the query while writes still target Table Name.")
 			: __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Leave Read Query blank to read the full table.")
 	);
+	sync.helpers.setDefinitionFieldProperty(
+		frm,
+		"one_way_match_mode",
+		"description",
+		__(
+			"For A->B and A<-B only: choose whether one source record updates only one matched target or all matched targets."
+		)
+	);
 
 	sync.helpers.toggleDefinitionField(frm, matchFieldsField || "key_fields", true, true);
 	if (matchFieldsField === "match_fields" && frm.fields_dict.key_fields) {
@@ -1300,8 +1308,10 @@ sync.helpers.toggleSyncTypeSections = function (frm) {
 	const direction = (frm.doc.sync_type || "").toLowerCase();
 	const frappeVisible = direction !== "a<-b";
 	const partnerVisible = direction !== "a->b";
+	const oneWayVisible = direction === "a->b" || direction === "a<-b";
 	frm.toggle_display("frappe_modified_field_rows", frappeVisible);
 	frm.toggle_display("partner_modified_field_rows", partnerVisible);
+	frm.toggle_display("one_way_match_mode", oneWayVisible);
 	frm.toggle_display("frappe_modified_fields", false);
 	frm.toggle_display("partner_modified_fields", false);
 	frm.set_df_property("frappe_modified_field_rows", "description", frappeVisible ? __("Fields used to detect changes on Frappe side.") : "");

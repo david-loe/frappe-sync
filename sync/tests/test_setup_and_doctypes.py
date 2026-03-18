@@ -64,6 +64,7 @@ class FakeSyncDefinitionDoc:
 		self.batch_size = values.get("batch_size", 50)
 		self.timestamp_buffer_seconds = values.get("timestamp_buffer_seconds", 15)
 		self.create_new = values.get("create_new", 1)
+		self.one_way_match_mode = values.get("one_way_match_mode", "first_match")
 		self.conflict_policy = values.get("conflict_policy", "newest_wins")
 		self.export_mask_credentials = values.get("export_mask_credentials", 1)
 		self.next_run_at = values.get("next_run_at")
@@ -126,6 +127,9 @@ class FakeSyncDefinitionDoc:
 
 	def validate_preview_limit(self):
 		return sync_definition_module.SyncDefinition.validate_preview_limit(self)
+
+	def validate_one_way_match_mode(self):
+		return sync_definition_module.SyncDefinition.validate_one_way_match_mode(self)
 
 
 class TestSetupModule(unittest.TestCase):
@@ -242,6 +246,17 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_preview_limit(FakeSyncDefinitionDoc(preview_limit=0))
 
+	def test_validate_one_way_match_mode_normalizes_and_rejects_invalid_values(self):
+		doc = FakeSyncDefinitionDoc(one_way_match_mode=" all_matches ")
+		sync_definition_module.SyncDefinition.validate_one_way_match_mode(doc)
+		self.assertEqual(doc.one_way_match_mode, "all_matches")
+
+		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_one_way_match_mode(
+					FakeSyncDefinitionDoc(one_way_match_mode="fanout")
+				)
+
 	def test_validate_filter_expression_accepts_valid_values_during_validate(self):
 		string_doc = FakeSyncDefinitionDoc(
 			table_name="tabTask",
@@ -307,12 +322,14 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 			frappe_modified_field_rows=[SimpleNamespace(field_name="modified")],
 			partner_modified_field_rows=[SimpleNamespace(field_name="updated_at")],
 			preview_limit="invalid",
+			one_way_match_mode="all_matches",
 		)
 
 		self.assertEqual(sync_definition_module.SyncDefinition.get_preview_limit(doc), 50)
 		exported = sync_definition_module.SyncDefinition.as_export_dict(doc)
 		self.assertEqual(exported["field_mapping"]["name"]["direction"], "Partner to Frappe")
 		self.assertEqual(exported["value_mapping"]["status"], {'{"a": 1}': '["x"]'})
+		self.assertEqual(exported["one_way_match_mode"], "all_matches")
 		payload = sync_definition_module.SyncDefinition.get_export_payload(doc)
 		self.assertIn("sync_definition", payload)
 		self.assertTrue(payload["mask_credentials"])

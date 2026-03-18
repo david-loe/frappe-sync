@@ -17,6 +17,7 @@ class SyncDefinition(Document):
 		SyncDefinition.validate_filter_expression(self)
 		SyncDefinition.validate_modified_fields(self)
 		SyncDefinition.validate_identity_settings(self)
+		SyncDefinition.validate_one_way_match_mode(self)
 		SyncDefinition.validate_preview_limit(self)
 
 	def validate_field_mapping(self):
@@ -97,6 +98,12 @@ class SyncDefinition(Document):
 		if self.preview_limit is not None and self.preview_limit < 1:
 			frappe.throw("Preview Limit must be at least 1.")
 
+	def validate_one_way_match_mode(self):
+		mode = _clean_value(getattr(self, "one_way_match_mode", None)) or "first_match"
+		if mode not in {"first_match", "all_matches"}:
+			frappe.throw("One-Way Match Mode must be one of: first_match, all_matches.")
+		self.one_way_match_mode = mode
+
 	def get_match_fields(self) -> list[str]:
 		fields: list[str] = []
 		for row in getattr(self, "match_fields", None) or getattr(self, "key_fields", None) or []:
@@ -164,6 +171,7 @@ class SyncDefinition(Document):
 			"timestamp_buffer_seconds": self.timestamp_buffer_seconds,
 			"create_new": self.create_new,
 			"delete_missing": self.delete_missing,
+			"one_way_match_mode": getattr(self, "one_way_match_mode", "first_match"),
 			"conflict_policy": self.conflict_policy,
 			"table_name": self.table_name,
 			"read_query": getattr(self, "read_query", None),

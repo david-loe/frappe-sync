@@ -660,26 +660,34 @@ class RelationalConnector(BasePartnerConnector):
 		return f"SELECT * FROM {table} LIMIT {batch_size} OFFSET {offset}"
 
 	def _mssql_order_clause(self, key_fields: list[str]) -> str:
-		valid_key_fields = [field for field in key_fields if IDENTIFIER_RE.match(str(field))]
-		if not valid_key_fields:
+		quoted_fields: list[str] = []
+		for field in key_fields:
+			try:
+				quoted_fields.append(self._quote_compound_identifier(str(field)))
+			except ValueError:
+				continue
+		if not quoted_fields:
 			return "ORDER BY (SELECT NULL)"
-		quoted = ", ".join(self._quote_compound_identifier(field) for field in valid_key_fields)
-		return f"ORDER BY {quoted}"
+		return f"ORDER BY {', '.join(quoted_fields)}"
 
 	def _placeholder(self) -> str:
 		return "%s" if self.paramstyle == "pyformat" else "?"
 
 	def _quote_compound_identifier(self, identifier: str) -> str:
-		parts = [part.strip() for part in identifier.split(".") if part.strip()]
+		parts = _split_compound_identifier(identifier, dialect=self.dialect)
 		if not parts:
 			raise ValueError("Identifier is empty")
 		quote_char = self._identifier_quote_char()
 		quoted_parts = []
 		for part in parts:
-			if not IDENTIFIER_RE.match(part):
+			if self.dialect == "mssql":
+				part = _normalize_mssql_identifier_part(part, original_identifier=identifier)
+			elif not IDENTIFIER_RE.match(part):
 				raise ValueError(f"Unsafe SQL identifier '{identifier}'")
 			if self.dialect == "firebird":
 				part = part.upper()
+			if self.dialect == "mssql":
+				part = part.replace("]", "]]")
 			quoted_parts.append(f"{quote_char[0]}{part}{quote_char[1]}")
 		return ".".join(quoted_parts)
 
@@ -843,6 +851,70 @@ def _to_non_negative_int(value: Any) -> int:
 
 def _strip_trailing_semicolon(query: str) -> str:
 	return query[:-1].strip() if query.endswith(";") else query
+
+
+def _split_compound_identifier(identifier: str, *, dialect: str) -> list[str]:
+	raw_identifier = str(identifier or "").strip()
+	if not raw_identifier:
+		return []
+	if dialect != "mssql":
+		return [part.strip() for part in raw_identifier.split(".") if part.strip()]
+
+	parts: list[str] = []
+	current: list[str] = []
+	in_brackets = False
+	i = 0
+	length = len(raw_identifier)
+	while i < length:
+		char = raw_identifier[i]
+		if in_brackets:
+			if char == "]":
+				if i + 1 < length and raw_identifier[i + 1] == "]":
+					current.append("]")
+					i += 2
+					continue
+				in_brackets = False
+				i += 1
+				continue
+			current.append(char)
+			i += 1
+			continue
+
+		if char == ".":
+			part = "".join(current).strip()
+			if not part:
+				raise ValueError(f"Unsafe SQL identifier '{identifier}'")
+			parts.append(part)
+			current = []
+			i += 1
+			continue
+		if char == "[":
+			if "".join(current).strip():
+				raise ValueError(f"Unsafe SQL identifier '{identifier}'")
+			in_brackets = True
+			i += 1
+			continue
+		if char == "]":
+			raise ValueError(f"Unsafe SQL identifier '{identifier}'")
+		current.append(char)
+		i += 1
+
+	if in_brackets:
+		raise ValueError(f"Unsafe SQL identifier '{identifier}'")
+
+	part = "".join(current).strip()
+	if part:
+		parts.append(part)
+	if not parts:
+		raise ValueError("Identifier is empty")
+	return parts
+
+
+def _normalize_mssql_identifier_part(part: str, *, original_identifier: str) -> str:
+	value = str(part or "").strip()
+	if not value:
+		raise ValueError(f"Unsafe SQL identifier '{original_identifier}'")
+	return value
 
 
 def _validate_scope_where(value: str | None) -> str | None:

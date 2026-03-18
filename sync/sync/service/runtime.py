@@ -78,6 +78,7 @@ class SyncDefinitionConfig:
 	partner_create_id_source: str | None = None
 	partner_create_id_scope_where: str | None = None
 	partner_time_zone: str | None = None
+	one_way_match_mode: str = "first_match"
 
 	@property
 	def key_fields(self) -> list[str]:
@@ -593,10 +594,7 @@ def _run_engine(
 
 	stats = SyncStats()
 	if config.sync_type == "A->B":
-		partner_index = _build_partner_index_from_batches(
-			config,
-			_iter_partner_source_batches(config, connector, context),
-		)
+		partner_records = _get_partner_source_records(config, connector, context)
 		if config.delete_missing and context.is_full_sync:
 			frappe_source = [
 				record
@@ -608,7 +606,7 @@ def _run_engine(
 				config=config,
 				connector=connector,
 				frappe_records=frappe_source,
-				partner_records=partner_index,
+				partner_records=partner_records,
 				dry_run=context.dry_run,
 				stats=stats,
 				label_direction="A->B",
@@ -622,7 +620,7 @@ def _run_engine(
 					config=config,
 					connector=connector,
 					frappe_records=frappe_batch,
-					partner_records=partner_index,
+					partner_records=partner_records,
 					dry_run=context.dry_run,
 					stats=stats,
 					label_direction="A->B",
@@ -631,10 +629,7 @@ def _run_engine(
 				)
 			_flush_pending_run_writes(run_doc, force=True)
 	elif config.sync_type == "A<-B":
-		frappe_index = _build_frappe_index_from_batches(
-			config,
-			_iter_frappe_source_batches(config, context),
-		)
+		frappe_records = _get_frappe_source_records(config, context)
 		if config.delete_missing and context.is_full_sync:
 			partner_source = [
 				record
@@ -646,7 +641,7 @@ def _run_engine(
 				config=config,
 				connector=connector,
 				partner_records=partner_source,
-				frappe_records=frappe_index,
+				frappe_records=frappe_records,
 				dry_run=context.dry_run,
 				stats=stats,
 				label_direction="A<-B",
@@ -660,7 +655,7 @@ def _run_engine(
 					config=config,
 					connector=connector,
 					partner_records=partner_batch,
-					frappe_records=frappe_index,
+					frappe_records=frappe_records,
 					dry_run=context.dry_run,
 					stats=stats,
 					label_direction="A<-B",
@@ -719,6 +714,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		batch_size=cint(getattr(config, "batch_size", 100)) or 100,
 		create_new=_as_bool(getattr(config, "create_new", 1)),
 		delete_missing=_as_bool(getattr(config, "delete_missing", 0)),
+		one_way_match_mode=_clean_string(getattr(config, "one_way_match_mode", None)) or "first_match",
 		use_last_sync_date=_as_bool(getattr(config, "use_last_sync_date", 1)),
 		conflict_policy=str(getattr(config, "conflict_policy", "newest_wins")),
 		timestamp_buffer_seconds=cint(getattr(config, "timestamp_buffer_seconds", 15)) or 0,
@@ -761,6 +757,32 @@ def _build_partner_index_from_batches(
 	return index
 
 
+def _group_frappe_records(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> dict[tuple[Any, ...], list[dict[str, Any]]]:
+	iterable = records.values() if isinstance(records, dict) else records
+	grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+	for record in iterable:
+		key = _key_tuple_from_frappe(record, _config_match_fields(config))
+		if _valid_key(key):
+			grouped.setdefault(key, []).append(record)
+	return grouped
+
+
+def _group_partner_records(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> dict[tuple[Any, ...], list[dict[str, Any]]]:
+	iterable = records.values() if isinstance(records, dict) else records
+	grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+	for record in iterable:
+		key = _key_tuple_from_partner(record, _config_match_fields(config), config.mapping)
+		if _valid_key(key):
+			grouped.setdefault(key, []).append(record)
+	return grouped
+
+
 def _sync_frappe_to_partner(
 	*,
 	run_doc: Any,
@@ -774,7 +796,8 @@ def _sync_frappe_to_partner(
 	full_sync: bool,
 	source_keys: set[tuple[Any, ...]] | None = None,
 ):
-	partner_index = partner_records if isinstance(partner_records, dict) else _index_partner_records(config, partner_records)
+	partner_groups = _group_partner_records(config, partner_records)
+	partner_index = {key: records[-1] for key, records in partner_groups.items()}
 	partner_identity_index = _build_partner_identity_index(config, partner_records)
 	collected_source_keys = source_keys if source_keys is not None else set()
 	connector_mapping = _flatten_mapping_for_direction(config.mapping, MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
@@ -808,10 +831,15 @@ def _sync_frappe_to_partner(
 				partner_time_zone=getattr(config, "partner_time_zone", None),
 			),
 		)
-		existing_partner = _find_existing_partner_record(config, frappe_record, partner_index, partner_identity_index)
-		exists = existing_partner is not None
+		existing_partners = _find_existing_partner_records(
+			config,
+			frappe_record,
+			partner_groups,
+			partner_identity_index,
+		)
+		existing_partner = existing_partners[-1] if existing_partners else None
 
-		if not exists and not config.create_new:
+		if not existing_partners and not config.create_new:
 			_register_and_log(
 				stats=stats,
 				run_doc=run_doc,
@@ -826,70 +854,185 @@ def _sync_frappe_to_partner(
 			)
 			continue
 
-		changes = _diff_target_values(
-			new_record=partner_payload,
-			old_record=existing_partner or {},
-			field_names=list(partner_payload.keys()),
-			datetime_fields=_partner_datetime_fields(config),
-			assumed_time_zone=getattr(config, "partner_time_zone", None),
-			target_time_zone=getattr(config, "partner_time_zone", None) or _site_time_zone(),
-		)
-		if exists and not changes:
+		if not existing_partners:
+			try:
+				write = connector.upsert_record(
+					record=partner_payload,
+					key_values=_partner_key_values_for_write(config, frappe_record, key),
+					mapping=connector_mapping,
+					dry_run=dry_run,
+					source=config.table_name,
+					create_options=_build_partner_create_options(config),
+				)
+				if not write.ok:
+					raise RuntimeError(write.message or "Partner upsert failed.")
+				_persist_frappe_partner_identity(config, frappe_record, write, dry_run=dry_run)
+			except Exception as exc:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="error",
+					status="error",
+					message=str(exc),
+					direction=label_direction,
+					frappe_record=frappe_record,
+					partner_record=None,
+					commit=False,
+				)
+				continue
+
 			_register_and_log(
 				stats=stats,
 				run_doc=run_doc,
 				config=config,
-				action="skipped",
-				status="skipped",
-				message="No changes detected.",
+				action="created",
+				status="success",
+				message="Dry run upsert." if dry_run else "Upserted partner record.",
 				direction=label_direction,
 				frappe_record=frappe_record,
-				partner_record=existing_partner,
+				partner_record=getattr(write, "record", None) or partner_payload,
+				changes=[],
 				commit=False,
 			)
 			continue
 
-		action = "created" if not exists else "updated"
-		try:
-			write = connector.upsert_record(
-				record=partner_payload,
-				key_values=_partner_key_values_for_write(config, frappe_record, key),
-				mapping=connector_mapping,
-				dry_run=dry_run,
-				source=config.table_name,
-				create_options=_build_partner_create_options(config),
-			)
-			if not write.ok:
-				raise RuntimeError(write.message or "Partner upsert failed.")
-			_persist_frappe_partner_identity(config, frappe_record, write, dry_run=dry_run)
-		except Exception as exc:
+		if len(existing_partners) > 1 and not _can_write_partner_matches_individually(config, existing_partners):
+			change_sets = [
+				_diff_target_values(
+					new_record=partner_payload,
+					old_record=matched_partner,
+					field_names=list(partner_payload.keys()),
+					datetime_fields=_partner_datetime_fields(config),
+					assumed_time_zone=getattr(config, "partner_time_zone", None),
+					target_time_zone=getattr(config, "partner_time_zone", None) or _site_time_zone(),
+				)
+				for matched_partner in existing_partners
+			]
+			if not any(change_sets):
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="skipped",
+					status="skipped",
+					message="No changes detected across matched partner records.",
+					direction=label_direction,
+					frappe_record=frappe_record,
+					partner_record=existing_partner,
+					commit=False,
+				)
+				continue
+			try:
+				write = connector.upsert_record(
+					record=partner_payload,
+					key_values=_partner_key_values_for_write(config, frappe_record, key),
+					mapping=connector_mapping,
+					dry_run=dry_run,
+					source=config.table_name,
+					create_options=_build_partner_create_options(config),
+				)
+				if not write.ok:
+					raise RuntimeError(write.message or "Partner upsert failed.")
+			except Exception as exc:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="error",
+					status="error",
+					message=str(exc),
+					direction=label_direction,
+					frappe_record=frappe_record,
+					partner_record=existing_partner,
+					commit=False,
+				)
+				continue
+
 			_register_and_log(
 				stats=stats,
 				run_doc=run_doc,
 				config=config,
-				action="error",
-				status="error",
-				message=str(exc),
+				action="updated",
+				status="success",
+				message=(
+					"Dry run upsert."
+					if dry_run
+					else f"Upserted {len(existing_partners)} matched partner records."
+				),
 				direction=label_direction,
 				frappe_record=frappe_record,
-				partner_record=existing_partner,
+				partner_record=getattr(write, "record", None) or existing_partner or partner_payload,
+				changes=change_sets[-1],
 				commit=False,
 			)
 			continue
 
-		_register_and_log(
-			stats=stats,
-			run_doc=run_doc,
-			config=config,
-			action=action,
-			status="success",
-			message="Dry run upsert." if dry_run else "Upserted partner record.",
-			direction=label_direction,
-			frappe_record=frappe_record,
-			partner_record=getattr(write, "record", None) or partner_payload,
-			changes=changes,
-			commit=False,
-		)
+		for matched_partner in existing_partners:
+			changes = _diff_target_values(
+				new_record=partner_payload,
+				old_record=matched_partner or {},
+				field_names=list(partner_payload.keys()),
+				datetime_fields=_partner_datetime_fields(config),
+				assumed_time_zone=getattr(config, "partner_time_zone", None),
+				target_time_zone=getattr(config, "partner_time_zone", None) or _site_time_zone(),
+			)
+			if not changes:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="skipped",
+					status="skipped",
+					message="No changes detected.",
+					direction=label_direction,
+					frappe_record=frappe_record,
+					partner_record=matched_partner,
+					commit=False,
+				)
+				continue
+
+			try:
+				write = connector.upsert_record(
+					record=partner_payload,
+					key_values=_partner_key_values_for_existing_match(config, frappe_record, key, matched_partner),
+					mapping=connector_mapping,
+					dry_run=dry_run,
+					source=config.table_name,
+					create_options=_build_partner_create_options(config),
+				)
+				if not write.ok:
+					raise RuntimeError(write.message or "Partner upsert failed.")
+				if len(existing_partners) == 1:
+					_persist_frappe_partner_identity(config, frappe_record, write, dry_run=dry_run)
+			except Exception as exc:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="error",
+					status="error",
+					message=str(exc),
+					direction=label_direction,
+					frappe_record=frappe_record,
+					partner_record=matched_partner,
+					commit=False,
+				)
+				continue
+
+			_register_and_log(
+				stats=stats,
+				run_doc=run_doc,
+				config=config,
+				action="updated",
+				status="success",
+				message="Dry run upsert." if dry_run else "Upserted partner record.",
+				direction=label_direction,
+				frappe_record=frappe_record,
+				partner_record=getattr(write, "record", None) or partner_payload,
+				changes=changes,
+				commit=False,
+			)
 
 	if config.delete_missing and full_sync:
 		_delete_missing_partner_records(
@@ -919,12 +1062,13 @@ def _sync_partner_to_frappe(
 	full_sync: bool,
 	source_keys: set[tuple[Any, ...]] | None = None,
 ):
-	frappe_index = frappe_records if isinstance(frappe_records, dict) else _index_frappe_records(config, frappe_records)
+	frappe_groups = _group_frappe_records(config, frappe_records)
+	frappe_index = {key: records[-1] for key, records in frappe_groups.items()}
 	frappe_partner_identity_index = _build_frappe_partner_identity_index(config, frappe_records)
-	partner_index = _index_partner_records(config, partner_records)
 	collected_source_keys = source_keys if source_keys is not None else set()
 
-	for key, partner_record in partner_index.items():
+	for partner_record in partner_records:
+		key = _key_tuple_from_partner(partner_record, _config_match_fields(config), config.mapping)
 		if not _valid_key(key):
 			_register_and_log(
 				stats=stats,
@@ -954,15 +1098,15 @@ def _sync_partner_to_frappe(
 			partner_id = partner_record.get(partner_identity_field)
 			if partner_id not in (None, ""):
 				frappe_payload[frappe_partner_field] = partner_id
-		existing_frappe = _find_existing_frappe_record(
+		existing_frappe_records = _find_existing_frappe_records(
 			config,
 			partner_record,
-			frappe_index,
+			frappe_groups,
 			frappe_partner_identity_index,
 		)
-		exists = existing_frappe is not None
+		existing_frappe = existing_frappe_records[-1] if existing_frappe_records else None
 
-		if not exists and not config.create_new:
+		if not existing_frappe_records and not config.create_new:
 			_register_and_log(
 				stats=stats,
 				run_doc=run_doc,
@@ -977,72 +1121,114 @@ def _sync_partner_to_frappe(
 			)
 			continue
 
-		changes = _diff_target_values(
-			new_record=frappe_payload,
-			old_record=existing_frappe or {},
-			field_names=list(frappe_payload.keys()),
-			datetime_fields=_frappe_datetime_fields(config),
-			target_time_zone=_site_time_zone(),
-		)
-		if exists and not changes:
+		if not existing_frappe_records:
+			try:
+				doc_name = _upsert_frappe_record(
+					doctype=config.doctype,
+					existing_name=None,
+					payload=frappe_payload,
+					dry_run=dry_run,
+				)
+				if doc_name:
+					frappe_payload["name"] = doc_name
+			except Exception as exc:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="error",
+					status="error",
+					message=str(exc),
+					direction=label_direction,
+					frappe_record=None,
+					partner_record=partner_record,
+					commit=False,
+				)
+				continue
+
 			_register_and_log(
 				stats=stats,
 				run_doc=run_doc,
 				config=config,
-				action="skipped",
-				status="skipped",
-				message="No changes detected.",
+				action="created",
+				status="success",
+				message="Dry run upsert." if dry_run else "Upserted frappe record.",
 				direction=label_direction,
-				frappe_record=existing_frappe,
+				frappe_record=frappe_payload,
 				partner_record=partner_record,
+				changes=[],
 				commit=False,
 			)
 			continue
 
-		action = "created" if not exists else "updated"
-		try:
-			doc_name = _upsert_frappe_record(
-				doctype=config.doctype,
-				existing_name=(existing_frappe or {}).get("name"),
-				payload=frappe_payload,
-				dry_run=dry_run,
+		for matched_frappe in existing_frappe_records:
+			changes = _diff_target_values(
+				new_record=frappe_payload,
+				old_record=matched_frappe or {},
+				field_names=list(frappe_payload.keys()),
+				datetime_fields=_frappe_datetime_fields(config),
+				target_time_zone=_site_time_zone(),
 			)
-			if doc_name:
-				frappe_payload["name"] = doc_name
-		except Exception as exc:
+			if not changes:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="skipped",
+					status="skipped",
+					message="No changes detected.",
+					direction=label_direction,
+					frappe_record=matched_frappe,
+					partner_record=partner_record,
+					commit=False,
+				)
+				continue
+
+			try:
+				target_payload = dict(frappe_payload)
+				target_payload["name"] = matched_frappe.get("name")
+				doc_name = _upsert_frappe_record(
+					doctype=config.doctype,
+					existing_name=matched_frappe.get("name"),
+					payload=target_payload,
+					dry_run=dry_run,
+				)
+				if doc_name:
+					target_payload["name"] = doc_name
+			except Exception as exc:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="error",
+					status="error",
+					message=str(exc),
+					direction=label_direction,
+					frappe_record=matched_frappe,
+					partner_record=partner_record,
+					commit=False,
+				)
+				continue
+
 			_register_and_log(
 				stats=stats,
 				run_doc=run_doc,
 				config=config,
-				action="error",
-				status="error",
-				message=str(exc),
+				action="updated",
+				status="success",
+				message="Dry run upsert." if dry_run else "Upserted frappe record.",
 				direction=label_direction,
-				frappe_record=existing_frappe,
+				frappe_record=target_payload,
 				partner_record=partner_record,
+				changes=changes,
 				commit=False,
 			)
-			continue
-
-		_register_and_log(
-			stats=stats,
-			run_doc=run_doc,
-			config=config,
-			action=action,
-			status="success",
-			message="Dry run upsert." if dry_run else "Upserted frappe record.",
-			direction=label_direction,
-			frappe_record=frappe_payload,
-			partner_record=partner_record,
-			changes=changes,
-			commit=False,
-		)
 
 	if config.delete_missing and full_sync:
 		_delete_missing_frappe_records(
 			run_doc=run_doc,
 			config=config,
-			frappe_index=frappe_index,
+			frappe_records=frappe_records,
 			source_keys=collected_source_keys,
 			dry_run=dry_run,
 			stats=stats,
@@ -1106,43 +1292,45 @@ def _delete_missing_frappe_records(
 	*,
 	run_doc: Any,
 	config: SyncDefinitionConfig,
-	frappe_index: dict[tuple[Any, ...], dict[str, Any]],
+	frappe_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
 	source_keys: set[tuple[Any, ...]],
 	dry_run: bool,
 	stats: SyncStats,
 	label_direction: str,
 ):
-	for key, frappe_record in frappe_index.items():
+	frappe_groups = _group_frappe_records(config, frappe_records)
+	for key, matched_frappe_records in frappe_groups.items():
 		if key in source_keys:
 			continue
-		try:
-			if not dry_run:
-				frappe.delete_doc(config.doctype, frappe_record["name"], ignore_permissions=True, force=True)
-			_register_and_log(
-				stats=stats,
-				run_doc=run_doc,
-				config=config,
-				action="deleted",
-				status="success",
-				message="Dry run delete." if dry_run else "Deleted frappe record missing in source.",
-				direction=label_direction,
-				frappe_record=frappe_record,
-				partner_record=None,
-				commit=False,
-			)
-		except Exception as exc:
-			_register_and_log(
-				stats=stats,
-				run_doc=run_doc,
-				config=config,
-				action="error",
-				status="error",
-				message=str(exc),
-				direction=label_direction,
-				frappe_record=frappe_record,
-				partner_record=None,
-				commit=False,
-			)
+		for frappe_record in matched_frappe_records:
+			try:
+				if not dry_run:
+					frappe.delete_doc(config.doctype, frappe_record["name"], ignore_permissions=True, force=True)
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="deleted",
+					status="success",
+					message="Dry run delete." if dry_run else "Deleted frappe record missing in source.",
+					direction=label_direction,
+					frappe_record=frappe_record,
+					partner_record=None,
+					commit=False,
+				)
+			except Exception as exc:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="error",
+					status="error",
+					message=str(exc),
+					direction=label_direction,
+					frappe_record=frappe_record,
+					partner_record=None,
+					commit=False,
+				)
 
 
 def _sync_bidirectional(
@@ -1720,6 +1908,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		batch_size=batch_size,
 		create_new=create_new,
 		delete_missing=delete_missing,
+		one_way_match_mode=_clean_string(_first_value(sync_definition_doc, ["one_way_match_mode"])) or "first_match",
 		use_last_sync_date=use_last_sync_date,
 		conflict_policy=conflict_policy,
 		timestamp_buffer_seconds=timestamp_buffer_seconds,
@@ -2236,6 +2425,10 @@ def _config_read_query(config: Any) -> str | None:
 	return getattr(config, "read_query", None) or getattr(config, "query", None)
 
 
+def _config_one_way_match_mode(config: Any) -> str:
+	return getattr(config, "one_way_match_mode", None) or "first_match"
+
+
 def _config_partner_identity_field(config: Any) -> str | None:
 	return getattr(config, "partner_identity_field", None)
 
@@ -2301,15 +2494,37 @@ def _find_existing_partner_record(
 	partner_index: dict[tuple[Any, ...], dict[str, Any]],
 	partner_identity_index: dict[Any, dict[str, Any]],
 ) -> dict[str, Any] | None:
+	return next(
+		iter(
+			_find_existing_partner_records(
+				config,
+				frappe_record,
+				{key: [record] for key, record in partner_index.items()},
+				partner_identity_index,
+			)
+		),
+		None,
+	)
+
+
+def _find_existing_partner_records(
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any],
+	partner_groups: dict[tuple[Any, ...], list[dict[str, Any]]],
+	partner_identity_index: dict[Any, dict[str, Any]],
+) -> list[dict[str, Any]]:
 	frappe_partner_id = _frappe_partner_identity_value(config, frappe_record)
 	if frappe_partner_id not in (None, ""):
 		existing = partner_identity_index.get(frappe_partner_id)
 		if existing:
-			return existing
+			return [existing]
 	key = _key_tuple_from_frappe(frappe_record, _config_match_fields(config))
 	if _valid_key(key):
-		return partner_index.get(key)
-	return None
+		matches = list(partner_groups.get(key) or [])
+		if _config_one_way_match_mode(config) == "all_matches":
+			return matches
+		return matches[-1:] if matches else []
+	return []
 
 
 def _find_existing_frappe_record(
@@ -2318,15 +2533,37 @@ def _find_existing_frappe_record(
 	frappe_index: dict[tuple[Any, ...], dict[str, Any]],
 	frappe_partner_identity_index: dict[Any, dict[str, Any]],
 ) -> dict[str, Any] | None:
+	return next(
+		iter(
+			_find_existing_frappe_records(
+				config,
+				partner_record,
+				{key: [record] for key, record in frappe_index.items()},
+				frappe_partner_identity_index,
+			)
+		),
+		None,
+	)
+
+
+def _find_existing_frappe_records(
+	config: SyncDefinitionConfig,
+	partner_record: dict[str, Any],
+	frappe_groups: dict[tuple[Any, ...], list[dict[str, Any]]],
+	frappe_partner_identity_index: dict[Any, dict[str, Any]],
+) -> list[dict[str, Any]]:
 	partner_identity = _partner_identity_value(config, partner_record)
 	if partner_identity not in (None, ""):
 		existing = frappe_partner_identity_index.get(partner_identity)
 		if existing:
-			return existing
+			return [existing]
 	key = _key_tuple_from_partner(partner_record, _config_match_fields(config), config.mapping)
 	if _valid_key(key):
-		return frappe_index.get(key)
-	return None
+		matches = list(frappe_groups.get(key) or [])
+		if _config_one_way_match_mode(config) == "all_matches":
+			return matches
+		return matches[-1:] if matches else []
+	return []
 
 
 def _pair_token_from_frappe(config: SyncDefinitionConfig, record: dict[str, Any]) -> tuple[Any, ...] | None:
@@ -2385,6 +2622,30 @@ def _partner_key_values_for_write(
 	if partner_identity_field and frappe_partner_id not in (None, ""):
 		return {partner_identity_field: frappe_partner_id}
 	return _partner_key_values_from_tuple(config, key)
+
+
+def _partner_key_values_for_existing_match(
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any],
+	key: tuple[Any, ...],
+	partner_record: dict[str, Any] | None,
+) -> dict[str, Any]:
+	partner_identity_field = _config_partner_identity_field(config)
+	if partner_identity_field and partner_record and partner_record.get(partner_identity_field) not in (None, ""):
+		return {partner_identity_field: partner_record.get(partner_identity_field)}
+	return _partner_key_values_for_write(config, frappe_record, key)
+
+
+def _can_write_partner_matches_individually(
+	config: SyncDefinitionConfig,
+	partner_records: list[dict[str, Any]],
+) -> bool:
+	if len(partner_records) <= 1:
+		return True
+	partner_identity_field = _config_partner_identity_field(config)
+	if not partner_identity_field:
+		return False
+	return all(record.get(partner_identity_field) not in (None, "") for record in partner_records)
 
 
 def _build_partner_create_options(config: SyncDefinitionConfig) -> ConnectorCreateOptions:

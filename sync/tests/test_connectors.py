@@ -247,6 +247,16 @@ class TestRelationalConnectorSql(unittest.TestCase):
 			"SELECT * FROM [dbo].[SyncTable] ORDER BY [id] OFFSET 50 ROWS FETCH NEXT 25 ROWS ONLY",
 		)
 		self.assertEqual(
+			MssqlConnector(DummyPartner("mssql"))._build_fetch_sql(
+				source="01adr_Spender",
+				query=None,
+				batch_size=25,
+				offset=50,
+				key_fields=["Nr"],
+			),
+			"SELECT * FROM [01adr_Spender] ORDER BY [Nr] OFFSET 50 ROWS FETCH NEXT 25 ROWS ONLY",
+		)
+		self.assertEqual(
 			PostgresConnector(DummyPartner("postgres"))._build_fetch_sql(
 				source="public.sync_table",
 				query=None,
@@ -302,7 +312,9 @@ class TestRelationalConnectorSql(unittest.TestCase):
 	def test_mssql_order_clause_falls_back_for_unsafe_or_missing_keys(self):
 		connector = MssqlConnector(DummyPartner("mssql"))
 		self.assertEqual(connector._mssql_order_clause([]), "ORDER BY (SELECT NULL)")
-		self.assertEqual(connector._mssql_order_clause(["unsafe-key"]), "ORDER BY (SELECT NULL)")
+		self.assertEqual(connector._mssql_order_clause(["[broken"]), "ORDER BY (SELECT NULL)")
+		self.assertEqual(connector._mssql_order_clause(["unsafe-key"]), "ORDER BY [unsafe-key]")
+		self.assertEqual(connector._mssql_order_clause(["Telefon mobil"]), "ORDER BY [Telefon mobil]")
 
 	def test_quote_compound_identifier_rejects_unsafe_values(self):
 		connector = PostgresConnector(DummyPartner("postgres"))
@@ -312,6 +324,21 @@ class TestRelationalConnectorSql(unittest.TestCase):
 
 		with self.assertRaisesRegex(ValueError, "Identifier is empty"):
 			connector._quote_compound_identifier("  ")
+
+	def test_quote_compound_identifier_accepts_mssql_numeric_bracketed_and_unicode_parts(self):
+		connector = MssqlConnector(DummyPartner("mssql"))
+
+		self.assertEqual(connector._quote_compound_identifier("01adr_Spender"), "[01adr_Spender]")
+		self.assertEqual(connector._quote_compound_identifier("[01adr_Spender]"), "[01adr_Spender]")
+		self.assertEqual(connector._quote_compound_identifier("dbo.[01adr_Spender]"), "[dbo].[01adr_Spender]")
+		self.assertEqual(connector._quote_compound_identifier("Telefon mobil"), "[Telefon mobil]")
+		self.assertEqual(connector._quote_compound_identifier("[Änderung]"), "[Änderung]")
+
+	def test_quote_compound_identifier_rejects_malformed_mssql_brackets(self):
+		connector = MssqlConnector(DummyPartner("mssql"))
+
+		with self.assertRaisesRegex(ValueError, "Unsafe SQL identifier"):
+			connector._quote_compound_identifier("[01adr_Spender")
 
 	def test_placeholder_matches_paramstyle(self):
 		self.assertEqual(MssqlConnector(DummyPartner("mssql"))._placeholder(), "?")

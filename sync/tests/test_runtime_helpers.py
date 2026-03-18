@@ -800,6 +800,135 @@ class TestRuntimeHelpers(unittest.TestCase):
 			{"name": "TASK-LOCAL", "customer_code": "DIFFERENT", "status": "Open", "partner_nr": 77},
 		)
 
+	def test_sync_partner_to_frappe_all_matches_updates_all_matching_docs(self):
+		config = SimpleNamespace(
+			name="SYNC-P2F-ALL",
+			doctype="Task",
+			match_fields=["customer_code"],
+			mapping={
+				"customer_code": {"partner_field": "code", "direction": "Both"},
+				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+			},
+			value_mapping={},
+			create_new=True,
+			delete_missing=False,
+			one_way_match_mode="all_matches",
+		)
+
+		with (
+			patch("sync.sync.service.runtime._register_and_log"),
+			patch("sync.sync.service.runtime._upsert_frappe_record", side_effect=["TASK-1", "TASK-2"]) as mock_upsert,
+		):
+			runtime._sync_partner_to_frappe(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=object(),
+				partner_records=[{"code": "CUST-1", "state": "Open"}],
+				frappe_records=[
+					{"name": "TASK-1", "customer_code": "CUST-1", "status": "Closed"},
+					{"name": "TASK-2", "customer_code": "CUST-1", "status": "Closed"},
+				],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="A<-B",
+				full_sync=False,
+			)
+
+		self.assertEqual(mock_upsert.call_count, 2)
+		self.assertEqual(
+			[call.kwargs["existing_name"] for call in mock_upsert.call_args_list],
+			["TASK-1", "TASK-2"],
+		)
+
+	def test_sync_partner_to_frappe_first_match_updates_only_one_matching_doc(self):
+		config = SimpleNamespace(
+			name="SYNC-P2F-FIRST",
+			doctype="Task",
+			match_fields=["customer_code"],
+			mapping={
+				"customer_code": {"partner_field": "code", "direction": "Both"},
+				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+			},
+			value_mapping={},
+			create_new=True,
+			delete_missing=False,
+			one_way_match_mode="first_match",
+		)
+
+		with (
+			patch("sync.sync.service.runtime._register_and_log"),
+			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-2") as mock_upsert,
+		):
+			runtime._sync_partner_to_frappe(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=object(),
+				partner_records=[{"code": "CUST-1", "state": "Open"}],
+				frappe_records=[
+					{"name": "TASK-1", "customer_code": "CUST-1", "status": "Closed"},
+					{"name": "TASK-2", "customer_code": "CUST-1", "status": "Closed"},
+				],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="A<-B",
+				full_sync=False,
+			)
+
+		mock_upsert.assert_called_once()
+		self.assertEqual(mock_upsert.call_args.kwargs["existing_name"], "TASK-2")
+
+	def test_sync_frappe_to_partner_all_matches_updates_all_matching_partner_records(self):
+		config = SimpleNamespace(
+			name="SYNC-F2P-ALL",
+			doctype="Task",
+			match_fields=["customer_code"],
+			mapping={
+				"customer_code": {"partner_field": "code", "direction": "Both"},
+				"status": {"partner_field": "state", "direction": "Frappe to Partner"},
+			},
+			value_mapping={},
+			create_new=True,
+			delete_missing=False,
+			one_way_match_mode="all_matches",
+			partner_identity_field="NR",
+			table_name="dbo.Person",
+			batch_size=20,
+		)
+		upsert_calls = []
+
+		def upsert_record(**kwargs):
+			upsert_calls.append(kwargs)
+			return ConnectorWriteResult(
+				ok=True,
+				message="ok",
+				action="updated",
+				record={"NR": kwargs["key_values"]["NR"], "code": "CUST-1", "state": "Open"},
+				resolved_key_values=dict(kwargs["key_values"]),
+			)
+
+		with (
+			patch("sync.sync.service.runtime._create_run_item", return_value=SimpleNamespace(name="ITEM-1")),
+			patch("sync.sync.service.runtime._flush_pending_run_writes"),
+			patch("sync.sync.service.runtime._persist_frappe_partner_identity") as mock_persist_identity,
+		):
+			runtime._sync_frappe_to_partner(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=SimpleNamespace(upsert_record=upsert_record),
+				frappe_records=[{"name": "TASK-1", "customer_code": "CUST-1", "status": "Open"}],
+				partner_records=[
+					{"NR": 101, "code": "CUST-1", "state": "Closed"},
+					{"NR": 202, "code": "CUST-1", "state": "Closed"},
+				],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="A->B",
+				full_sync=False,
+			)
+
+		self.assertEqual([call["key_values"] for call in upsert_calls], [{"NR": 101}, {"NR": 202}])
+		mock_persist_identity.assert_not_called()
+
 	def test_sync_partner_to_frappe_enforces_mapping_direction(self):
 		config = SimpleNamespace(
 			name="SYNC-P2F-DIR",

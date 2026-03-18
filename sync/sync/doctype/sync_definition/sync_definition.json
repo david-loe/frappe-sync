@@ -20,6 +20,7 @@
   "timestamp_buffer_seconds",
   "create_new",
   "delete_missing",
+  "one_way_match_mode",
   "conflict_policy",
   "section_break_source",
   "table_name",
@@ -145,6 +146,14 @@
    "fieldname": "delete_missing",
    "fieldtype": "Check",
    "label": "Delete Missing"
+  },
+  {
+   "default": "first_match",
+   "fieldname": "one_way_match_mode",
+   "fieldtype": "Select",
+   "label": "One-Way Match Mode",
+   "options": "first_match\nall_matches",
+   "description": "For A->B and A<-B only: update only one matched target or all matched targets when multiple records share the same logical match."
   },
   {
    "default": "newest_wins",

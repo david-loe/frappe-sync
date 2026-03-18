@@ -346,6 +346,7 @@ class TestRuntimeManagement(unittest.TestCase):
 				batch_size="25",
 				create_new="0",
 				delete_missing="1",
+				one_way_match_mode="all_matches",
 				use_last_sync_date="0",
 				timestamp_buffer_seconds="3",
 				key_fields=("name",),
@@ -358,6 +359,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertEqual(coerced.batch_size, 25)
 		self.assertFalse(coerced.create_new)
 		self.assertTrue(coerced.delete_missing)
+		self.assertEqual(coerced.one_way_match_mode, "all_matches")
 		self.assertFalse(coerced.use_last_sync_date)
 		self.assertEqual(coerced.timestamp_buffer_seconds, 3)
 		self.assertEqual(coerced.mapping, {"name": {"partner_field": "id", "direction": "Both"}})
@@ -531,14 +533,12 @@ class TestRuntimeManagement(unittest.TestCase):
 			)
 		with (
 			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
-			patch("sync.sync.service.runtime._index_partner_records", return_value={(None,): {"state": "Broken"}}),
-			patch("sync.sync.service.runtime._index_frappe_records", return_value={}),
 		):
 			runtime._sync_partner_to_frappe(
 				run_doc=SimpleNamespace(name="RUN-3"),
 				config=config_b_to_a,
 				connector=object(),
-				partner_records=[],
+				partner_records=[{"state": "Broken"}],
 				frappe_records=[],
 				dry_run=False,
 				stats=runtime.SyncStats(),
