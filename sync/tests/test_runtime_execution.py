@@ -40,7 +40,7 @@ class TestRuntimeExecution(IntegrationTestCase):
 				"frequency_cron": "*/15 * * * *",
 				"table_name": "tabToDo",
 				"batch_size": 25,
-				"key_fields": [{"doctype": "Sync Key Field", "frappe_field": "name"}],
+				"match_fields": [{"doctype": "Sync Key Field", "frappe_field": "name"}],
 				"field_mapping": [
 					{"doctype": "Sync Field Mapping", "frappe_field": "name", "partner_field": "external_name"}
 				],
