@@ -268,7 +268,7 @@ jobs:
           - 3306:3306
         options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
       firebird:
-        image: jacobalberty/firebird:v5
+        image: jacobalberty/firebird:v2.5.9-sc
         env:
           ISC_PASSWORD: masterkey
           FIREBIRD_DATABASE: sync_test.fdb
