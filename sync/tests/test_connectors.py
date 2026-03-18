@@ -446,6 +446,29 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		)
 		self.assertEqual(connection.commit_count, 1)
 
+	def test_firebird_upsert_uppercases_identifiers_for_unquoted_objects(self):
+		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database="sync", user="tester"))
+		cursor = _FakeCursor(rowcount=0)
+		connection = _FakeConnection(cursor)
+
+		with patch.object(connector, "_connect", return_value=connection):
+			result = connector.upsert_record(
+				record={"id": "A1", "status": "open"},
+				key_fields=["name"],
+				mapping={"name": "id", "status": "status"},
+				source="sync_table",
+			)
+
+		self.assertTrue(result.ok)
+		self.assertEqual(
+			cursor.executed,
+			[
+				('UPDATE "SYNC_TABLE" SET "STATUS" = ? WHERE "ID" = ?', ["open", "A1"]),
+				('INSERT INTO "SYNC_TABLE" ("ID", "STATUS") VALUES (?, ?)', ["A1", "open"]),
+			],
+		)
+		self.assertEqual(connection.commit_count, 1)
+
 	def test_upsert_record_reports_sql_errors(self):
 		connector = MssqlConnector(DummyPartner("mssql", server="localhost", database="sync"))
 		cursor = _FakeCursor(rowcount=0, raise_on_execute=RuntimeError("db exploded"))

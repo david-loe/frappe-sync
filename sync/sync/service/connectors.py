@@ -497,6 +497,8 @@ class RelationalConnector(BasePartnerConnector):
 		for part in parts:
 			if not IDENTIFIER_RE.match(part):
 				raise ValueError(f"Unsafe SQL identifier '{identifier}'")
+			if self.dialect == "firebird":
+				part = part.upper()
 			quoted_parts.append(f"{quote_char[0]}{part}{quote_char[1]}")
 		return ".".join(quoted_parts)
 
