@@ -23,7 +23,6 @@ The implementation is centered on these doctypes:
 - `Sync Partner Type`: connector family metadata such as MSSQL, Postgres, Firebird.
 - `Sync Run`: one execution of a sync definition.
 - `Sync Run Item`: one processed record within a run.
-- `Sync Run Item Change`: field-level audit rows for a run item.
 
 Supporting child doctypes:
 
@@ -93,15 +92,15 @@ There is one deliberate exception: when `delete_missing` is enabled during a ful
 
 ### Audit Write Strategy
 
-Run-item and run-item-change writes are buffered in commit batches instead of forcing a database commit after every single audit row.
+Run-item writes are buffered in commit batches instead of forcing a database commit after every single audit row.
 
 The runtime still creates:
 
 - one `Sync Run` per execution
 - one `Sync Run Item` per processed record outcome
-- optional `Sync Run Item Change` rows per field difference
+- compact change metadata on the run item itself (`change_count` and `changed_fields`)
 
-but commit frequency is reduced through pending-write tracking and explicit flushes.
+The current implementation does not depend on field-level child rows for audit logging. Detailed before/after inspection is done through the captured Frappe and partner payloads on the run item, while the run item itself keeps a compact field-name summary.
 
 ## Mapping Model
 
@@ -168,6 +167,19 @@ The runtime parser only consumes already validated filter JSON.
 - partner fetch errors raise hard failures
 - partial partner loads do not proceed into destructive delete-missing logic
 - for full syncs with `delete_missing`, the source is fully loaded before write processing begins
+
+### Time Zones and Datetime Normalization
+
+The project treats cross-system datetime handling as an explicit runtime concern.
+
+- `Sync Partner.time_zone` can define the partner's IANA time zone, for example `Europe/Berlin`.
+- if a partner timestamp already carries an offset or timezone, the runtime respects that embedded timezone
+- if a partner timestamp is naive and `time_zone` is configured, the runtime interprets that value in the partner timezone
+- partner datetimes are normalized into the Frappe site timezone before delta-sync comparisons against `last_successful_sync`
+- mapped Frappe `Datetime` fields are converted from site timezone to partner timezone on writes to the partner
+- mapped partner datetime values are converted from partner timezone into site timezone on writes to Frappe
+
+If no partner time zone is configured, naive partner timestamps are treated as-is. For heterogeneous installations, setting `Sync Partner.time_zone` is the intended way to make delta sync and datetime field mapping deterministic.
 
 ## API Layer
 
@@ -254,6 +266,7 @@ It handles:
 It handles:
 
 - connection hints by partner type
+- partner time-zone guidance for naive upstream timestamps
 - auth-field visibility
 - status-field descriptions
 - `Test Connection`
@@ -262,7 +275,7 @@ The connection test flow saves the form if needed, calls the first available sup
 
 ### Run Monitoring
 
-[sync_run.js](/workspace/development/frappe-bench/apps/sync/sync/public/js/sync_run.js), [sync_run_item.js](/workspace/development/frappe-bench/apps/sync/sync/public/js/sync_run_item.js), and [sync_run_item_list.js](/workspace/development/frappe-bench/apps/sync/sync/public/js/sync_run_item_list.js) provide run health, recent items, navigation to target documents, and related monitoring helpers.
+[sync_run.js](/workspace/development/frappe-bench/apps/sync/sync/public/js/sync_run.js), [sync_run_item.js](/workspace/development/frappe-bench/apps/sync/sync/public/js/sync_run_item.js), and [sync_run_item_list.js](/workspace/development/frappe-bench/apps/sync/sync/public/js/sync_run_item_list.js) provide run health, recent items, navigation to target documents, compact changed-field summaries, and related monitoring helpers.
 
 ## Default Partner Types
 

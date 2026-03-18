@@ -400,6 +400,32 @@ class TestRuntimeManagement(unittest.TestCase):
 			),
 			{"id": "TASK-1", "title": "Hello"},
 		)
+		datetime_mapping = {"scheduled_at": {"partner_field": "scheduled_at", "direction": "Both"}}
+		datetime_meta = DummyMeta([_field("scheduled_at", "Datetime")])
+		with (
+			patch("sync.sync.service.runtime.frappe.get_meta", return_value=datetime_meta),
+			patch("sync.sync.service.runtime._site_time_zone", return_value="Europe/Berlin"),
+		):
+			self.assertEqual(
+				runtime._map_partner_to_frappe(
+					{"scheduled_at": "2026-03-17T10:00:00+00:00"},
+					datetime_mapping,
+					{},
+					doctype="Task",
+					partner_time_zone="UTC",
+				),
+				{"scheduled_at": datetime(2026, 3, 17, 11, 0)},
+			)
+			self.assertEqual(
+				runtime._map_frappe_to_partner(
+					{"scheduled_at": datetime(2026, 3, 17, 11, 0)},
+					datetime_mapping,
+					{},
+					doctype="Task",
+					partner_time_zone="UTC",
+				),
+				{"scheduled_at": datetime(2026, 3, 17, 10, 0)},
+			)
 
 	def test_helper_functions_cover_string_lookup_and_lock_behaviour(self):
 		row = SimpleNamespace(as_dict=lambda: {"field_name": "subject"})
@@ -431,6 +457,19 @@ class TestRuntimeManagement(unittest.TestCase):
 			),
 			[],
 		)
+		with patch("sync.sync.service.runtime._site_time_zone", return_value="Europe/Berlin"):
+			self.assertEqual(
+				runtime._parse_datetime("2026-03-17T10:00:00+00:00"),
+				datetime(2026, 3, 17, 11, 0),
+			)
+			self.assertEqual(
+				runtime._parse_datetime(
+					"2026-03-17 10:00:00",
+					assumed_time_zone="UTC",
+					target_time_zone="Europe/Berlin",
+				),
+				datetime(2026, 3, 17, 11, 0),
+			)
 		self.assertIsNone(runtime._parse_datetime("not-a-date"))
 		self.assertIsNone(runtime._parse_datetime(None))
 
@@ -643,32 +682,22 @@ class TestRuntimeManagement(unittest.TestCase):
 				_field("record_key"),
 				_field("source_id"),
 				_field("target_id"),
+				_field("change_count"),
+				_field("changed_fields"),
 				_field("frappe_payload"),
 				_field("partner_payload"),
 			]
 		)
-		change_meta = DummyMeta(
-			[
-				_field("sync_run_item"),
-				_field("changed_field"),
-				_field("old_value"),
-				_field("source_value"),
-				_field("new_value"),
-				_field("target_value"),
-				_field("source_side"),
-				_field("target_side"),
-			]
-		)
 		run_doc = DummyDoc(name="RUN-1", doctype="Sync Run")
 		run_item_doc = DummyDoc(name="ITEM-1", doctype="Sync Run Item")
-		change_doc = DummyDoc(name="CHG-1", doctype="Sync Run Item Change")
 
+		get_doc = Mock(side_effect=[run_doc, run_item_doc])
 		with (
 			patch(
 				"sync.sync.service.runtime.frappe",
 				new=_runtime_frappe_stub(
-					get_meta=Mock(side_effect=[run_meta, item_meta, change_meta]),
-					get_doc=Mock(side_effect=[run_doc, run_item_doc, change_doc]),
+					get_meta=Mock(side_effect=[run_meta, item_meta]),
+					get_doc=get_doc,
 				),
 			),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0, 0)),
@@ -683,19 +712,14 @@ class TestRuntimeManagement(unittest.TestCase):
 				frappe_record={"name": "TASK-1"},
 				partner_record={"id": "TASK-1"},
 				message="ok",
-			)
-			created_change = runtime._create_run_item_change(
-				run_item_name="ITEM-1",
-				fieldname="status",
-				old_value="Open",
-				new_value="Closed",
-				source_side="frappe",
-				target_side="partner",
+				changes=[("status", "Open", "Closed")],
 			)
 
 		self.assertTrue(created_run.inserted)
 		self.assertTrue(created_item.inserted)
-		self.assertTrue(created_change.inserted)
+		item_payload = get_doc.call_args_list[1].args[0]
+		self.assertEqual(item_payload["change_count"], 1)
+		self.assertEqual(item_payload["changed_fields"], "status")
 
 	def test_runtime_update_helpers_and_last_successful_sync(self):
 		meta = DummyMeta([_field("status"), _field("summary"), _field("last_run"), _field("last_run_status"), _field("last_run_summary"), _field("last_sync_at"), _field("last_successful_sync"), _field("next_run_at")])

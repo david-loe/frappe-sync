@@ -426,6 +426,25 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertTrue(runtime._record_changed_since(record, ["modified", "changed_on"], since))
 		self.assertEqual(runtime._latest_modified(record, ["modified", "changed_on"]), datetime(2026, 3, 17, 11, 0))
 		self.assertFalse(runtime._record_changed_since({"modified": "2026-03-17 08:00:00"}, ["modified"], since))
+		with patch("sync.sync.service.runtime._site_time_zone", return_value="Europe/Berlin"):
+			self.assertTrue(
+				runtime._record_changed_since(
+					{"updated_at": "2026-03-17 10:30:00"},
+					["updated_at"],
+					datetime(2026, 3, 17, 11, 0),
+					assumed_time_zone="UTC",
+					target_time_zone="Europe/Berlin",
+				)
+			)
+			self.assertEqual(
+				runtime._latest_modified(
+					{"updated_at": "2026-03-17 10:30:00"},
+					["updated_at"],
+					assumed_time_zone="UTC",
+					target_time_zone="Europe/Berlin",
+				),
+				datetime(2026, 3, 17, 11, 30),
+			)
 
 	@patch("sync.sync.service.runtime._doctype_has_field", return_value=True)
 	@patch("sync.sync.service.runtime.frappe.get_doc")
@@ -473,7 +492,6 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(name, "TASK-DRY")
 
 	@patch("sync.sync.service.runtime._create_run_item")
-	@patch("sync.sync.service.runtime._create_run_item_change")
 	@patch("sync.sync.service.runtime._flush_pending_run_writes")
 	@patch("sync.sync.service.runtime._update_doc_fields")
 	@patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[]]))
@@ -626,7 +644,6 @@ class TestRuntimeHelpers(unittest.TestCase):
 				"sync.sync.service.runtime._create_run_item",
 				side_effect=[SimpleNamespace(name="ITEM-1"), SimpleNamespace(name="ITEM-2")],
 			),
-			patch("sync.sync.service.runtime._create_run_item_change"),
 			patch("sync.sync.service.runtime.frappe", SimpleNamespace(db=SimpleNamespace(commit=mock_commit))),
 		):
 			runtime._sync_frappe_to_partner(

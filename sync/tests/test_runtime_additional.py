@@ -526,28 +526,21 @@ class TestRuntimeAdditional(unittest.TestCase):
 				SimpleNamespace(fieldname="record_key", fieldtype="Data"),
 				SimpleNamespace(fieldname="source_id", fieldtype="Data"),
 				SimpleNamespace(fieldname="target_id", fieldtype="Data"),
+				SimpleNamespace(fieldname="change_count", fieldtype="Int"),
+				SimpleNamespace(fieldname="changed_fields", fieldtype="Small Text"),
 				SimpleNamespace(fieldname="frappe_payload", fieldtype="Long Text"),
 				SimpleNamespace(fieldname="partner_payload", fieldtype="Long Text"),
 			]
 		)
-		change_meta = MetaWithFields(
-			[
-				SimpleNamespace(fieldname="sync_run_item", fieldtype="Link"),
-				SimpleNamespace(fieldname="changed_field", fieldtype="Data"),
-				SimpleNamespace(fieldname="old_value", fieldtype="Data"),
-				SimpleNamespace(fieldname="new_value", fieldtype="Data"),
-				SimpleNamespace(fieldname="source_side", fieldtype="Data"),
-				SimpleNamespace(fieldname="target_side", fieldtype="Data"),
-			]
-		)
-		docs = [FakeInsertDoc(name="RUN-1", doctype="Sync Run"), FakeInsertDoc(name="ITEM-1", doctype="Sync Run Item"), FakeInsertDoc(name="CHANGE-1", doctype="Sync Run Item Change")]
+		docs = [FakeInsertDoc(name="RUN-1", doctype="Sync Run"), FakeInsertDoc(name="ITEM-1", doctype="Sync Run Item")]
 
+		get_doc = Mock(side_effect=docs)
 		with (
 			patch(
 				"sync.sync.service.runtime.frappe",
 				new=_runtime_frappe_stub(
-					get_meta=Mock(side_effect=[run_meta, run_item_meta, change_meta]),
-					get_doc=Mock(side_effect=docs),
+					get_meta=Mock(side_effect=[run_meta, run_item_meta]),
+					get_doc=get_doc,
 				),
 			),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
@@ -563,19 +556,14 @@ class TestRuntimeAdditional(unittest.TestCase):
 				partner_record={"id": "TASK-1"},
 				message="created",
 				direction="A->B",
-			)
-			change_doc = runtime._create_run_item_change(
-				run_item_name=item_doc.name,
-				fieldname="status",
-				old_value="Open",
-				new_value="Closed",
-				source_side="frappe",
-				target_side="partner",
+				changes=[("status", "Open", "Closed")],
 			)
 
 		self.assertTrue(run_doc.inserted)
 		self.assertTrue(item_doc.inserted)
-		self.assertTrue(change_doc.inserted)
+		item_payload = get_doc.call_args_list[1].args[0]
+		self.assertEqual(item_payload["change_count"], 1)
+		self.assertEqual(item_payload["changed_fields"], "status")
 
 	def test_get_partner_source_records_returns_records_for_full_sync(self):
 		config = SimpleNamespace(table_name="tabTask", query=None, batch_size=10, key_fields=["name"], partner_modified_fields=["updated_at"])

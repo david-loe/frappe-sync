@@ -89,6 +89,7 @@ sync.run_item.buildSummaryHtml = function (frm, doctypeName) {
 	const messageTone = ["error", "conflict"].includes(String(doc.status || "").toLowerCase()) ? "text-danger" : "text-muted";
 	const frappePayload = sync.run_item.inspectPayload(doc.frappe_payload);
 	const partnerPayload = sync.run_item.inspectPayload(doc.partner_payload);
+	const changedFields = sync.run_item.inspectChangedFields(doc.changed_fields);
 
 	return [
 		`<div class="row">`,
@@ -106,6 +107,8 @@ sync.run_item.buildSummaryHtml = function (frm, doctypeName) {
 		sync.run_item.detailLine(__("Direction"), doc.direction || __("Unknown")),
 		sync.run_item.detailLine(__("Source ID"), doc.source_id || __("Not recorded")),
 		sync.run_item.detailLine(__("Target ID"), doc.target_id || __("Not recorded")),
+		sync.run_item.detailLine(__("Change Count"), doc.change_count || 0),
+		changedFields ? sync.run_item.detailLine(__("Changed Fields"), changedFields) : "",
 		`</div>`,
 		`</div>`,
 		`</div>`,
@@ -223,6 +226,14 @@ sync.run_item.inspectPayload = function (value) {
 			keyPreview: sync.run_item.truncate(text.replace(/\s+/g, " "), 80),
 		};
 	}
+};
+
+sync.run_item.inspectChangedFields = function (value) {
+	const text = String(value || "").trim();
+	if (!text) {
+		return "";
+	}
+	return sync.run_item.truncate(text.replace(/\s*,\s*/g, ", "), 120);
 };
 
 sync.run_item.buildStatusLabel = function (doc) {

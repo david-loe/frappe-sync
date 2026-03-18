@@ -19,6 +19,8 @@
   "section_break_identifiers",
   "source_id",
   "target_id",
+  "change_count",
+  "changed_fields",
   "section_break_payloads",
   "frappe_payload",
   "column_break_payloads",
@@ -113,6 +115,20 @@
    "fieldtype": "Data",
    "label": "Target ID",
    "read_only": 1
+  },
+  {
+   "fieldname": "change_count",
+   "fieldtype": "Int",
+   "label": "Change Count",
+   "read_only": 1,
+   "description": "Number of field-level differences captured on this run item."
+  },
+  {
+   "fieldname": "changed_fields",
+   "fieldtype": "Small Text",
+   "label": "Changed Fields",
+   "read_only": 1,
+   "description": "Compact list of changed field names. Detailed values remain visible through the captured payloads."
   },
   {
    "fieldname": "section_break_payloads",

@@ -10,9 +10,10 @@ from frappe.model.document import Document
 import sync
 import sync.setup as sync_setup
 from sync.sync.doctype.sync_definition import sync_definition as sync_definition_module
+from sync.sync.doctype.sync_partner import sync_partner as sync_partner_module
+from sync.sync.doctype.sync_partner.sync_partner import SyncPartner
 from sync.sync.doctype.sync_partner_type.sync_partner_type import SyncPartnerType
 from sync.sync.doctype.sync_run_item.sync_run_item import SyncRunItem
-from sync.sync.doctype.sync_run_item_change.sync_run_item_change import SyncRunItemChange
 
 
 class MutableDoc:
@@ -156,9 +157,19 @@ class TestSetupModule(unittest.TestCase):
 
 class TestSyncDefinitionDoctype(unittest.TestCase):
 	def test_document_classes_are_document_subclasses(self):
+		self.assertTrue(issubclass(SyncPartner, Document))
 		self.assertTrue(issubclass(SyncPartnerType, Document))
 		self.assertTrue(issubclass(SyncRunItem, Document))
-		self.assertTrue(issubclass(SyncRunItemChange, Document))
+
+	def test_sync_partner_validate_normalizes_and_rejects_invalid_time_zone(self):
+		doc = SimpleNamespace(time_zone=" Europe/Berlin ")
+
+		sync_partner_module.SyncPartner.validate(doc)
+		self.assertEqual(doc.time_zone, "Europe/Berlin")
+
+		with patch.object(sync_partner_module.frappe, "throw", side_effect=frappe.ValidationError("bad-tz")):
+			with self.assertRaises(frappe.ValidationError):
+				sync_partner_module.SyncPartner.validate(SimpleNamespace(time_zone="Mars/Olympus"))
 
 	def test_validate_key_fields_throws_for_missing_mapping(self):
 		doc = FakeSyncDefinitionDoc(

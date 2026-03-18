@@ -24,6 +24,7 @@
   "charset",
   "section_break_connection_options",
   "connection_options",
+  "time_zone",
   "section_break_auth",
   "auth_type",
   "column_break_auth",
@@ -153,6 +154,12 @@
    "fieldtype": "Code",
    "label": "Connection Options",
    "description": "Optional driver-specific connection options, one per line or JSON."
+  },
+  {
+   "fieldname": "time_zone",
+   "fieldtype": "Data",
+   "label": "Time Zone",
+   "description": "IANA time zone used when the partner stores or returns naive datetimes, for example Europe/Berlin."
   },
   {
    "fieldname": "section_break_auth",

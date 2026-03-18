@@ -94,6 +94,13 @@ sync.partner.updateConnectionHints = function (frm) {
 					? __("Optional Firebird driver options, one per line or JSON.")
 					: __("Optional connector-specific options, one per line or JSON.")
 	);
+	frm.set_df_property(
+		"time_zone",
+		"description",
+		__(
+			"Optional IANA time zone used when the partner sends naive datetimes. Leave blank only when partner timestamps already carry offsets or already match the site time zone."
+		)
+	);
 	if (isFirebird) {
 		frm.set_df_property(
 			"charset",

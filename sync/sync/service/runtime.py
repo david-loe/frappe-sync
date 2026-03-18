@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import inspect
 import json
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import frappe
-from frappe.utils import cint, get_datetime, now_datetime
+from frappe.utils import cint, get_datetime, get_system_timezone, now_datetime
 import yaml
 
 from .connectors import get_connector_for_partner
@@ -23,7 +24,6 @@ SYNC_DEFINITION = "Sync Definition"
 SYNC_PARTNER = "Sync Partner"
 SYNC_RUN = "Sync Run"
 SYNC_RUN_ITEM = "Sync Run Item"
-SYNC_RUN_ITEM_CHANGE = "Sync Run Item Change"
 
 ACTIVE_RUN_STATUSES = {"Queued", "Running"}
 DONE_RUN_STATUSES = {"Success", "Error", "Skipped"}
@@ -71,6 +71,7 @@ class SyncDefinitionConfig:
 	value_mapping: dict[str, dict[Any, Any]]
 	frappe_modified_fields: list[str]
 	partner_modified_fields: list[str]
+	partner_time_zone: str | None = None
 
 
 @dataclass(slots=True)
@@ -346,6 +347,7 @@ def _build_preview(sync_definition: Any, *, limit: int) -> dict[str, Any]:
 	config = _build_definition_config(sync_definition)
 	mapping = _normalize_field_mapping(config.mapping)
 	partner_doc = frappe.get_doc(SYNC_PARTNER, config.partner)
+	config = _merge_partner_runtime_settings(config, partner_doc)
 	connector = get_connector_for_partner(partner_doc)
 	ping = connector.ping()
 
@@ -562,6 +564,7 @@ def _run_engine(
 		)
 	config = context.config
 	partner_doc = frappe.get_doc(SYNC_PARTNER, config.partner)
+	config = _merge_partner_runtime_settings(config, partner_doc)
 	connector = get_connector_for_partner(partner_doc)
 	ping = connector.ping()
 	if not ping.ok:
@@ -679,8 +682,12 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 	if isinstance(config, SyncDefinitionConfig):
 		mapping = _normalize_field_mapping(config.mapping)
 		if mapping == config.mapping:
-			_validate_runtime_mapping(config)
-			return config
+			normalized_config = replace(
+				config,
+				partner_time_zone=_normalize_time_zone_name(config.partner_time_zone),
+			)
+			_validate_runtime_mapping(normalized_config)
+			return normalized_config
 	normalized = SyncDefinitionConfig(
 		name=str(getattr(config, "name", "")),
 		doctype=str(getattr(config, "doctype", "")),
@@ -701,6 +708,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		value_mapping=dict(getattr(config, "value_mapping", {}) or {}),
 		frappe_modified_fields=list(getattr(config, "frappe_modified_fields", ["modified"]) or ["modified"]),
 		partner_modified_fields=list(getattr(config, "partner_modified_fields", ["modified"]) or ["modified"]),
+		partner_time_zone=_normalize_time_zone_name(getattr(config, "partner_time_zone", None)),
 	)
 	_validate_runtime_mapping(normalized)
 	return normalized
@@ -761,7 +769,13 @@ def _sync_frappe_to_partner(
 			continue
 
 		collected_source_keys.add(key)
-		partner_payload = _map_frappe_to_partner(frappe_record, config.mapping, config.value_mapping)
+		partner_payload = _map_frappe_to_partner(
+			frappe_record,
+			config.mapping,
+			config.value_mapping,
+			doctype=getattr(config, "doctype", None),
+			partner_time_zone=getattr(config, "partner_time_zone", None),
+		)
 		existing_partner = partner_index.get(key)
 		exists = existing_partner is not None
 
@@ -784,6 +798,9 @@ def _sync_frappe_to_partner(
 			new_record=partner_payload,
 			old_record=existing_partner or {},
 			field_names=list(partner_payload.keys()),
+			datetime_fields=_partner_datetime_fields(config),
+			assumed_time_zone=getattr(config, "partner_time_zone", None),
+			target_time_zone=getattr(config, "partner_time_zone", None) or _site_time_zone(),
 		)
 		if exists and not changes:
 			_register_and_log(
@@ -827,10 +844,6 @@ def _sync_frappe_to_partner(
 			)
 			continue
 
-		change_rows = [
-			(field_name, old_value, new_value, "frappe", "partner")
-			for field_name, old_value, new_value in changes
-		]
 		_register_and_log(
 			stats=stats,
 			run_doc=run_doc,
@@ -841,7 +854,7 @@ def _sync_frappe_to_partner(
 			direction=label_direction,
 			frappe_record=frappe_record,
 			partner_record=partner_payload,
-			changes=change_rows,
+			changes=changes,
 			commit=False,
 		)
 
@@ -894,7 +907,13 @@ def _sync_partner_to_frappe(
 			continue
 
 		collected_source_keys.add(key)
-		frappe_payload = _map_partner_to_frappe(partner_record, config.mapping, config.value_mapping)
+		frappe_payload = _map_partner_to_frappe(
+			partner_record,
+			config.mapping,
+			config.value_mapping,
+			doctype=getattr(config, "doctype", None),
+			partner_time_zone=getattr(config, "partner_time_zone", None),
+		)
 		existing_frappe = frappe_index.get(key)
 		exists = existing_frappe is not None
 
@@ -917,6 +936,8 @@ def _sync_partner_to_frappe(
 			new_record=frappe_payload,
 			old_record=existing_frappe or {},
 			field_names=list(frappe_payload.keys()),
+			datetime_fields=_frappe_datetime_fields(config),
+			target_time_zone=_site_time_zone(),
 		)
 		if exists and not changes:
 			_register_and_log(
@@ -958,10 +979,6 @@ def _sync_partner_to_frappe(
 			)
 			continue
 
-		change_rows = [
-			(field_name, old_value, new_value, "partner", "frappe")
-			for field_name, old_value, new_value in changes
-		]
 		_register_and_log(
 			stats=stats,
 			run_doc=run_doc,
@@ -972,7 +989,7 @@ def _sync_partner_to_frappe(
 			direction=label_direction,
 			frappe_record=frappe_payload,
 			partner_record=partner_record,
-			changes=change_rows,
+			changes=changes,
 			commit=False,
 		)
 
@@ -1133,18 +1150,35 @@ def _sync_bidirectional(
 		if not frappe_record or not partner_record:
 			continue
 
-		frappe_payload = _map_partner_to_frappe(partner_record, config.mapping, config.value_mapping)
-		partner_payload = _map_frappe_to_partner(frappe_record, config.mapping, config.value_mapping)
+		frappe_payload = _map_partner_to_frappe(
+			partner_record,
+			config.mapping,
+			config.value_mapping,
+			doctype=getattr(config, "doctype", None),
+			partner_time_zone=getattr(config, "partner_time_zone", None),
+		)
+		partner_payload = _map_frappe_to_partner(
+			frappe_record,
+			config.mapping,
+			config.value_mapping,
+			doctype=getattr(config, "doctype", None),
+			partner_time_zone=getattr(config, "partner_time_zone", None),
+		)
 
 		to_partner_changes = _diff_target_values(
 			new_record=partner_payload,
 			old_record=partner_record,
 			field_names=list(partner_payload.keys()),
+			datetime_fields=_partner_datetime_fields(config),
+			assumed_time_zone=getattr(config, "partner_time_zone", None),
+			target_time_zone=getattr(config, "partner_time_zone", None) or _site_time_zone(),
 		)
 		to_frappe_changes = _diff_target_values(
 			new_record=frappe_payload,
 			old_record=frappe_record,
 			field_names=list(frappe_payload.keys()),
+			datetime_fields=_frappe_datetime_fields(config),
+			target_time_zone=_site_time_zone(),
 		)
 		if not to_partner_changes and not to_frappe_changes:
 			_register_and_log(
@@ -1165,11 +1199,14 @@ def _sync_bidirectional(
 			record=frappe_record,
 			modified_fields=config.frappe_modified_fields,
 			last_successful_sync=last_successful_sync,
+			target_time_zone=_site_time_zone(),
 		)
 		partner_changed_since_last = _record_changed_since(
 			record=partner_record,
 			modified_fields=config.partner_modified_fields,
 			last_successful_sync=last_successful_sync,
+			assumed_time_zone=getattr(config, "partner_time_zone", None),
+			target_time_zone=_site_time_zone(),
 		)
 
 		if frappe_changed_since_last and not partner_changed_since_last:
@@ -1224,8 +1261,17 @@ def _sync_bidirectional(
 			)
 			continue
 
-		frappe_latest = _latest_modified(record=frappe_record, modified_fields=config.frappe_modified_fields)
-		partner_latest = _latest_modified(record=partner_record, modified_fields=config.partner_modified_fields)
+		frappe_latest = _latest_modified(
+			record=frappe_record,
+			modified_fields=config.frappe_modified_fields,
+			target_time_zone=_site_time_zone(),
+		)
+		partner_latest = _latest_modified(
+			record=partner_record,
+			modified_fields=config.partner_modified_fields,
+			assumed_time_zone=getattr(config, "partner_time_zone", None),
+			target_time_zone=_site_time_zone(),
+		)
 		if partner_latest and frappe_latest and partner_latest > frappe_latest:
 			_apply_frappe_update(
 				run_doc=run_doc,
@@ -1291,7 +1337,6 @@ def _apply_partner_update(
 		)
 		if not write.ok:
 			raise RuntimeError(write.message or "Partner upsert failed.")
-		change_rows = [(field_name, old_value, new_value, "frappe", "partner") for field_name, old_value, new_value in changes]
 		_register_and_log(
 			stats=stats,
 			run_doc=run_doc,
@@ -1302,7 +1347,7 @@ def _apply_partner_update(
 			direction=direction,
 			frappe_record=frappe_record,
 			partner_record=partner_payload,
-			changes=change_rows,
+			changes=changes,
 			commit=commit,
 		)
 	except Exception as exc:
@@ -1345,7 +1390,6 @@ def _apply_frappe_update(
 		)
 		if doc_name:
 			frappe_payload["name"] = doc_name
-		change_rows = [(field_name, old_value, new_value, "partner", "frappe") for field_name, old_value, new_value in changes]
 		_register_and_log(
 			stats=stats,
 			run_doc=run_doc,
@@ -1356,7 +1400,7 @@ def _apply_frappe_update(
 			direction=direction,
 			frappe_record=frappe_payload,
 			partner_record=partner_record,
-			changes=change_rows,
+			changes=changes,
 			commit=commit,
 		)
 	except Exception as exc:
@@ -1431,7 +1475,13 @@ def _iter_partner_source_batches(config: SyncDefinitionConfig, connector: Any, c
 		for batch in record_batches:
 			filtered = [
 				record for record in batch
-				if _record_changed_since(record, config.partner_modified_fields, since)
+				if _record_changed_since(
+					record,
+					config.partner_modified_fields,
+					since,
+					assumed_time_zone=getattr(config, "partner_time_zone", None),
+					target_time_zone=_site_time_zone(),
+				)
 			]
 			if filtered:
 				yield filtered
@@ -1838,8 +1888,15 @@ def _map_frappe_to_partner(
 	record: dict[str, Any],
 	mapping: dict[str, Any],
 	value_mapping: dict[str, dict[Any, Any]],
+	*,
+	doctype: str | None = None,
+	partner_time_zone: str | None = None,
 ) -> dict[str, Any]:
 	result: dict[str, Any] = {}
+	datetime_fields = _get_frappe_datetime_fields(
+		doctype,
+		[frappe_field for frappe_field, _entry in _iter_field_mapping_entries(mapping)],
+	)
 	for frappe_field, entry in _iter_field_mapping_entries(mapping):
 		if not _mapping_allows_direction(entry, MAPPING_DIRECTION_FRAPPE_TO_PARTNER):
 			continue
@@ -1848,6 +1905,12 @@ def _map_frappe_to_partner(
 		field_map = value_mapping.get(frappe_field) or {}
 		if value in field_map:
 			value = field_map[value]
+		if frappe_field in datetime_fields:
+			value = _convert_datetime_between_time_zones(
+				value,
+				source_time_zone=_site_time_zone(),
+				target_time_zone=partner_time_zone or _site_time_zone(),
+			)
 		result[partner_field] = value
 	return result
 
@@ -1856,8 +1919,15 @@ def _map_partner_to_frappe(
 	record: dict[str, Any],
 	mapping: dict[str, Any],
 	value_mapping: dict[str, dict[Any, Any]],
+	*,
+	doctype: str | None = None,
+	partner_time_zone: str | None = None,
 ) -> dict[str, Any]:
 	result: dict[str, Any] = {}
+	datetime_fields = _get_frappe_datetime_fields(
+		doctype,
+		[frappe_field for frappe_field, _entry in _iter_field_mapping_entries(mapping)],
+	)
 	for frappe_field, entry in _iter_field_mapping_entries(mapping):
 		if not _mapping_allows_direction(entry, MAPPING_DIRECTION_PARTNER_TO_FRAPPE):
 			continue
@@ -1867,6 +1937,12 @@ def _map_partner_to_frappe(
 		reverse_map = {mapped_value: source_value for source_value, mapped_value in field_map.items()}
 		if value in reverse_map:
 			value = reverse_map[value]
+		if frappe_field in datetime_fields:
+			value = _convert_datetime_between_time_zones(
+				value,
+				source_time_zone=partner_time_zone,
+				target_time_zone=_site_time_zone(),
+			)
 		result[frappe_field] = value
 	return result
 
@@ -1876,19 +1952,49 @@ def _diff_target_values(
 	new_record: dict[str, Any],
 	old_record: dict[str, Any],
 	field_names: list[str],
+	datetime_fields: set[str] | None = None,
+	assumed_time_zone: str | None = None,
+	target_time_zone: str | None = None,
 ) -> list[tuple[str, Any, Any]]:
 	changes: list[tuple[str, Any, Any]] = []
 	for field_name in field_names:
 		old_value = old_record.get(field_name)
 		new_value = new_record.get(field_name)
-		if _normalize_value(old_value) != _normalize_value(new_value):
+		if _normalize_field_value(
+			field_name,
+			old_value,
+			datetime_fields=datetime_fields,
+			assumed_time_zone=assumed_time_zone,
+			target_time_zone=target_time_zone,
+		) != _normalize_field_value(
+			field_name,
+			new_value,
+			datetime_fields=datetime_fields,
+			assumed_time_zone=assumed_time_zone,
+			target_time_zone=target_time_zone,
+		):
 			changes.append((field_name, old_value, new_value))
 	return changes
 
 
-def _normalize_value(value: Any) -> Any:
-	if isinstance(value, datetime):
-		return value.replace(tzinfo=None)
+def _normalize_field_value(
+	field_name: str,
+	value: Any,
+	*,
+	datetime_fields: set[str] | None = None,
+	assumed_time_zone: str | None = None,
+	target_time_zone: str | None = None,
+) -> Any:
+	if field_name in (datetime_fields or set()) or isinstance(value, datetime):
+		parsed = _parse_datetime(
+			value,
+			assumed_time_zone=assumed_time_zone,
+			target_time_zone=target_time_zone,
+		)
+		if parsed is not None:
+			return parsed
+		if isinstance(value, datetime):
+			return value.replace(tzinfo=None)
 	if isinstance(value, list | dict):
 		return json.dumps(value, sort_keys=True, default=str, ensure_ascii=True)
 	return value
@@ -1898,21 +2004,38 @@ def _record_changed_since(
 	record: dict[str, Any],
 	modified_fields: list[str],
 	last_successful_sync: datetime | None,
+	*,
+	assumed_time_zone: str | None = None,
+	target_time_zone: str | None = None,
 ) -> bool:
 	if not last_successful_sync:
 		return True
 	for field_name in modified_fields:
 		field_value = record.get(field_name)
-		parsed = _parse_datetime(field_value)
+		parsed = _parse_datetime(
+			field_value,
+			assumed_time_zone=assumed_time_zone,
+			target_time_zone=target_time_zone,
+		)
 		if parsed and parsed >= last_successful_sync:
 			return True
 	return False
 
 
-def _latest_modified(record: dict[str, Any], modified_fields: list[str]) -> datetime | None:
+def _latest_modified(
+	record: dict[str, Any],
+	modified_fields: list[str],
+	*,
+	assumed_time_zone: str | None = None,
+	target_time_zone: str | None = None,
+) -> datetime | None:
 	latest: datetime | None = None
 	for field_name in modified_fields:
-		parsed = _parse_datetime(record.get(field_name))
+		parsed = _parse_datetime(
+			record.get(field_name),
+			assumed_time_zone=assumed_time_zone,
+			target_time_zone=target_time_zone,
+		)
 		if not parsed:
 			continue
 		if not latest or parsed > latest:
@@ -1920,7 +2043,12 @@ def _latest_modified(record: dict[str, Any], modified_fields: list[str]) -> date
 	return latest
 
 
-def _parse_datetime(value: Any) -> datetime | None:
+def _parse_datetime(
+	value: Any,
+	*,
+	assumed_time_zone: str | None = None,
+	target_time_zone: str | None = None,
+) -> datetime | None:
 	if value in (None, ""):
 		return None
 	try:
@@ -1929,7 +2057,19 @@ def _parse_datetime(value: Any) -> datetime | None:
 		return None
 	if not isinstance(parsed, datetime):
 		return None
-	return parsed.replace(tzinfo=None)
+	assumed_zone = _normalize_time_zone_name(assumed_time_zone)
+	target_zone = _normalize_time_zone_name(target_time_zone) or _site_time_zone()
+	if parsed.tzinfo is None:
+		if not assumed_zone:
+			return parsed
+		try:
+			parsed = parsed.replace(tzinfo=ZoneInfo(assumed_zone))
+		except ZoneInfoNotFoundError:
+			return parsed
+	try:
+		return parsed.astimezone(ZoneInfo(target_zone)).replace(tzinfo=None)
+	except ZoneInfoNotFoundError:
+		return parsed.replace(tzinfo=None)
 
 
 def _get_frappe_records(
@@ -2029,11 +2169,11 @@ def _register_and_log(
 	direction: str,
 	frappe_record: dict[str, Any] | None,
 	partner_record: dict[str, Any] | None,
-	changes: list[tuple[str, Any, Any, str, str]] | None = None,
+	changes: list[tuple[str, Any, Any]] | None = None,
 	commit: bool = True,
 ):
 	stats.register(action=action, status=status)
-	run_item_doc = _create_run_item(
+	_create_run_item(
 		run_doc=run_doc,
 		config=config,
 		sync_definition_name=config.name,
@@ -2043,19 +2183,10 @@ def _register_and_log(
 		partner_record=partner_record,
 		message=message,
 		direction=direction,
+		changes=changes,
 		commit=False,
 	)
-	for field_name, old_value, new_value, source_side, target_side in changes or []:
-		_create_run_item_change(
-			run_item_name=run_item_doc.name,
-			fieldname=field_name,
-			old_value=old_value,
-			new_value=new_value,
-			source_side=source_side,
-			target_side=target_side,
-			commit=False,
-		)
-	_track_pending_run_writes(run_doc, 1 + len(changes or []))
+	_track_pending_run_writes(run_doc, 1)
 	if commit:
 		_flush_pending_run_writes(run_doc, force=True)
 	else:
@@ -2106,6 +2237,7 @@ def _create_run_item(
 	partner_record: dict[str, Any] | None,
 	message: str | None,
 	direction: str | None = None,
+	changes: list[tuple[str, Any, Any]] | None = None,
 	commit: bool = True,
 ) -> Any:
 	payload: dict[str, Any] = {"doctype": SYNC_RUN_ITEM}
@@ -2125,6 +2257,8 @@ def _create_run_item(
 	_set_first_existing(payload, meta, ["record_key"], _fit_data_value(record_key))
 	_set_first_existing(payload, meta, ["source_id"], _fit_data_value(source_id))
 	_set_first_existing(payload, meta, ["target_id"], _fit_data_value(target_id))
+	_set_first_existing(payload, meta, ["change_count"], len(changes or []))
+	_set_first_existing(payload, meta, ["changed_fields"], _summarize_changed_fields(changes))
 	_set_first_existing(payload, meta, ["frappe_payload", "frappe_record_json"], json.dumps(frappe_record, default=str, ensure_ascii=True) if frappe_record else None)
 	_set_first_existing(payload, meta, ["partner_payload", "partner_record_json"], json.dumps(partner_record, default=str, ensure_ascii=True) if partner_record else None)
 
@@ -2135,31 +2269,92 @@ def _create_run_item(
 	return doc
 
 
-def _create_run_item_change(
+def _summarize_changed_fields(changes: list[tuple[str, Any, Any]] | None) -> str | None:
+	field_names = [_clean_string(field_name) for field_name, _old_value, _new_value in changes or []]
+	normalized = [field_name for field_name in field_names if field_name]
+	if not normalized:
+		return None
+	return ", ".join(normalized)
+
+
+def _merge_partner_runtime_settings(config: SyncDefinitionConfig, partner_doc: Any) -> SyncDefinitionConfig:
+	partner_time_zone = _get_partner_time_zone(partner_doc)
+	if isinstance(config, SyncDefinitionConfig):
+		return replace(config, partner_time_zone=partner_time_zone)
+	setattr(config, "partner_time_zone", partner_time_zone)
+	return _coerce_config(config)
+
+
+def _get_partner_time_zone(partner_doc: Any) -> str | None:
+	return _normalize_time_zone_name(_first_value(partner_doc, ["time_zone", "partner_time_zone", "timezone"]))
+
+
+def _normalize_time_zone_name(value: Any) -> str | None:
+	cleaned = _clean_string(value)
+	if not cleaned:
+		return None
+	try:
+		ZoneInfo(cleaned)
+	except ZoneInfoNotFoundError:
+		return None
+	return cleaned
+
+
+def _site_time_zone() -> str:
+	try:
+		return _normalize_time_zone_name(get_system_timezone()) or "UTC"
+	except Exception:
+		return "UTC"
+
+
+def _convert_datetime_between_time_zones(
+	value: Any,
 	*,
-	run_item_name: str,
-	fieldname: str,
-	old_value: Any,
-	new_value: Any,
-	source_side: str,
-	target_side: str,
-	commit: bool = True,
+	source_time_zone: str | None,
+	target_time_zone: str | None,
 ) -> Any:
-	payload: dict[str, Any] = {"doctype": SYNC_RUN_ITEM_CHANGE}
-	meta = frappe.get_meta(SYNC_RUN_ITEM_CHANGE)
-	_set_first_existing(payload, meta, ["sync_run_item", "run_item"], run_item_name)
-	_set_first_existing(payload, meta, ["changed_field", "fieldname", "field_name"], fieldname)
-	_set_first_existing(payload, meta, ["old_value"], json.dumps(old_value, default=str, ensure_ascii=True))
-	_set_first_existing(payload, meta, ["source_value"], json.dumps(old_value, default=str, ensure_ascii=True))
-	_set_first_existing(payload, meta, ["new_value"], json.dumps(new_value, default=str, ensure_ascii=True))
-	_set_first_existing(payload, meta, ["target_value"], json.dumps(new_value, default=str, ensure_ascii=True))
-	_set_first_existing(payload, meta, ["source_side"], source_side)
-	_set_first_existing(payload, meta, ["target_side"], target_side)
-	doc = frappe.get_doc(payload)
-	doc.insert(ignore_permissions=True)
-	if commit:
-		frappe.db.commit()
-	return doc
+	parsed = _parse_datetime(
+		value,
+		assumed_time_zone=source_time_zone,
+		target_time_zone=target_time_zone,
+	)
+	return parsed if parsed is not None else value
+
+
+def _get_frappe_datetime_fields(doctype: str | None, field_names: list[str] | set[str]) -> set[str]:
+	if not doctype:
+		return set()
+	candidates = {_clean_string(field_name) for field_name in field_names if _clean_string(field_name)}
+	result = {field_name for field_name in candidates if field_name in {"modified", "creation"}}
+	if not candidates:
+		return result
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		return result
+	fieldtypes = {
+		_clean_string(getattr(field, "fieldname", None)): getattr(field, "fieldtype", None)
+		for field in getattr(meta, "fields", [])
+	}
+	for field_name in candidates:
+		if fieldtypes.get(field_name) == "Datetime":
+			result.add(field_name)
+	return result
+
+
+def _frappe_datetime_fields(config: SyncDefinitionConfig) -> set[str]:
+	candidates = set(getattr(config, "frappe_modified_fields", []) or [])
+	candidates.update(frappe_field for frappe_field, _entry in _iter_field_mapping_entries(getattr(config, "mapping", {})))
+	return _get_frappe_datetime_fields(getattr(config, "doctype", None), candidates)
+
+
+def _partner_datetime_fields(config: SyncDefinitionConfig) -> set[str]:
+	partner_fields = set(getattr(config, "partner_modified_fields", []) or [])
+	for frappe_field in _frappe_datetime_fields(config):
+		partner_field = _partner_field_for_mapping(getattr(config, "mapping", {}), frappe_field, frappe_field)
+		if partner_field:
+			partner_fields.add(partner_field)
+	return partner_fields
 
 
 def _runtime_commit_batch_size(config: SyncDefinitionConfig | None) -> int:
