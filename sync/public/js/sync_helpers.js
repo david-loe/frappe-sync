@@ -290,17 +290,63 @@ sync.helpers.renderPartnerColumnStatusPanel = function (state, context = {}) {
 	`;
 };
 
-sync.helpers.runSyncDefinition = function (frm, trigger = "manual") {
-	const message = `Running ${frm.doc.name}`;
-	sync.helpers.callApi("run_sync_definition", { sync_definition_name: frm.doc.name, trigger })
+sync.helpers.getRunSyncDefinitionMessage = function (payload, options = {}) {
+	const dryRun = Boolean(options.dry_run);
+	if (typeof payload === "string" && payload.trim()) {
+		return payload;
+	}
+
+	const status = String(payload?.status || "").trim();
+	const runName = String(payload?.run || "").trim();
+	const definitionName = String(payload?.sync_definition || options.sync_definition_name || "").trim();
+	const label = dryRun ? __("Dry run") : __("Run");
+
+	if (status === "already_running") {
+		return __("A sync run is already active for {0}.", [definitionName || __("this definition")]);
+	}
+	if (status === "success") {
+		return runName ? __("{0} completed: {1}", [label, runName]) : __("{0} completed.", [label]);
+	}
+	if (status === "queued") {
+		return runName ? __("{0} queued: {1}", [label, runName]) : __("{0} queued.", [label]);
+	}
+	return dryRun ? __("Dry run started.") : __("Sync started.");
+};
+
+sync.helpers.getRunSyncDefinitionIndicator = function (payload) {
+	const status = String(payload?.status || "").trim();
+	if (status === "already_running") {
+		return "orange";
+	}
+	if (status === "error") {
+		return "red";
+	}
+	return "green";
+};
+
+sync.helpers.runSyncDefinition = function (frm, trigger = "manual", options = {}) {
+	const dryRun = Boolean(options.dry_run);
+	const ensureSaved = frm.is_new() || frm.is_dirty() ? frm.save() : Promise.resolve();
+
+	return ensureSaved
+		.then(() =>
+			sync.helpers.callApi(
+				"run_sync_definition",
+				{ sync_definition_name: frm.doc.name, trigger, dry_run: dryRun },
+				{ freeze_message: dryRun ? __("Queueing dry run…") : __("Queueing sync run…") }
+			)
+		)
 		.then((response) => {
-			if (!response || !response.message) {
-				frappe.show_alert({ message, indicator: "green" });
-				return;
-			}
-			frappe.show_alert({ message: response.message, indicator: "green" });
+			const payload = response?.message;
+			frappe.show_alert({
+				message: sync.helpers.getRunSyncDefinitionMessage(payload, {
+					dry_run: dryRun,
+					sync_definition_name: frm.doc.name,
+				}),
+				indicator: sync.helpers.getRunSyncDefinitionIndicator(payload),
+			});
 		})
-		.catch((error) => frappe.msgprint(error?.message ?? "Unable to run sync definition"));
+		.catch((error) => frappe.msgprint(sync.helpers.extractApiErrorMessage(error) || __("Unable to run sync definition")));
 };
 
 sync.helpers.previewSyncDefinition = function (frm) {
@@ -636,18 +682,24 @@ sync.helpers.exportDefinitionYaml = function (frm) {
 				frappe.msgprint(__("No YAML returned."));
 				return;
 			}
-			frappe.prompt(
+			const dialog = frappe.prompt(
 				{
-					fieldtype: "Text Editor",
+					fieldtype: "Code",
 					fieldname: "yaml",
 					label: __("YAML Export"),
 					description: __("Copy the YAML below to archive or share."),
-					options: yaml,
+					read_only: 1,
+					wrap: true,
+					min_lines: 16,
+					max_lines: 30,
+					default: yaml,
 				},
 				() => {},
 				__("YAML Export"),
 				__("Close")
 			);
+			dialog.set_value("yaml", yaml);
+			dialog.fields_dict.yaml?.set_focus?.();
 	})
 		.catch((error) => frappe.msgprint(error?.message ?? "Unable to export YAML"));
 };
@@ -943,11 +995,14 @@ sync.helpers.importDefinitionYaml = function (frm, initialValues = {}) {
 	frappe.prompt(
 		[
 			{
-				fieldtype: "Text Editor",
+				fieldtype: "Code",
 				fieldname: "yaml",
 				label: __("YAML Definition"),
 				description: __("Paste a YAML export of a sync definition to import."),
 				reqd: 1,
+				wrap: true,
+				min_lines: 16,
+				max_lines: 30,
 				default: initialValues.yaml || "",
 			},
 			{

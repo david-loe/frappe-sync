@@ -60,6 +60,9 @@ sync.forms.setupButtons = function (frm) {
 	frm.add_custom_button(__("Run Now"), () => {
 		sync.helpers.runSyncDefinition(frm, "manual");
 	});
+	frm.add_custom_button(__("Dry Run"), () => {
+		sync.helpers.runSyncDefinition(frm, "manual", { dry_run: true });
+	});
 	frm.add_custom_button(__("Preview"), () => {
 		sync.helpers.previewSyncDefinition(frm);
 	});
