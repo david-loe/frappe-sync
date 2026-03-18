@@ -36,9 +36,9 @@ class TestRuntimeExecution(IntegrationTestCase):
 				"title": f"SYNC-DEF-{suffix}",
 				"partner": partner_name,
 				"sync_type": "A->B",
-				"doctype_name": "Task",
+				"doctype_name": "ToDo",
 				"frequency_cron": "*/15 * * * *",
-				"table_name": "tabTask",
+				"table_name": "tabToDo",
 				"batch_size": 25,
 				"key_fields": [{"doctype": "Sync Key Field", "frappe_field": "name"}],
 				"field_mapping": [
