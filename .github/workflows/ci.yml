@@ -271,7 +271,7 @@ jobs:
         image: jacobalberty/firebird:v5
         env:
           ISC_PASSWORD: masterkey
-          FIREBIRD_DATABASE: /firebird/data/sync_test.fdb
+          FIREBIRD_DATABASE: sync_test.fdb
         ports:
           - 3050:3050
 
@@ -418,7 +418,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt-get install -y mariadb-client curl gnupg unixodbc-dev
-          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor --batch --yes | sudo tee /usr/share/keyrings/microsoft-prod.gpg > /dev/null
           echo "deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/$(. /etc/os-release && echo ${VERSION_ID})/prod $(. /etc/os-release && echo ${VERSION_CODENAME}) main" | sudo tee /etc/apt/sources.list.d/microsoft-prod.list
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
