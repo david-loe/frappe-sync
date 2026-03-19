@@ -594,7 +594,21 @@ def _run_engine(
 
 	stats = SyncStats()
 	if config.sync_type == "A->B":
-		partner_records = _get_partner_source_records(config, connector, context)
+		partner_batches = _iter_partner_source_batches(config, connector, context)
+		if config.delete_missing and context.is_full_sync:
+			partner_records = [
+				record
+				for batch in partner_batches
+				for record in batch
+			]
+		elif _config_one_way_match_mode(config) == "all_matches":
+			partner_records = [
+				record
+				for batch in partner_batches
+				for record in batch
+			]
+		else:
+			partner_records = _build_partner_index_from_batches(config, partner_batches)
 		if config.delete_missing and context.is_full_sync:
 			frappe_source = [
 				record
@@ -796,9 +810,10 @@ def _sync_frappe_to_partner(
 	full_sync: bool,
 	source_keys: set[tuple[Any, ...]] | None = None,
 ):
-	partner_groups = _group_partner_records(config, partner_records)
+	partner_lookup_records = _normalize_partner_match_records(config, partner_records)
+	partner_groups = _group_partner_records(config, partner_lookup_records)
 	partner_index = {key: records[-1] for key, records in partner_groups.items()}
-	partner_identity_index = _build_partner_identity_index(config, partner_records)
+	partner_identity_index = _build_partner_identity_index(config, partner_lookup_records)
 	collected_source_keys = source_keys if source_keys is not None else set()
 	connector_mapping = _flatten_mapping_for_direction(config.mapping, MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
 
@@ -1062,12 +1077,14 @@ def _sync_partner_to_frappe(
 	full_sync: bool,
 	source_keys: set[tuple[Any, ...]] | None = None,
 ):
-	frappe_groups = _group_frappe_records(config, frappe_records)
+	frappe_lookup_records = _normalize_frappe_match_records(config, frappe_records)
+	partner_input_records = _normalize_partner_match_records(config, partner_records)
+	frappe_groups = _group_frappe_records(config, frappe_lookup_records)
 	frappe_index = {key: records[-1] for key, records in frappe_groups.items()}
-	frappe_partner_identity_index = _build_frappe_partner_identity_index(config, frappe_records)
+	frappe_partner_identity_index = _build_frappe_partner_identity_index(config, frappe_lookup_records)
 	collected_source_keys = source_keys if source_keys is not None else set()
 
-	for partner_record in partner_records:
+	for partner_record in partner_input_records.values() if isinstance(partner_input_records, dict) else partner_input_records:
 		key = _key_tuple_from_partner(partner_record, _config_match_fields(config), config.mapping)
 		if not _valid_key(key):
 			_register_and_log(
@@ -2472,6 +2489,15 @@ def _build_partner_identity_index(
 	return index
 
 
+def _normalize_partner_match_records(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]]:
+	if isinstance(records, dict) or _config_one_way_match_mode(config) == "all_matches":
+		return records
+	return _index_partner_records(config, records)
+
+
 def _build_frappe_partner_identity_index(
 	config: SyncDefinitionConfig,
 	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
@@ -2486,6 +2512,15 @@ def _build_frappe_partner_identity_index(
 		if identity not in (None, ""):
 			index[identity] = record
 	return index
+
+
+def _normalize_frappe_match_records(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]]:
+	if isinstance(records, dict) or _config_one_way_match_mode(config) == "all_matches":
+		return records
+	return _index_frappe_records(config, records)
 
 
 def _find_existing_partner_record(
