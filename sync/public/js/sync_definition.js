@@ -1,16 +1,11 @@
 frappe.provide("sync.forms");
 sync.helpers = sync.helpers || {};
-sync.forms.DEFINITION_PARTNER_COLUMN_METHODS = [
-	"get_sync_partner_table_columns",
-	"load_sync_partner_table_columns",
-	"preview_sync_partner_table_columns",
-];
+sync.forms.DEFINITION_PARTNER_COLUMN_METHOD = "get_sync_partner_table_columns";
 
 frappe.ui.form.on("Sync Definition", {
 	refresh(frm) {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.forms.setupButtons(frm);
-		sync.helpers.ensureModifiedFieldRowsFromLegacy(frm);
 		sync.helpers.toggleSourceFields(frm);
 		sync.helpers.toggleSyncTypeSections(frm);
 		sync.helpers.toggleDefinitionModifiedFieldRows(frm);
@@ -31,18 +26,9 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.toggleDefinitionModifiedFieldRows(frm);
 	},
 	doctype_name(frm) {
-		sync.helpers.ensureModifiedFieldRowsFromLegacy(frm);
 		sync.helpers.refreshDefinitionFieldChoices(frm);
 	},
 	read_query(frm) {
-		sync.helpers.refreshDefinitionFieldPresentation(frm);
-		sync.helpers.toggleSourceFields(frm);
-		sync.helpers.refreshDefinitionSourceValidation(frm);
-		sync.helpers.refreshDefinitionPartnerColumnState(frm);
-		sync.helpers.setupDefinitionPartnerColumnPanel(frm);
-		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
-	},
-	query(frm) {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.toggleSourceFields(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
@@ -62,7 +48,6 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 	},
 	validate(frm) {
-		sync.helpers.ensureModifiedFieldRowsFromLegacy(frm);
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.validateDefinitionSourceSettings(frm);
 	},
@@ -92,8 +77,7 @@ sync.forms.setupButtons = function (frm) {
 
 sync.helpers.collectDefinitionFieldChoiceValues = function (frm) {
 	const values = [];
-	const matchFieldTables = ["match_fields", "key_fields"].filter((tableField) => Boolean(frm.fields_dict[tableField]));
-	[...matchFieldTables, "field_mapping", "value_mapping"].forEach((tableField) => {
+	["match_fields", "field_mapping", "value_mapping"].forEach((tableField) => {
 		(frm.doc[tableField] || []).forEach((row) => {
 			if (row?.frappe_field) {
 				values.push(row.frappe_field);
@@ -120,8 +104,7 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields) {
 		? __("Field choices loaded from {0}.", [frm.doc.doctype_name])
 		: __("Select a DocType to load guided field choices.");
 
-	const matchFieldTables = ["match_fields", "key_fields"].filter((tableField) => Boolean(frm.fields_dict[tableField]));
-	[...matchFieldTables, "field_mapping", "value_mapping"].forEach((tableField) => {
+	["match_fields", "field_mapping", "value_mapping"].forEach((tableField) => {
 		const grid = frm.fields_dict[tableField]?.grid;
 		if (!grid) {
 			return;
@@ -183,12 +166,11 @@ sync.helpers.isDefinitionPartnerColumnReady = function (frm) {
 sync.helpers.getDefinitionPartnerColumnRequestArgs = function (frm) {
 	const args = {
 		sync_partner_name: frm.doc.partner,
-		partner: frm.doc.partner,
 		table_name: frm.doc.table_name,
 	};
 	const readQuery = sync.helpers.getDefinitionSourceReadQuery(frm);
 	if (readQuery) {
-		args.query = readQuery;
+		args.read_query = readQuery;
 	}
 	return args;
 };
@@ -325,11 +307,10 @@ sync.helpers.loadDefinitionPartnerColumns = function (frm) {
 	sync.helpers.renderDefinitionPartnerColumnPanel(frm);
 
 	return sync.helpers
-		.callFirstAvailableApi(
-			sync.forms.DEFINITION_PARTNER_COLUMN_METHODS,
-			sync.helpers.getDefinitionPartnerColumnRequestArgs(frm),
-			{ freeze: false, freeze_message: __("Loading partner columns…") }
-		)
+		.callApi(sync.forms.DEFINITION_PARTNER_COLUMN_METHOD, sync.helpers.getDefinitionPartnerColumnRequestArgs(frm), {
+			freeze: false,
+			freeze_message: __("Loading partner columns…"),
+		})
 		.then((response) => {
 			const payload = response?.message || {};
 			const columns = sync.helpers.normalizePartnerColumnChoices(payload);
@@ -363,34 +344,6 @@ sync.helpers.loadDefinitionPartnerColumns = function (frm) {
 			});
 			return [];
 		});
-};
-
-sync.helpers.parseDefinitionFieldLines = function (value) {
-	if (!value) {
-		return [];
-	}
-	return value
-		.split(/\r?\n/)
-		.map((line) => line.trim())
-		.filter(Boolean);
-};
-
-sync.helpers.ensureModifiedFieldRowsFromLegacy = function (frm) {
-	[
-		["frappe_modified_field_rows", "frappe_modified_fields"],
-		["partner_modified_field_rows", "partner_modified_fields"],
-	].forEach(([tableField, legacyField]) => {
-		if ((frm.doc[tableField] || []).length) {
-			return;
-		}
-		const fieldnames = sync.helpers.parseDefinitionFieldLines(frm.doc[legacyField]);
-		fieldnames.forEach((fieldname) => {
-			frm.add_child(tableField, { field_name: fieldname });
-		});
-		if (fieldnames.length) {
-			frm.refresh_field(tableField);
-		}
-	});
 };
 
 sync.helpers.toggleDefinitionModifiedFieldRows = function (frm) {

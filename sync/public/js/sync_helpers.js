@@ -127,56 +127,8 @@ sync.helpers.isMissingApiMethodError = function (error) {
 	);
 };
 
-// Allow the frontend to land while backend endpoint naming is still settling.
-sync.helpers.callFirstAvailableApi = function (methods, args = {}, opts = {}) {
-	const queue = [...new Set((Array.isArray(methods) ? methods : [methods]).filter(Boolean))];
-	if (!queue.length) {
-		return Promise.reject(new Error(__("No API methods configured.")));
-	}
-
-	let lastError = null;
-	const attempt = (index) => {
-		if (index >= queue.length) {
-			if (lastError && sync.helpers.isMissingApiMethodError(lastError)) {
-				lastError._sync_missing_method = true;
-				lastError._sync_attempted_methods = queue;
-			}
-			return Promise.reject(lastError || new Error(__("No API methods available.")));
-		}
-
-		const method = queue[index];
-		return sync.helpers.callApi(method, args, opts).then((response) => Object.assign({}, response || {}, { _sync_method: method })).catch((error) => {
-			lastError = error;
-			if (sync.helpers.isMissingApiMethodError(error)) {
-				return attempt(index + 1);
-			}
-			return Promise.reject(error);
-		});
-	};
-
-	return attempt(0);
-};
-
-sync.helpers.getDefinitionFieldName = function (frm, candidates) {
-	const names = Array.isArray(candidates) ? candidates : [candidates];
-	return names.find((fieldname) => Boolean(frm?.fields_dict?.[fieldname]));
-};
-
-sync.helpers.getDefinitionFieldValue = function (frm, candidates) {
-	const fieldname = sync.helpers.getDefinitionFieldName(frm, candidates);
-	return fieldname ? String(frm.doc?.[fieldname] || "").trim() : "";
-};
-
-sync.helpers.getDefinitionMatchFieldName = function (frm) {
-	return sync.helpers.getDefinitionFieldName(frm, ["match_fields", "key_fields"]);
-};
-
-sync.helpers.getDefinitionReadQueryFieldName = function (frm) {
-	return sync.helpers.getDefinitionFieldName(frm, ["read_query", "query"]);
-};
-
 sync.helpers.getDefinitionSourceReadQuery = function (frm) {
-	return sync.helpers.getDefinitionFieldValue(frm, ["read_query", "query"]);
+	return String(frm.doc?.read_query || "").trim();
 };
 
 sync.helpers.setDefinitionFieldProperty = function (frm, fieldname, property, value) {
@@ -197,8 +149,6 @@ sync.helpers.toggleDefinitionField = function (frm, fieldname, visible, reqd) {
 };
 
 sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
-	const readQueryField = sync.helpers.getDefinitionReadQueryFieldName(frm);
-	const matchFieldsField = sync.helpers.getDefinitionMatchFieldName(frm);
 	const hasReadQuery = Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
 	const canWritePartner = (frm.doc.sync_type || "").toLowerCase() !== "a<-b";
 	const identityFieldNames = [
@@ -225,41 +175,30 @@ sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 			: __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Leave Read Query blank to read the full table.")
 	);
 
-	if (readQueryField) {
-		sync.helpers.setDefinitionFieldProperty(
-			frm,
-			readQueryField,
-			"label",
-			__("Read Query")
-		);
-		sync.helpers.setDefinitionFieldProperty(
-			frm,
-			readQueryField,
-			"description",
-			__("Optional read-only query used to load partner rows. Leave blank to read the full table. Writes still target Table Name.")
-		);
-	}
-	if (readQueryField === "read_query" && frm.fields_dict.query) {
-		sync.helpers.toggleDefinitionField(frm, "query", false, false);
-	}
-
-	if (matchFieldsField) {
-		sync.helpers.setDefinitionFieldProperty(
-			frm,
-			matchFieldsField,
-			"label",
-			__("Match Fields")
-		);
-		sync.helpers.setDefinitionFieldProperty(
-			frm,
-			matchFieldsField,
-			"description",
-			__("Logical fields used to match source and partner records. These are not the partner's technical identity field.")
-		);
-	}
-	if (matchFieldsField === "match_fields" && frm.fields_dict.key_fields) {
-		sync.helpers.toggleDefinitionField(frm, "key_fields", false, false);
-	}
+	sync.helpers.setDefinitionFieldProperty(
+		frm,
+		"read_query",
+		"label",
+		__("Read Query")
+	);
+	sync.helpers.setDefinitionFieldProperty(
+		frm,
+		"read_query",
+		"description",
+		__("Optional read-only query used to load partner rows. Leave blank to read the full table. Writes still target Table Name.")
+	);
+	sync.helpers.setDefinitionFieldProperty(
+		frm,
+		"match_fields",
+		"label",
+		__("Match Fields")
+	);
+	sync.helpers.setDefinitionFieldProperty(
+		frm,
+		"match_fields",
+		"description",
+		__("Logical fields used to match source and partner records. These are not the partner's technical identity field.")
+	);
 
 	identityFieldNames.forEach((fieldname) => {
 		if (!frm?.fields_dict?.[fieldname]) {
@@ -601,7 +540,7 @@ sync.helpers.renderPreviewModal = function (payload) {
 			<div class="mb-3">
 				<h5 class="mb-2">${__("Fields")}</h5>
 				<div class="d-flex flex-wrap gap-2">
-					${sync.helpers.renderChipList(__("Match Fields"), data.match_fields || data.key_fields)}
+					${sync.helpers.renderChipList(__("Match Fields"), data.match_fields)}
 					${sync.helpers.renderChipList(__("Value Mapping"), data.value_mapping_fields)}
 				</div>
 			</div>
@@ -1163,39 +1102,14 @@ sync.helpers.previewDefinitionYamlImport = function (frm, values) {
 	};
 
 	return sync.helpers
-		.callFirstAvailableApi(
-			[
-				"preview_import_sync_definition_yaml",
-				"preview_sync_definition_yaml_import",
-				"preview_import_sync_yaml",
-			],
-			args,
-			{ freeze_message: "Preparing import preview…" }
-		)
+		.callApi("preview_import_sync_definition_yaml", args, { freeze_message: "Preparing import preview…" })
 		.then((response) => {
 			sync.helpers.showDefinitionYamlImportPreview(frm, values, response?.message || {}, {
 				preview_available: true,
-				method: response?._sync_method,
 			});
 		})
 		.catch((error) => {
-			if (!sync.helpers.isMissingApiMethodError(error)) {
-				frappe.msgprint(sync.helpers.extractApiErrorMessage(error));
-				return;
-			}
-
-			sync.helpers.showDefinitionYamlImportPreview(
-				frm,
-				values,
-				{
-					warnings: [
-						__(
-							"Server-side import preview is not available yet. Import validation will still run when you confirm the import."
-						),
-					],
-				},
-				{ preview_available: false }
-			);
+			frappe.msgprint(sync.helpers.extractApiErrorMessage(error));
 		});
 };
 
@@ -1234,28 +1148,20 @@ sync.helpers.testPartnerConnection = function (frm) {
 
 	return ensureSaved
 		.then(() =>
-			sync.helpers.callFirstAvailableApi(
-				["test_sync_partner_connection", "test_sync_partner"],
-				{ sync_partner_name: frm.doc.name },
-				{ freeze_message: "Testing connection…" }
-			)
+			sync.helpers.callApi("test_sync_partner", { sync_partner_name: frm.doc.name }, { freeze_message: "Testing connection…" })
 		)
 		.then((response) => {
 			const payload = response?.message;
-			const method = response?._sync_method || "";
 			const message =
 				typeof payload === "string"
 					? payload
 					: `<pre>${frappe.utils.escape_html(JSON.stringify(payload || {}, null, 2))}</pre>`;
 
-			const persistResult =
-				method === "test_sync_partner_connection"
-					? Promise.resolve()
-					: sync.helpers.persistDocValues("Sync Partner", frm.doc.name, {
-							last_connection_status: payload?.status === "ok" ? "Success" : "Error",
-							last_checked_on: frappe.datetime.now_datetime(),
-							last_connection_error: payload?.status === "ok" ? "" : payload?.message || "",
-					  });
+			const persistResult = sync.helpers.persistDocValues("Sync Partner", frm.doc.name, {
+				last_connection_status: payload?.status === "ok" ? "Success" : "Error",
+				last_checked_on: frappe.datetime.now_datetime(),
+				last_connection_error: payload?.status === "ok" ? "" : payload?.message || "",
+			});
 
 			return persistResult.then(() =>
 				frm.reload_doc().then(() => {
@@ -1271,15 +1177,9 @@ sync.helpers.testPartnerConnection = function (frm) {
 };
 
 sync.helpers.toggleSourceFields = function (frm) {
-	const readQueryField = sync.helpers.getDefinitionReadQueryFieldName(frm);
-	const matchFieldsField = sync.helpers.getDefinitionMatchFieldName(frm);
 	const hasReadQuery = Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
 
-	sync.helpers.toggleDefinitionField(frm, readQueryField || "query", true, false);
-	if (readQueryField === "read_query" && frm.fields_dict.query) {
-		sync.helpers.toggleDefinitionField(frm, "query", false, false);
-	}
-
+	sync.helpers.toggleDefinitionField(frm, "read_query", true, false);
 	sync.helpers.toggleDefinitionField(frm, "table_name", true, true);
 	sync.helpers.setDefinitionFieldProperty(
 		frm,
@@ -1298,10 +1198,7 @@ sync.helpers.toggleSourceFields = function (frm) {
 		)
 	);
 
-	sync.helpers.toggleDefinitionField(frm, matchFieldsField || "key_fields", true, true);
-	if (matchFieldsField === "match_fields" && frm.fields_dict.key_fields) {
-		sync.helpers.toggleDefinitionField(frm, "key_fields", false, false);
-	}
+	sync.helpers.toggleDefinitionField(frm, "match_fields", true, true);
 };
 
 sync.helpers.toggleSyncTypeSections = function (frm) {
@@ -1312,8 +1209,6 @@ sync.helpers.toggleSyncTypeSections = function (frm) {
 	frm.toggle_display("frappe_modified_field_rows", frappeVisible);
 	frm.toggle_display("partner_modified_field_rows", partnerVisible);
 	frm.toggle_display("one_way_match_mode", oneWayVisible);
-	frm.toggle_display("frappe_modified_fields", false);
-	frm.toggle_display("partner_modified_fields", false);
 	frm.set_df_property("frappe_modified_field_rows", "description", frappeVisible ? __("Fields used to detect changes on Frappe side.") : "");
 	frm.set_df_property("partner_modified_field_rows", "description", partnerVisible ? __("Fields used to detect changes on the partner side.") : "");
 };

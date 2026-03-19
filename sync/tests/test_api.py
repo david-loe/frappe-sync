@@ -108,7 +108,7 @@ class TestSyncApi(ApiTestCase):
 			"frequency_cron": "*/15 * * * *",
 			"batch_size": 100,
 			"filter_expression": '[["docstatus","=",0]]',
-			"key_fields": [{"frappe_field": "name"}],
+			"match_fields": [{"frappe_field": "name"}],
 			"field_mapping": [{"frappe_field": "name", "partner_field": "name"}],
 			"value_mapping": [{"frappe_field": "status", "frappe_value": "open", "partner_value": "1"}],
 		}

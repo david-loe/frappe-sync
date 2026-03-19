@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-import inspect
 import json
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -79,14 +78,6 @@ class SyncDefinitionConfig:
 	partner_create_id_scope_where: str | None = None
 	partner_time_zone: str | None = None
 	one_way_match_mode: str = "first_match"
-
-	@property
-	def key_fields(self) -> list[str]:
-		return self.match_fields
-
-	@property
-	def query(self) -> str | None:
-		return self.read_query
 
 
 @dataclass(slots=True)
@@ -187,27 +178,18 @@ class SyncPreviewService:
 
 def list_due_sync_definitions(now: datetime | None = None) -> list[str]:
 	now = now or now_datetime()
-	meta = frappe.get_meta(SYNC_DEFINITION)
-	fields = ["name"]
-	for fieldname in (
-		_find_field(meta, ["enabled", "is_enabled", "active"]),
-		_find_field(meta, ["next_run_at", "next_execution_at"]),
-		_find_field(meta, ["frequency_cron", "cron", "schedule_cron"]),
-	):
-		if fieldname and fieldname not in fields:
-			fields.append(fieldname)
-	definitions = frappe.get_all(SYNC_DEFINITION, fields=fields)
+	definitions = frappe.get_all(SYNC_DEFINITION, fields=["name", "enabled", "next_run_at", "frequency_cron"])
 	due: list[str] = []
 	for definition in definitions:
 		if not _is_enabled(definition):
 			continue
 
-		next_run_at = _parse_datetime(_first_value(definition, ["next_run_at", "next_execution_at"]))
+		next_run_at = _parse_datetime(definition.get("next_run_at"))
 		if next_run_at and next_run_at <= now:
 			due.append(str(definition.get("name")))
 			continue
 
-		cron_expr = _first_value(definition, ["frequency_cron", "cron", "schedule_cron"])
+		cron_expr = definition.get("frequency_cron")
 		if cron_expr and _is_due_by_cron(definition, str(cron_expr), now):
 			due.append(str(definition.get("name")))
 	return due
@@ -401,7 +383,7 @@ def export_sync_definition_yaml(sync_definition_name: str) -> str:
 	sync_definition_doc = frappe.get_doc(SYNC_DEFINITION, sync_definition_name)
 	mask_credentials = _as_bool(_first_value(sync_definition_doc, ["export_mask_credentials"], default=1))
 	config_doc = _sanitize_document_dict(sync_definition_doc.as_dict(), mask_credentials=mask_credentials)
-	partner_name = _first_value(sync_definition_doc, ["sync_partner", "partner", "sync_partner_name"])
+	partner_name = _first_value(sync_definition_doc, ["partner"])
 
 	payload: dict[str, Any] = {
 		"version": 1,
@@ -411,7 +393,7 @@ def export_sync_definition_yaml(sync_definition_name: str) -> str:
 	if partner_name:
 		partner_doc = frappe.get_doc(SYNC_PARTNER, partner_name)
 		payload["sync_partner"] = _sanitize_document_dict(partner_doc.as_dict(), mask_credentials=mask_credentials)
-		partner_type_name = _first_value(partner_doc, ["partner_type", "sync_partner_type", "type"])
+		partner_type_name = _first_value(partner_doc, ["partner_type"])
 		if partner_type_name and frappe.db.exists("Sync Partner Type", partner_type_name):
 			partner_type_doc = frappe.get_doc("Sync Partner Type", partner_type_name)
 			payload["sync_partner_type"] = _sanitize_document_dict(
@@ -733,8 +715,8 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		conflict_policy=str(getattr(config, "conflict_policy", "newest_wins")),
 		timestamp_buffer_seconds=cint(getattr(config, "timestamp_buffer_seconds", 15)) or 0,
 		table_name=getattr(config, "table_name", None),
-		read_query=getattr(config, "read_query", None) or getattr(config, "query", None),
-		match_fields=list(getattr(config, "match_fields", []) or getattr(config, "key_fields", []) or []),
+		read_query=getattr(config, "read_query", None),
+		match_fields=list(getattr(config, "match_fields", []) or []),
 		mapping=_normalize_field_mapping(getattr(config, "mapping", {}) or {}),
 		value_mapping=dict(getattr(config, "value_mapping", {}) or {}),
 		frappe_modified_fields=list(getattr(config, "frappe_modified_fields", ["modified"]) or ["modified"]),
@@ -1773,17 +1755,14 @@ def _iter_partner_record_batches(
 ):
 	cursor = None
 	processed_count = 0
-	supports_key_fields = _fetch_records_supports_key_fields(getattr(connector, "fetch_records", None))
 	for _ in range(10_000):
 		try:
-			page = _call_partner_fetch_records(
-				connector=connector,
+			page = connector.fetch_records(
 				source=source,
 				query=query,
 				batch_size=batch_size,
 				cursor=cursor,
 				key_fields=key_fields,
-				supports_key_fields=supports_key_fields,
 			)
 		except Exception as exc:
 			raise RuntimeError(
@@ -1798,44 +1777,6 @@ def _iter_partner_record_batches(
 		if not next_cursor:
 			break
 		cursor = next_cursor
-
-
-def _fetch_records_supports_key_fields(fetch_records: Any) -> bool:
-	if not callable(fetch_records):
-		return True
-	try:
-		signature = inspect.signature(fetch_records)
-	except (TypeError, ValueError):
-		return True
-	if "key_fields" in signature.parameters:
-		return True
-	return any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
-
-
-def _call_partner_fetch_records(
-	*,
-	connector: Any,
-	source: str | None,
-	query: str | None,
-	batch_size: int,
-	cursor: Any,
-	key_fields: list[str],
-	supports_key_fields: bool,
-):
-	if supports_key_fields:
-		return connector.fetch_records(
-			source=source,
-			query=query,
-			batch_size=batch_size,
-			cursor=cursor,
-			key_fields=key_fields,
-		)
-	return connector.fetch_records(
-		source=source,
-		query=query,
-		batch_size=batch_size,
-		cursor=cursor,
-	)
 
 
 def _normalize_fetch_result(fetch_result: Any) -> tuple[list[dict[str, Any]], Any]:
@@ -1884,22 +1825,20 @@ def _upsert_frappe_record(
 
 
 def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
-	doctype = _first_value(sync_definition_doc, ["doctype_name", "ref_doctype", "doctype", "doc_type"])
-	if doctype == SYNC_DEFINITION:
-		doctype = _first_value(sync_definition_doc, ["target_doctype", "source_doctype"])
+	doctype = _first_value(sync_definition_doc, ["doctype_name"])
 	if not doctype:
 		raise frappe.ValidationError("Sync Definition is missing target DocType field.")
 
-	partner = _first_value(sync_definition_doc, ["sync_partner", "partner", "sync_partner_name"])
+	partner = _first_value(sync_definition_doc, ["partner"])
 	if not partner:
 		raise frappe.ValidationError("Sync Definition is missing Sync Partner reference.")
 
-	sync_type = _first_value(sync_definition_doc, ["sync_type", "direction"], default="A->B")
-	cron_expr = _first_value(sync_definition_doc, ["frequency_cron", "cron", "schedule_cron"])
-	filters = _parse_filter_expression(_first_value(sync_definition_doc, ["filter_expression", "filters", "frappe_filters"]))
-	batch_size = cint(_first_value(sync_definition_doc, ["batch_size", "chunk_size"], default=100)) or 100
+	sync_type = _first_value(sync_definition_doc, ["sync_type"], default="A->B")
+	cron_expr = _first_value(sync_definition_doc, ["frequency_cron"])
+	filters = _parse_filter_expression(_first_value(sync_definition_doc, ["filter_expression"]))
+	batch_size = cint(_first_value(sync_definition_doc, ["batch_size"], default=100)) or 100
 	create_new = _as_bool(_first_value(sync_definition_doc, ["create_new"], default=1))
-	delete_missing = _as_bool(_first_value(sync_definition_doc, ["delete_missing", "delete"], default=0))
+	delete_missing = _as_bool(_first_value(sync_definition_doc, ["delete_missing"], default=0))
 	use_last_sync_date = _as_bool(_first_value(sync_definition_doc, ["use_last_sync_date"], default=1))
 	conflict_policy = str(_first_value(sync_definition_doc, ["conflict_policy"], default="newest_wins"))
 	timestamp_buffer_seconds = cint(_first_value(sync_definition_doc, ["timestamp_buffer_seconds"], default=15)) or 0
@@ -1954,14 +1893,10 @@ def _get_match_fields(sync_definition_doc: Any) -> list[str]:
 		fieldname = _first_value_dict(row, ["field_name", "key_field", "frappe_field", "fieldname"])
 		if fieldname:
 			match_fields.append(str(fieldname).strip())
-	top_level = _first_value(sync_definition_doc, ["match_fields", "key_fields"])
+	top_level = _first_value(sync_definition_doc, ["match_fields"])
 	if not match_fields and isinstance(top_level, str):
 		match_fields = [entry.strip() for entry in top_level.split(",") if entry.strip()]
 	return [field for field in match_fields if field]
-
-
-def _get_key_fields(sync_definition_doc: Any) -> list[str]:
-	return _get_match_fields(sync_definition_doc)
 
 
 def _get_field_mapping(sync_definition_doc: Any) -> dict[str, dict[str, str]]:
@@ -1977,7 +1912,7 @@ def _get_field_mapping(sync_definition_doc: Any) -> dict[str, dict[str, str]]:
 		entry = _normalize_field_mapping_entry(row)
 		if frappe_field and entry:
 			mapping[frappe_field] = entry
-	top_level = _first_value(sync_definition_doc, ["field_mapping", "mapping"])
+	top_level = _first_value(sync_definition_doc, ["field_mapping"])
 	if not mapping and isinstance(top_level, str):
 		mapping = _normalize_field_mapping(top_level)
 	if not mapping and isinstance(top_level, dict):
@@ -2435,11 +2370,11 @@ def _partner_fetch_key_fields(config: SyncDefinitionConfig) -> list[str]:
 
 
 def _config_match_fields(config: Any) -> list[str]:
-	return list(getattr(config, "match_fields", None) or getattr(config, "key_fields", None) or [])
+	return list(getattr(config, "match_fields", None) or [])
 
 
 def _config_read_query(config: Any) -> str | None:
-	return getattr(config, "read_query", None) or getattr(config, "query", None)
+	return getattr(config, "read_query", None)
 
 
 def _config_one_way_match_mode(config: Any) -> str:
@@ -2773,16 +2708,14 @@ def _register_and_log(
 
 def _has_active_run(sync_definition_name: str) -> bool:
 	meta = frappe.get_meta(SYNC_RUN)
-	sync_definition_field = _find_field(meta, ["sync_definition", "definition", "sync_definition_name"])
-	status_field = _find_field(meta, ["status", "run_status"])
-	if not sync_definition_field or not status_field:
+	if not meta.has_field("sync_definition") or not meta.has_field("status"):
 		return False
 	return bool(
 		frappe.db.exists(
 			SYNC_RUN,
 			{
-				sync_definition_field: sync_definition_name,
-				status_field: ["in", sorted(ACTIVE_RUN_STATUSES)],
+				"sync_definition": sync_definition_name,
+				"status": ["in", sorted(ACTIVE_RUN_STATUSES)],
 			},
 		)
 	)
@@ -2790,14 +2723,17 @@ def _has_active_run(sync_definition_name: str) -> bool:
 
 def _create_run_doc(sync_definition_doc: Any, *, status: str, trigger: str, dry_run: bool) -> Any:
 	payload: dict[str, Any] = {"doctype": SYNC_RUN}
-	meta = frappe.get_meta(SYNC_RUN)
-	_set_first_existing(payload, meta, ["sync_definition", "definition", "sync_definition_name"], sync_definition_doc.name)
-	_set_first_existing(payload, meta, ["status", "run_status"], status)
-	_set_first_existing(payload, meta, ["trigger_type", "trigger"], trigger)
-	_set_first_existing(payload, meta, ["dry_run", "is_dry_run"], cint(dry_run))
-	_set_first_existing(payload, meta, ["started_at", "start_time"], now_datetime())
-	_set_first_existing(payload, meta, ["sync_type", "direction"], _first_value(sync_definition_doc, ["sync_type", "direction"], default="A->B"))
-	_set_first_existing(payload, meta, ["sync_partner", "partner"], _first_value(sync_definition_doc, ["sync_partner", "partner"]))
+	payload.update(
+		{
+			"sync_definition": sync_definition_doc.name,
+			"status": status,
+			"trigger_type": trigger,
+			"dry_run": cint(dry_run),
+			"started_at": now_datetime(),
+			"sync_type": _first_value(sync_definition_doc, ["sync_type"], default="A->B"),
+			"sync_partner": _first_value(sync_definition_doc, ["partner"]),
+		}
+	)
 	run_doc = frappe.get_doc(payload)
 	run_doc.insert(ignore_permissions=True)
 	frappe.db.commit()
@@ -2820,12 +2756,16 @@ def _create_run_item(
 ) -> Any:
 	payload: dict[str, Any] = {"doctype": SYNC_RUN_ITEM}
 	meta = frappe.get_meta(SYNC_RUN_ITEM)
-	_set_first_existing(payload, meta, ["sync_run", "run", "sync_run_name"], run_doc.name)
-	_set_first_existing(payload, meta, ["sync_definition", "definition", "sync_definition_name"], sync_definition_name)
-	_set_first_existing(payload, meta, ["action"], action)
-	_set_first_existing(payload, meta, ["status", "result_status"], status)
-	_set_first_existing(payload, meta, ["message", "details", "note"], message)
-	_set_first_existing(payload, meta, ["direction"], direction or _first_value(run_doc, ["sync_type", "direction"]))
+	payload.update(
+		{
+			"sync_run": run_doc.name,
+			"sync_definition": sync_definition_name,
+			"action": action,
+			"status": status,
+			"message": message,
+			"direction": direction or _first_value(run_doc, ["sync_type"]),
+		}
+	)
 
 	record_name = (frappe_record or {}).get("name")
 	record_key = _compact_record_key(config, frappe_record=frappe_record, partner_record=partner_record)
@@ -2864,7 +2804,7 @@ def _merge_partner_runtime_settings(config: SyncDefinitionConfig, partner_doc: A
 
 
 def _get_partner_time_zone(partner_doc: Any) -> str | None:
-	return _normalize_time_zone_name(_first_value(partner_doc, ["time_zone", "partner_time_zone", "timezone"]))
+	return _normalize_time_zone_name(_first_value(partner_doc, ["time_zone"]))
 
 
 def _normalize_time_zone_name(value: Any) -> str | None:
@@ -3011,32 +2951,26 @@ def _update_definition_failure(sync_definition_doc: Any, *, last_run: str, error
 def _set_next_run_at(sync_definition_doc: Any, cron_expr: str | None, *, commit: bool = True):
 	if not cron_expr or not croniter:
 		return
-	meta = frappe.get_meta(sync_definition_doc.doctype)
-	next_field = _find_field(meta, ["next_run_at", "next_execution_at"])
-	if not next_field:
+	if not frappe.get_meta(sync_definition_doc.doctype).has_field("next_run_at"):
 		return
 	try:
 		next_run = croniter(cron_expr, now_datetime()).get_next(datetime)
 	except Exception:
 		frappe.logger("sync").warning("Invalid cron expression for %s: %s", _doc_name(sync_definition_doc), cron_expr)
 		return
-	sync_definition_doc.db_set(next_field, next_run, update_modified=False)
+	sync_definition_doc.db_set("next_run_at", next_run, update_modified=False)
 	if commit:
 		frappe.db.commit()
 
 
 def _get_last_successful_sync(sync_definition_name: str) -> datetime | None:
 	run_meta = frappe.get_meta(SYNC_RUN)
-	definition_field = _find_field(run_meta, ["sync_definition", "definition", "sync_definition_name"])
-	status_field = _find_field(run_meta, ["status", "run_status"])
-	if not definition_field or not status_field:
-		return None
 	fields = [field for field in ("last_sync_at", "finished_at", "started_at") if run_meta.has_field(field)]
 	if not fields:
 		fields = ["modified"]
 	runs = frappe.get_all(
 		SYNC_RUN,
-		filters={definition_field: sync_definition_name, status_field: "Success"},
+		filters={"sync_definition": sync_definition_name, "status": "Success"},
 		fields=fields,
 		order_by="creation desc",
 		limit=1,
@@ -3065,7 +2999,7 @@ def _format_run_summary(result_payload: dict[str, Any]) -> str:
 
 
 def _is_enabled(doc: Any) -> bool:
-	return _as_bool(_first_value(doc, ["enabled", "is_enabled", "active"], default=1))
+	return _as_bool(_first_value(doc, ["enabled"], default=1))
 
 
 def _parse_filter_expression(raw: Any) -> list | dict | None:
@@ -3259,19 +3193,16 @@ def _is_due_by_cron(sync_definition_doc: Any, cron_expr: str, now: datetime) -> 
 		return False
 
 	run_meta = frappe.get_meta(SYNC_RUN)
-	definition_field = _find_field(run_meta, ["sync_definition", "definition", "sync_definition_name"])
-	finished_field = _find_field(run_meta, ["finished_at", "end_time", "completed_at", "modified"])
-	status_field = _find_field(run_meta, ["status", "run_status"])
-	if not definition_field:
+	if not run_meta.has_field("sync_definition"):
 		return False
 
 	definition_name = _doc_name(sync_definition_doc)
 	if not definition_name:
 		return False
-	filters = {definition_field: definition_name}
-	if status_field:
-		filters[status_field] = ["in", sorted(DONE_RUN_STATUSES)]
-	fields = [finished_field] if finished_field else ["modified"]
+	filters = {"sync_definition": definition_name}
+	if run_meta.has_field("status"):
+		filters["status"] = ["in", sorted(DONE_RUN_STATUSES)]
+	fields = ["finished_at"] if run_meta.has_field("finished_at") else ["modified"]
 	last_runs = frappe.get_all(SYNC_RUN, filters=filters, fields=fields, order_by=f"{fields[0]} desc", limit=1)
 	if not last_runs:
 		return True

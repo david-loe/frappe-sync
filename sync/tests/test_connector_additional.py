@@ -18,10 +18,7 @@ def _field(fieldname: str, fieldtype: str = "Data"):
 PARTNER_META = SimpleNamespace(
 	fields=[
 		_field("host"),
-		_field("server"),
-		_field("database"),
 		_field("database_name"),
-		_field("user"),
 		_field("username"),
 		_field("password", "Password"),
 		_field("port"),
@@ -96,10 +93,10 @@ class TestConnectorAdditional(unittest.TestCase):
 		connector = MssqlConnector(
 			DummyPartner(
 				"mssql",
-				server="db.internal",
+				host="db.internal",
 				port="1433",
-				database="sync_test",
-				user="sa",
+				database_name="sync_test",
+				username="sa",
 				password="secret",
 				odbc_driver="ODBC Driver 18 for SQL Server",
 				trusted_connection="1",
@@ -129,8 +126,8 @@ class TestConnectorAdditional(unittest.TestCase):
 				"postgres",
 				host="db.internal",
 				port="5433",
-				database="sync_test",
-				user="sync_user",
+				database_name="sync_test",
+				username="sync_user",
 				password="secret",
 				connect_timeout="8",
 				sslmode="disable",
@@ -157,8 +154,8 @@ class TestConnectorAdditional(unittest.TestCase):
 				"firebird",
 				host="db.internal",
 				port="3051",
-				database="/firebird/data/sync_test.fdb",
-				user="sysdba",
+				database_name="/firebird/data/sync_test.fdb",
+				username="sysdba",
 				password="masterkey",
 				charset="WIN1252",
 			)
@@ -177,14 +174,19 @@ class TestConnectorAdditional(unittest.TestCase):
 
 	def test_get_partner_type_and_factory_cover_known_and_fallback_paths(self):
 		with (
-			patch("sync.sync.service.connectors.frappe.db.exists", return_value=True),
-			patch("sync.sync.service.connectors.frappe.get_doc", return_value=SimpleNamespace(get=lambda key, default=None: {"partner_type_code": "postgres"}.get(key, default))),
+			patch(
+				"sync.sync.service.connectors.frappe",
+				new=SimpleNamespace(
+					db=SimpleNamespace(exists=lambda *args, **kwargs: True),
+					get_doc=lambda *args, **kwargs: SimpleNamespace(get=lambda key, default=None: {"partner_type_code": "postgres"}.get(key, default)),
+				),
+			),
 		):
 			self.assertEqual(connectors.get_partner_type(DummyPartner("custom")), "postgres")
 
-		self.assertIsInstance(connectors.get_connector_for_partner(DummyPartner("mssql", server="db", database="sync")), MssqlConnector)
-		self.assertIsInstance(connectors.get_connector_for_partner(DummyPartner("postgres", host="db", database="sync", user="u")), PostgresConnector)
-		self.assertIsInstance(connectors.get_connector_for_partner(DummyPartner("firebird", host="db", database="sync", user="u")), FirebirdConnector)
+		self.assertIsInstance(connectors.get_connector_for_partner(DummyPartner("mssql", host="db", database_name="sync")), MssqlConnector)
+		self.assertIsInstance(connectors.get_connector_for_partner(DummyPartner("postgres", host="db", database_name="sync", username="u")), PostgresConnector)
+		self.assertIsInstance(connectors.get_connector_for_partner(DummyPartner("firebird", host="db", database_name="sync", username="u")), FirebirdConnector)
 
 		with patch("sync.sync.service.connectors.RelationalConnector", DummyFallbackConnector):
 			fallback = connectors.get_connector_for_partner(DummyPartner("unknown"))
@@ -206,8 +208,8 @@ class TestFirebirdConnectorIntegration(unittest.TestCase):
 				"firebird",
 				host=os.environ["SYNC_TEST_FIREBIRD_HOST"],
 				port=os.environ.get("SYNC_TEST_FIREBIRD_PORT", "3050"),
-				database=os.environ["SYNC_TEST_FIREBIRD_DB"],
-				user=os.environ.get("SYNC_TEST_FIREBIRD_USER", "sysdba"),
+				database_name=os.environ["SYNC_TEST_FIREBIRD_DB"],
+				username=os.environ.get("SYNC_TEST_FIREBIRD_USER", "sysdba"),
 				password=os.environ["SYNC_TEST_FIREBIRD_PASSWORD"],
 				charset=os.environ.get("SYNC_TEST_FIREBIRD_CHARSET", "UTF8"),
 			)
@@ -286,10 +288,10 @@ class TestMssqlConnectorIntegration(unittest.TestCase):
 		cls.connector = MssqlConnector(
 			DummyPartner(
 				"mssql",
-				server=os.environ["SYNC_TEST_MSSQL_SERVER"],
+				host=os.environ["SYNC_TEST_MSSQL_SERVER"],
 				port=os.environ.get("SYNC_TEST_MSSQL_PORT", "1433"),
-				database=os.environ["SYNC_TEST_MSSQL_DB"],
-				user=os.environ.get("SYNC_TEST_MSSQL_USER", "sa"),
+				database_name=os.environ["SYNC_TEST_MSSQL_DB"],
+				username=os.environ.get("SYNC_TEST_MSSQL_USER", "sa"),
 				password=os.environ["SYNC_TEST_MSSQL_PASSWORD"],
 				odbc_driver=os.environ.get("SYNC_TEST_MSSQL_DRIVER", "ODBC Driver 18 for SQL Server"),
 				encrypt=os.environ.get("SYNC_TEST_MSSQL_ENCRYPT", "0"),

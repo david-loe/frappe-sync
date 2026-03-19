@@ -43,14 +43,14 @@ def _db_stub(**overrides):
 class FakeSyncDefinitionDoc:
 	def __init__(self, **values):
 		self.__dict__.update(values)
-		self.match_fields = values.get("match_fields", values.get("key_fields", []))
+		self.match_fields = values.get("match_fields", [])
 		self.field_mapping = values.get("field_mapping", [])
 		self.value_mapping = values.get("value_mapping", [])
 		self.frappe_modified_field_rows = values.get("frappe_modified_field_rows", [])
 		self.partner_modified_field_rows = values.get("partner_modified_field_rows", [])
 		self.preview_limit = values.get("preview_limit", 50)
 		self.delete_missing = values.get("delete_missing", 0)
-		self.read_query = values.get("read_query", values.get("query"))
+		self.read_query = values.get("read_query")
 		self.table_name = values.get("table_name")
 		self.use_last_sync_date = values.get("use_last_sync_date", 1)
 		self.title = values.get("title", "SYNC-DEF")
@@ -86,9 +86,6 @@ class FakeSyncDefinitionDoc:
 	def get_match_fields(self):
 		return sync_definition_module.SyncDefinition.get_match_fields(self)
 
-	def get_key_fields(self):
-		return sync_definition_module.SyncDefinition.get_key_fields(self)
-
 	def get_field_mapping(self):
 		return sync_definition_module.SyncDefinition.get_field_mapping(self)
 
@@ -112,9 +109,6 @@ class FakeSyncDefinitionDoc:
 
 	def validate_match_fields(self):
 		return sync_definition_module.SyncDefinition.validate_match_fields(self)
-
-	def validate_key_fields(self):
-		return sync_definition_module.SyncDefinition.validate_key_fields(self)
 
 	def validate_source_settings(self):
 		return sync_definition_module.SyncDefinition.validate_source_settings(self)

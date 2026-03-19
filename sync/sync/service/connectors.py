@@ -14,10 +14,6 @@ from frappe.utils.password import get_decrypted_password
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 JSON_CONFIG_FIELDS = {
-	"connection_config",
-	"config_json",
-	"settings_json",
-	"options_json",
 	"connection_options",
 }
 
@@ -101,18 +97,6 @@ class BasePartnerConnector(ABC):
 				)
 				if decrypted_password:
 					config["password"] = decrypted_password
-
-		alias_map = {
-			"server": config.get("server") or config.get("host"),
-			"host": config.get("host") or config.get("server"),
-			"database": config.get("database") or config.get("database_name"),
-			"database_name": config.get("database_name") or config.get("database"),
-			"user": config.get("user") or config.get("username"),
-			"username": config.get("username") or config.get("user"),
-		}
-		for key, value in alias_map.items():
-			if value not in (None, ""):
-				config[key] = value
 
 		for int_key in ("port", "connect_timeout", "query_timeout"):
 			if int_key in config and str(config[int_key]).strip():
@@ -620,7 +604,7 @@ class RelationalConnector(BasePartnerConnector):
 
 	def _resolve_source(self, *, source: str | None, query: str | None) -> tuple[str | None, str | None]:
 		source_name = source or self.config.get("table_name") or self.config.get("default_table") or self.config.get("source")
-		query_text = query or self.config.get("query")
+		query_text = query
 		if isinstance(query_text, str):
 			query_text = _strip_trailing_semicolon(query_text.strip()) or None
 		if source_name:
@@ -700,7 +684,7 @@ class RelationalConnector(BasePartnerConnector):
 class MssqlConnector(RelationalConnector):
 	partner_type = "mssql"
 	dialect = "mssql"
-	required_config = ("server", "database")
+	required_config = ("host", "database_name")
 	driver_candidates = ("pyodbc",)
 	paramstyle = "qmark"
 
@@ -709,7 +693,7 @@ class MssqlConnector(RelationalConnector):
 		if not driver_module:
 			raise RuntimeError("pyodbc is not installed")
 
-		server = self.config.get("server")
+		server = self.config.get("host")
 		port = self.config.get("port")
 		server_part = f"{server},{port}" if port else str(server)
 		driver_name = self.config.get("odbc_driver") or "ODBC Driver 18 for SQL Server"
@@ -717,10 +701,10 @@ class MssqlConnector(RelationalConnector):
 		connection_parts = [
 			f"DRIVER={{{driver_name}}}",
 			f"SERVER={server_part}",
-			f"DATABASE={self.config.get('database')}",
+			f"DATABASE={self.config.get('database_name')}",
 		]
-		if self.config.get("user"):
-			connection_parts.append(f"UID={self.config.get('user')}")
+		if self.config.get("username"):
+			connection_parts.append(f"UID={self.config.get('username')}")
 		if self.config.get("password"):
 			connection_parts.append(f"PWD={self.config.get('password')}")
 		if _to_bool(self.config.get("trusted_connection")):
@@ -736,7 +720,7 @@ class MssqlConnector(RelationalConnector):
 class PostgresConnector(RelationalConnector):
 	partner_type = "postgres"
 	dialect = "postgres"
-	required_config = ("host", "database", "user")
+	required_config = ("host", "database_name", "username")
 	driver_candidates = ("psycopg", "psycopg2")
 	paramstyle = "pyformat"
 
@@ -748,8 +732,8 @@ class PostgresConnector(RelationalConnector):
 		connect_kwargs = {
 			"host": self.config.get("host"),
 			"port": self.config.get("port") or 5432,
-			"dbname": self.config.get("database"),
-			"user": self.config.get("user"),
+			"dbname": self.config.get("database_name"),
+			"user": self.config.get("username"),
 			"password": self.config.get("password"),
 			"connect_timeout": max(cint(self.config.get("connect_timeout") or 5), 1),
 		}
@@ -761,7 +745,7 @@ class PostgresConnector(RelationalConnector):
 class FirebirdConnector(RelationalConnector):
 	partner_type = "firebird"
 	dialect = "firebird"
-	required_config = ("host", "database", "user")
+	required_config = ("host", "database_name", "username")
 	driver_candidates = ("fdb",)
 	paramstyle = "qmark"
 	healthcheck_sql = "SELECT 1 FROM RDB$DATABASE"
@@ -774,8 +758,8 @@ class FirebirdConnector(RelationalConnector):
 		connect_kwargs = {
 			"host": self.config.get("host"),
 			"port": self.config.get("port") or 3050,
-			"database": self.config.get("database"),
-			"user": self.config.get("user"),
+			"database": self.config.get("database_name"),
+			"user": self.config.get("username"),
 			"password": self.config.get("password"),
 			"charset": self.config.get("charset") or "UTF8",
 		}

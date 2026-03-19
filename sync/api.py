@@ -104,7 +104,7 @@ def _require_sync_definition_permission(
 ) -> Any:
 	sync_definition = _require_doc_permission(SYNC_DEFINITION_DOCTYPE, sync_definition_name, permtype=permtype)
 	if check_partner:
-		partner_name = _clean_string(_get_doc_value(sync_definition, "sync_partner", "partner", "sync_partner_name"))
+		partner_name = _clean_string(_get_doc_value(sync_definition, "partner"))
 		if partner_name:
 			_require_doc_permission(SYNC_PARTNER_DOCTYPE, partner_name, permtype="read")
 	if check_target_doctype:

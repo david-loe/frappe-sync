@@ -191,7 +191,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			partner="PARTNER-1",
 			doctype="Task",
 			mapping={"subject": "title"},
-			key_fields=["name"],
+			match_fields=["name"],
 			value_mapping={"status": {"Open": "1"}},
 			filters=[["status", "=", "Open"]],
 		)
@@ -231,8 +231,8 @@ class TestRuntimeAdditional(unittest.TestCase):
 			conflict_policy="newest_wins",
 			timestamp_buffer_seconds=0,
 			table_name="tabTask",
-			query=None,
-			key_fields=["name"],
+			read_query=None,
+			match_fields=["name"],
 			mapping={"name": "id"},
 			value_mapping={},
 			frappe_modified_fields=["modified"],
@@ -266,8 +266,8 @@ class TestRuntimeAdditional(unittest.TestCase):
 			conflict_policy="newest_wins",
 			timestamp_buffer_seconds=0,
 			table_name="tabTask",
-			query=None,
-			key_fields=["name"],
+			read_query=None,
+			match_fields=["name"],
 			mapping={"name": "id"},
 			value_mapping={},
 			frappe_modified_fields=["modified"],
@@ -309,8 +309,8 @@ class TestRuntimeAdditional(unittest.TestCase):
 			conflict_policy="newest_wins",
 			timestamp_buffer_seconds=0,
 			table_name="tabTask",
-			query=None,
-			key_fields=["name"],
+			read_query=None,
+			match_fields=["name"],
 			mapping={"name": "id"},
 			value_mapping={},
 			frappe_modified_fields=["modified"],
@@ -338,7 +338,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 	def test_apply_update_helpers_cover_success_and_error_paths(self):
-		config = SimpleNamespace(doctype="Task", key_fields=["name"], mapping={"name": "id"}, table_name="tabTask", query=None)
+		config = SimpleNamespace(doctype="Task", match_fields=["name"], mapping={"name": "id"}, table_name="tabTask", read_query=None)
 		logged = []
 
 		with (
@@ -421,13 +421,13 @@ class TestRuntimeAdditional(unittest.TestCase):
 		config = SimpleNamespace(
 			name="SYNC-1",
 			doctype="Task",
-			key_fields=["name"],
+			match_fields=["name"],
 			mapping={"name": "id", "status": "state"},
 			value_mapping={},
 			create_new=False,
 			delete_missing=False,
 			table_name="tabTask",
-			query=None,
+			read_query=None,
 		)
 		logged = []
 
@@ -539,7 +539,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			patch(
 				"sync.sync.service.runtime.frappe",
 				new=_runtime_frappe_stub(
-					get_meta=Mock(side_effect=[run_meta, run_item_meta]),
+					get_meta=Mock(return_value=run_item_meta),
 					get_doc=get_doc,
 				),
 			),
@@ -548,7 +548,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			run_doc = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "A->B", "partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="manual", dry_run=True)
 			item_doc = runtime._create_run_item(
 				run_doc=run_doc,
-				config=SimpleNamespace(key_fields=["name"], mapping={"name": "id"}),
+				config=SimpleNamespace(match_fields=["name"], mapping={"name": "id"}),
 				sync_definition_name="SYNC-1",
 				action="created",
 				status="success",
@@ -566,7 +566,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertEqual(item_payload["changed_fields"], "status")
 
 	def test_get_partner_source_records_returns_records_for_full_sync(self):
-		config = SimpleNamespace(table_name="tabTask", query=None, batch_size=10, key_fields=["name"], partner_modified_fields=["updated_at"])
+		config = SimpleNamespace(table_name="tabTask", read_query=None, batch_size=10, match_fields=["name"], partner_modified_fields=["updated_at"])
 		context = SimpleNamespace(is_delta_sync=False, delta_since=None)
 		records = [{"id": "TASK-1"}]
 

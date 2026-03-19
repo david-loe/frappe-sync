@@ -106,14 +106,11 @@ class SyncDefinition(Document):
 
 	def get_match_fields(self) -> list[str]:
 		fields: list[str] = []
-		for row in getattr(self, "match_fields", None) or getattr(self, "key_fields", None) or []:
+		for row in getattr(self, "match_fields", None) or []:
 			field = _clean_value(_get_row_value(row, "frappe_field"))
 			if field:
 				fields.append(field)
 		return fields
-
-	def get_key_fields(self) -> list[str]:
-		return SyncDefinition.get_match_fields(self)
 
 	def get_field_mapping(self) -> dict[str, dict[str, str]]:
 		mapping = {}
@@ -142,18 +139,6 @@ class SyncDefinition(Document):
 
 	def get_partner_modified_fields(self) -> list[str]:
 		return _extract_modified_fields(getattr(self, "partner_modified_field_rows", None))
-
-	def ensure_modified_field_rows_from_legacy(self):
-		return None
-
-	def _ensure_modified_field_rows(self, table_fieldname: str, legacy_fieldname: str):
-		return None
-
-	def sync_modified_fields_legacy_storage(self):
-		return None
-
-	def validate_key_fields(self):
-		return SyncDefinition.validate_match_fields(self)
 
 	def as_export_dict(self) -> dict:
 		return {

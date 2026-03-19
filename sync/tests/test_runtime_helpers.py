@@ -67,16 +67,6 @@ class SequenceConnector:
 			raise page
 		return page
 
-
-class LegacyConnector:
-	def __init__(self):
-		self.calls = []
-
-	def fetch_records(self, *, source=None, query=None, batch_size=100, cursor=None):
-		self.calls.append((source, query, batch_size, cursor))
-		return [{"name": "LEGACY"}]
-
-
 def _db_stub(**overrides):
 	values = {"exists": lambda *args, **kwargs: False, "commit": lambda: None}
 	values.update(overrides)
@@ -125,7 +115,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		with patch("sync.sync.service.runtime.frappe.get_meta", return_value=SimpleNamespace(fields=[])):
 			config = runtime._build_definition_config(doc)
 
-		self.assertEqual(config.key_fields, ["name"])
+		self.assertEqual(config.match_fields, ["name"])
 		self.assertEqual(config.mapping, {"name": {"partner_field": "name", "direction": "Both"}})
 		self.assertEqual(config.value_mapping, {"state": {"open": "1"}})
 		self.assertIsInstance(config.filters, list)
@@ -133,7 +123,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(config.frappe_modified_fields, ["modified"])
 		self.assertEqual(config.partner_modified_fields, ["updated_at"])
 		self.assertEqual(config.table_name, "tabTask")
-		self.assertIsNone(config.query)
+		self.assertIsNone(config.read_query)
 
 	@patch("sync.sync.service.runtime._get_child_rows_by_options")
 	def test_build_definition_config_uses_modified_field_rows(self, mock_children):
@@ -163,7 +153,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			config = runtime._build_definition_config(doc)
 
 		self.assertEqual(config.table_name, "tabTask")
-		self.assertIsNone(config.query)
+		self.assertIsNone(config.read_query)
 		self.assertEqual(config.frappe_modified_fields, ["modified", "changed_on"])
 		self.assertEqual(config.partner_modified_fields, ["updated_at", "partner_changed"])
 
@@ -181,7 +171,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		with patch("sync.sync.service.runtime.frappe.get_meta", return_value=SimpleNamespace(fields=[])):
 			config = runtime._build_definition_config(doc)
 
-		self.assertEqual(config.key_fields, ["subject"])
+		self.assertEqual(config.match_fields, ["subject"])
 		self.assertEqual(config.mapping, {"subject": {"partner_field": "title", "direction": "Both"}})
 
 	@patch("sync.sync.service.runtime._get_child_rows_by_options", return_value=[])
@@ -192,7 +182,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				"sync_type": "A->B",
 				"partner": "PARTNER-1",
 				"doctype_name": "Task",
-				"key_fields": "name",
+				"match_fields": "name",
 				"field_mapping": {
 					"name": {"partner_field": "id", "direction": "Partner to Frappe"},
 				},
@@ -355,20 +345,6 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(connector.calls[0]["cursor"], None)
 		self.assertEqual(connector.calls[1]["cursor"], "1")
 
-	def test_fetch_partner_records_retries_legacy_connector_signature(self):
-		connector = LegacyConnector()
-
-		records = runtime._fetch_partner_records(
-			connector=connector,
-			source="tabTask",
-			query=None,
-			batch_size=5,
-			key_fields=["name"],
-		)
-
-		self.assertEqual(records, [{"name": "LEGACY"}])
-		self.assertEqual(connector.calls, [("tabTask", None, 5, None)])
-
 	def test_get_frappe_source_records_builds_delta_or_filters_from_existing_fields(self):
 		config = SimpleNamespace(
 			doctype="Task",
@@ -377,7 +353,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				"subject": {"partner_field": "title", "direction": "Frappe to Partner"},
 				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
 			},
-			key_fields=["name"],
+			match_fields=["name"],
 			frappe_modified_fields=["modified", "changed_on", "missing_field"],
 			filters=[["status", "=", "Open"]],
 			batch_size=20,
@@ -400,9 +376,9 @@ class TestRuntimeHelpers(unittest.TestCase):
 	def test_get_partner_source_records_filters_records_in_delta_mode(self):
 		config = SimpleNamespace(
 			table_name="tabTask",
-			query=None,
+			read_query=None,
 			batch_size=50,
-			key_fields=["name"],
+			match_fields=["name"],
 			partner_modified_fields=["updated_at"],
 		)
 		context = SimpleNamespace(is_delta_sync=True, delta_since=datetime(2026, 3, 17, 9, 0))
@@ -525,8 +501,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 			use_last_sync_date=False,
 			conflict_policy="newest_wins",
 			table_name="tabTask",
-			query=None,
-			key_fields=["name"],
+			read_query=None,
+			match_fields=["name"],
 			mapping={"name": "name"},
 			value_mapping={},
 			frappe_modified_fields=["modified"],
@@ -562,8 +538,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 			use_last_sync_date=False,
 			conflict_policy="newest_wins",
 			table_name="tabTask",
-			query=None,
-			key_fields=["name"],
+			read_query=None,
+			match_fields=["name"],
 			mapping={"name": "name"},
 			value_mapping={},
 			frappe_modified_fields=["modified"],
@@ -576,13 +552,13 @@ class TestRuntimeHelpers(unittest.TestCase):
 	def test_sync_frappe_to_partner_handles_skip_error_and_delete(self):
 		config = SimpleNamespace(
 			name="SYNC-F2P",
-			key_fields=["name"],
+			match_fields=["name"],
 			mapping={"name": "id", "status": "state"},
 			value_mapping={},
 			create_new=False,
 			delete_missing=True,
 			table_name="dbo.SyncTable",
-			query=None,
+			read_query=None,
 		)
 		stats = runtime.SyncStats()
 		logged = []
@@ -619,7 +595,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 	def test_sync_frappe_to_partner_enforces_mapping_direction_and_batches_commits(self):
 		config = SimpleNamespace(
 			name="SYNC-F2P-DIR",
-			key_fields=["name"],
+			match_fields=["name"],
 			mapping={
 				"name": {"partner_field": "id", "direction": "Both"},
 				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
@@ -629,7 +605,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			create_new=True,
 			delete_missing=False,
 			table_name="dbo.SyncTable",
-			query=None,
+			read_query=None,
 			batch_size=20,
 		)
 		upsert_calls = []
@@ -732,7 +708,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		config = SimpleNamespace(
 			name="SYNC-P2F",
 			doctype="Task",
-			key_fields=["name"],
+			match_fields=["name"],
 			mapping={"name": "id", "status": "state"},
 			value_mapping={},
 			create_new=True,
@@ -933,7 +909,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		config = SimpleNamespace(
 			name="SYNC-P2F-DIR",
 			doctype="Task",
-			key_fields=["name"],
+			match_fields=["name"],
 			mapping={
 				"name": {"partner_field": "id", "direction": "Both"},
 				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
@@ -969,14 +945,14 @@ class TestRuntimeHelpers(unittest.TestCase):
 		config = SimpleNamespace(
 			name="SYNC-BI",
 			doctype="Task",
-			key_fields=["name"],
+			match_fields=["name"],
 			mapping={"name": "id", "status": "state"},
 			value_mapping={},
 			conflict_policy="newest_wins",
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
 			table_name="tabTask",
-			query=None,
+			read_query=None,
 		)
 
 		frappe_records = [

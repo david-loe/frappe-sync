@@ -27,10 +27,7 @@ def _field(fieldname: str, fieldtype: str = "Data"):
 PARTNER_META = SimpleNamespace(
 	fields=[
 		_field("host"),
-		_field("server"),
-		_field("database"),
 		_field("database_name"),
-		_field("user"),
 		_field("username"),
 		_field("password", "Password"),
 		_field("port"),
@@ -41,9 +38,8 @@ PARTNER_META = SimpleNamespace(
 		_field("default_table"),
 		_field("table_name"),
 		_field("source"),
-		_field("query"),
 		_field("sslmode"),
-		_field("connection_config"),
+		_field("connection_options"),
 	]
 )
 
@@ -76,7 +72,7 @@ class TestConnectorConfig(unittest.TestCase):
 		self.decrypt_patch.stop()
 		self.meta_patch.stop()
 
-	def test_extract_partner_config_merges_aliases_json_password_and_bools(self):
+	def test_extract_partner_config_loads_canonical_fields_json_password_and_bools(self):
 		partner = DummyPartner(
 			"postgres",
 			name="PARTNER-CONFIG",
@@ -87,16 +83,13 @@ class TestConnectorConfig(unittest.TestCase):
 			connect_timeout="12",
 			encrypt="0",
 			trust_server_certificate="yes",
-			connection_config='{"default_table": "public.sync_records", "sslmode": "disable"}',
+			connection_options='{"default_table": "public.sync_records", "sslmode": "disable"}',
 		)
 
 		connector = PostgresConnector(partner)
 
 		self.assertEqual(connector.config["host"], "db.internal")
-		self.assertEqual(connector.config["server"], "db.internal")
-		self.assertEqual(connector.config["database"], "sync_db")
 		self.assertEqual(connector.config["database_name"], "sync_db")
-		self.assertEqual(connector.config["user"], "sync_user")
 		self.assertEqual(connector.config["username"], "sync_user")
 		self.assertEqual(connector.config["default_table"], "public.sync_records")
 		self.assertEqual(connector.config["sslmode"], "disable")
@@ -107,7 +100,7 @@ class TestConnectorConfig(unittest.TestCase):
 		self.assertTrue(connector.config["trust_server_certificate"])
 
 	def test_test_connection_wraps_ping_result(self):
-		connector = MssqlConnector(DummyPartner("mssql", server="localhost", database="sync"))
+		connector = MssqlConnector(DummyPartner("mssql", host="localhost", database_name="sync"))
 
 		with patch.object(
 			connector,
@@ -144,26 +137,26 @@ class TestConnectorPing(unittest.TestCase):
 		self.decrypt_patch.stop()
 		self.meta_patch.stop()
 
-	def test_mssql_connector_requires_server_and_database(self):
+	def test_mssql_connector_requires_host_and_database_name(self):
 		connector = MssqlConnector(DummyPartner("mssql"))
 		ping = connector.ping()
 		self.assertFalse(ping.ok)
-		self.assertEqual(ping.details["missing"], ["server", "database"])
+		self.assertEqual(ping.details["missing"], ["host", "database_name"])
 
-	def test_postgres_connector_requires_host_database_user(self):
+	def test_postgres_connector_requires_host_database_name_username(self):
 		connector = PostgresConnector(DummyPartner("postgres"))
 		ping = connector.ping()
 		self.assertFalse(ping.ok)
-		self.assertEqual(ping.details["missing"], ["host", "database", "user"])
+		self.assertEqual(ping.details["missing"], ["host", "database_name", "username"])
 
-	def test_firebird_connector_requires_host_database_user(self):
+	def test_firebird_connector_requires_host_database_name_username(self):
 		connector = FirebirdConnector(DummyPartner("firebird"))
 		ping = connector.ping()
 		self.assertFalse(ping.ok)
-		self.assertEqual(ping.details["missing"], ["host", "database", "user"])
+		self.assertEqual(ping.details["missing"], ["host", "database_name", "username"])
 
 	def test_ping_reports_missing_driver(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 
 		with patch.object(connector, "_load_driver_module", return_value=None):
 			ping = connector.ping()
@@ -173,7 +166,7 @@ class TestConnectorPing(unittest.TestCase):
 		self.assertEqual(ping.details["dialect"], "postgres")
 
 	def test_ping_reports_successful_connection(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor(rows=[(1,)])
 		connection = _FakeConnection(cursor)
 
@@ -188,7 +181,7 @@ class TestConnectorPing(unittest.TestCase):
 		self.assertEqual(ping.details["driver"], "psycopg")
 
 	def test_ping_reports_connection_failure(self):
-		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database="sync", user="tester"))
+		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database_name="sync", username="tester"))
 
 		with (
 			patch.object(connector, "_load_driver_module", return_value=SimpleNamespace(__name__="fdb")),
@@ -218,19 +211,18 @@ class TestRelationalConnectorSql(unittest.TestCase):
 		self.decrypt_patch.stop()
 		self.meta_patch.stop()
 
-	def test_resolve_source_uses_trimmed_query_and_default_table(self):
+	def test_resolve_source_uses_explicit_query_and_default_table(self):
 		connector = PostgresConnector(
 			DummyPartner(
 				"postgres",
 				host="localhost",
-				database="sync",
-				user="tester",
+				database_name="sync",
+				username="tester",
 				default_table="public.sync_records",
-				query=" SELECT * FROM sync_records; ",
 			)
 		)
 
-		source, query = connector._resolve_source(source=None, query=None)
+		source, query = connector._resolve_source(source=None, query=" SELECT * FROM sync_records; ")
 
 		self.assertEqual(source, "public.sync_records")
 		self.assertEqual(query, "SELECT * FROM sync_records")
@@ -363,13 +355,13 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.meta_patch.stop()
 
 	def test_fetch_records_requires_source_or_query(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 
 		with self.assertRaisesRegex(RuntimeError, "requires source table or query"):
 			connector.fetch_records()
 
 	def test_fetch_records_returns_records_and_cursor(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 
 		with patch.object(
 			connector,
@@ -386,7 +378,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		)
 
 	def test_upsert_record_rejects_query_only_targets(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 
 		result = connector.upsert_record(
 			record={"id": "A1"},
@@ -399,7 +391,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertIn("writable table source", result.message)
 
 	def test_upsert_record_validates_target_record_and_keys(self):
-		connector = MssqlConnector(DummyPartner("mssql", server="localhost", database="sync"))
+		connector = MssqlConnector(DummyPartner("mssql", host="localhost", database_name="sync"))
 
 		self.assertFalse(
 			connector.upsert_record(record={}, key_fields=["name"], mapping={"name": "id"}, source="dbo.SyncTable").ok
@@ -415,7 +407,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertIn("missing key values", result.message)
 
 	def test_upsert_record_dry_run_reports_changed_fields(self):
-		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database="sync", user="tester"))
+		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database_name="sync", username="tester"))
 
 		result = connector.upsert_record(
 			record={"id": "A1", "status": "open"},
@@ -431,7 +423,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(result.resolved_key_values, {})
 
 	def test_upsert_record_uses_sequence_strategy_and_returns_resolved_identity(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor(rowcount=0)
 		connection = _FakeConnection(cursor)
 
@@ -464,7 +456,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		mock_load.assert_called_once_with("public.people", {"id": 42})
 
 	def test_upsert_record_uses_scoped_max_plus_one_strategy_and_returns_resolved_identity(self):
-		connector = MssqlConnector(DummyPartner("mssql", server="localhost", database="sync"))
+		connector = MssqlConnector(DummyPartner("mssql", host="localhost", database_name="sync"))
 		cursor = _FakeCursor(rowcount=0)
 		connection = _FakeConnection(cursor)
 
@@ -501,7 +493,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		mock_load.assert_called_once_with("dbo.Persons", {"NR": 90001})
 
 	def test_upsert_record_uses_update_path_when_rowcount_is_positive(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor(rowcount=1)
 		connection = _FakeConnection(cursor)
 
@@ -523,7 +515,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(connection.commit_count, 1)
 
 	def test_upsert_record_uses_insert_path_when_update_touches_no_rows(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor(rowcount=0)
 		connection = _FakeConnection(cursor)
 
@@ -550,7 +542,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(connection.commit_count, 1)
 
 	def test_firebird_upsert_uppercases_identifiers_for_unquoted_objects(self):
-		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database="sync", user="tester"))
+		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor(rowcount=0)
 		connection = _FakeConnection(cursor)
 
@@ -573,7 +565,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(connection.commit_count, 1)
 
 	def test_upsert_record_reports_sql_errors(self):
-		connector = MssqlConnector(DummyPartner("mssql", server="localhost", database="sync"))
+		connector = MssqlConnector(DummyPartner("mssql", host="localhost", database_name="sync"))
 		cursor = _FakeCursor(rowcount=0, raise_on_execute=RuntimeError("db exploded"))
 		connection = _FakeConnection(cursor)
 
@@ -590,7 +582,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(connection.rollback_count, 1)
 
 	def test_upsert_record_sequence_strategy_returns_resolved_identity(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor(
 			rowcount=0,
 			rows=[(41, "open")],
@@ -618,7 +610,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		)
 
 	def test_upsert_record_scoped_max_plus_one_uses_scope_and_returns_identity(self):
-		connector = MssqlConnector(DummyPartner("mssql", server="localhost", database="sync"))
+		connector = MssqlConnector(DummyPartner("mssql", host="localhost", database_name="sync"))
 		cursor = _FakeCursor(
 			rowcount=0,
 			rows=[(900, "open")],
@@ -649,7 +641,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		)
 
 	def test_upsert_record_connector_default_returns_loaded_identity_record(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor(rowcount=0, rows=[("AUTO-7", "open")], description=[("id",), ("status",)])
 		connection = _FakeConnection(cursor)
 
@@ -666,7 +658,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(result.record, {"id": "AUTO-7", "status": "open"})
 
 	def test_delete_record_validates_inputs_and_supports_dry_run(self):
-		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database="sync", user="tester"))
+		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database_name="sync", username="tester"))
 
 		self.assertFalse(connector.delete_record(key_values={}, source="SYNC_TABLE").ok)
 
@@ -676,7 +668,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(result.changed_fields, ["id"])
 
 	def test_delete_record_executes_statement(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor()
 		connection = _FakeConnection(cursor)
 
@@ -691,7 +683,7 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(connection.commit_count, 1)
 
 	def test_delete_record_reports_sql_errors(self):
-		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database="sync", user="tester"))
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor(raise_on_execute=RuntimeError("delete exploded"))
 		connection = _FakeConnection(cursor)
 
@@ -749,9 +741,9 @@ class TestConnectorFactoryAndConnectMethods(unittest.TestCase):
 		connector = MssqlConnector(
 			DummyPartner(
 				"mssql",
-				server="db.internal",
-				database="sync",
-				user="tester",
+				host="db.internal",
+				database_name="sync",
+				username="tester",
 				password="secret",
 				port=1433,
 				odbc_driver="ODBC Driver 18 for SQL Server",
@@ -778,8 +770,8 @@ class TestConnectorFactoryAndConnectMethods(unittest.TestCase):
 			DummyPartner(
 				"postgres",
 				host="db.internal",
-				database="sync",
-				user="tester",
+				database_name="sync",
+				username="tester",
 				password="secret",
 				port=5440,
 				connect_timeout=9,
@@ -802,8 +794,8 @@ class TestConnectorFactoryAndConnectMethods(unittest.TestCase):
 			DummyPartner(
 				"firebird",
 				host="db.internal",
-				database="/var/lib/firebird/data/sync.fdb",
-				user="SYSDBA",
+				database_name="/var/lib/firebird/data/sync.fdb",
+				username="SYSDBA",
 				password="masterkey",
 				port=3051,
 				charset="UTF8",
@@ -825,9 +817,9 @@ class TestConnectorFactoryAndConnectMethods(unittest.TestCase):
 
 	def test_connect_methods_raise_when_drivers_missing(self):
 		for connector, expected in (
-			(MssqlConnector(DummyPartner("mssql", server="db", database="sync")), "pyodbc is not installed"),
-			(PostgresConnector(DummyPartner("postgres", host="db", database="sync", user="tester")), "Neither psycopg nor psycopg2 is installed"),
-			(FirebirdConnector(DummyPartner("firebird", host="db", database="sync", user="tester")), "fdb is not installed"),
+			(MssqlConnector(DummyPartner("mssql", host="db", database_name="sync")), "pyodbc is not installed"),
+			(PostgresConnector(DummyPartner("postgres", host="db", database_name="sync", username="tester")), "Neither psycopg nor psycopg2 is installed"),
+			(FirebirdConnector(DummyPartner("firebird", host="db", database_name="sync", username="tester")), "fdb is not installed"),
 		):
 			with (
 				self.subTest(expected=expected),
@@ -887,8 +879,8 @@ class TestPostgresConnectorIntegration(unittest.TestCase):
 				"postgres",
 				host=os.environ["SYNC_TEST_POSTGRES_HOST"],
 				port=os.environ.get("SYNC_TEST_POSTGRES_PORT", "5432"),
-				database=os.environ["SYNC_TEST_POSTGRES_DB"],
-				user=os.environ["SYNC_TEST_POSTGRES_USER"],
+				database_name=os.environ["SYNC_TEST_POSTGRES_DB"],
+				username=os.environ["SYNC_TEST_POSTGRES_USER"],
 				password=os.environ["SYNC_TEST_POSTGRES_PASSWORD"],
 				connect_timeout="10",
 				sslmode=os.environ.get("SYNC_TEST_POSTGRES_SSLMODE", "disable"),

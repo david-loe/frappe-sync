@@ -206,7 +206,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			partner="PARTNER-1",
 			sync_type="A->B",
 			mapping={"subject": "title"},
-			key_fields=["name"],
+			match_fields=["name"],
 			value_mapping={"status": {"Open": "1"}},
 			filters=[["status", "=", "Open"]],
 		)
@@ -232,7 +232,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			{
 				"doctype": "Sync Definition",
 				"name": "SYNC-1",
-				"sync_partner": "PARTNER-1",
+				"partner": "PARTNER-1",
 				"export_mask_credentials": 1,
 			},
 			doctype="Sync Definition",
@@ -349,7 +349,7 @@ class TestRuntimeManagement(unittest.TestCase):
 				one_way_match_mode="all_matches",
 				use_last_sync_date="0",
 				timestamp_buffer_seconds="3",
-				key_fields=("name",),
+				match_fields=("name",),
 				mapping={"name": "id"},
 				value_mapping={"status": {"Open": "1"}},
 			)
@@ -368,7 +368,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		doc = SimpleNamespace(
 			doctype="Sync Definition",
 			get=lambda key, default=None: {
-				"key_fields": "name, external_id",
+				"match_fields": "name, external_id",
 				"field_mapping": '{"name": {"partner_field": "id", "direction": "Both"}, "status": {"partner_field": "state", "direction": "Partner to Frappe"}, "subject": {"partner_field": "title", "direction": "Frappe to Partner"}}',
 				"value_mapping": '{"status": {"Open": "1"}}',
 			}.get(key, default),
@@ -376,7 +376,7 @@ class TestRuntimeManagement(unittest.TestCase):
 
 		with patch("sync.sync.service.runtime._get_child_rows_by_options", return_value=[]):
 			mapping = runtime._get_field_mapping(doc)
-			self.assertEqual(runtime._get_key_fields(doc), ["name", "external_id"])
+			self.assertEqual(runtime._get_match_fields(doc), ["name", "external_id"])
 			self.assertEqual(
 				mapping,
 				{
@@ -476,7 +476,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertIsNone(runtime._parse_datetime(None))
 
 	def test_runtime_record_helpers_compact_and_trim_values(self):
-		config = SimpleNamespace(key_fields=["name"], mapping={"name": "id"})
+		config = SimpleNamespace(match_fields=["name"], mapping={"name": "id"})
 
 		self.assertEqual(runtime._compact_record_key(config, frappe_record={"name": "TASK-1"}, partner_record=None), "name=TASK-1")
 		self.assertEqual(runtime._compact_source_id(config, frappe_record={"name": "TASK-1"}), "TASK-1")
@@ -487,18 +487,18 @@ class TestRuntimeManagement(unittest.TestCase):
 		logged = []
 		config_a_to_b = SimpleNamespace(
 			name="SYNC-A2B",
-			key_fields=["name"],
+			match_fields=["name"],
 			mapping={"name": "id", "status": "state"},
 			value_mapping={},
 			create_new=True,
 			delete_missing=True,
 			table_name="dbo.SyncTable",
-			query=None,
+			read_query=None,
 		)
 		config_b_to_a = SimpleNamespace(
 			name="SYNC-B2A",
 			doctype="Task",
-			key_fields=["name"],
+			match_fields=["name"],
 			mapping={"name": "id", "status": "state"},
 			value_mapping={},
 			create_new=False,
@@ -546,7 +546,7 @@ class TestRuntimeManagement(unittest.TestCase):
 				full_sync=False,
 			)
 
-		self.assertEqual([entry["action"] for entry in logged], ["skipped", "error", "skipped", "error"])
+		self.assertEqual([entry["action"] for entry in logged], ["skipped", "error", "skipped"])
 
 	def test_run_engine_aborts_before_delete_missing_when_partner_load_is_partial(self):
 		config = runtime.SyncDefinitionConfig(
@@ -596,14 +596,14 @@ class TestRuntimeManagement(unittest.TestCase):
 		config = SimpleNamespace(
 			name="SYNC-BI",
 			doctype="Task",
-			key_fields=["name"],
+			match_fields=["name"],
 			mapping={"name": "id", "status": "state"},
 			value_mapping={},
 			conflict_policy="newest_wins",
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
 			table_name="tabTask",
-			query=None,
+			read_query=None,
 		)
 
 		with (
@@ -696,16 +696,16 @@ class TestRuntimeManagement(unittest.TestCase):
 			patch(
 				"sync.sync.service.runtime.frappe",
 				new=_runtime_frappe_stub(
-					get_meta=Mock(side_effect=[run_meta, item_meta]),
+					get_meta=Mock(return_value=item_meta),
 					get_doc=get_doc,
 				),
 			),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0, 0)),
 		):
-			created_run = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "A->B", "sync_partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="api", dry_run=True)
+			created_run = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "A->B", "partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="api", dry_run=True)
 			created_item = runtime._create_run_item(
 				run_doc=SimpleNamespace(name="RUN-1", get=lambda key, default=None: {"sync_type": "A->B"}.get(key, default)),
-				config=SimpleNamespace(key_fields=["name"], mapping={"name": "id"}),
+				config=SimpleNamespace(match_fields=["name"], mapping={"name": "id"}),
 				sync_definition_name="SYNC-1",
 				action="created",
 				status="success",
