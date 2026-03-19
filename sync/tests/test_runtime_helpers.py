@@ -738,6 +738,44 @@ class TestRuntimeHelpers(unittest.TestCase):
 		mock_delete.assert_called_once_with("Task", "TASK-2", ignore_permissions=True, force=True)
 		self.assertEqual([entry["action"] for entry in logged], ["updated", "deleted"])
 
+	def test_sync_partner_to_frappe_creates_new_document_when_no_match_exists(self):
+		config = SimpleNamespace(
+			name="SYNC-P2F-CREATE",
+			doctype="Task",
+			match_fields=["name"],
+			mapping={"name": "id", "status": "state"},
+			value_mapping={},
+			create_new=True,
+			delete_missing=False,
+		)
+		logged = []
+
+		with (
+			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
+			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-NEW") as mock_upsert,
+		):
+			runtime._sync_partner_to_frappe(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=object(),
+				partner_records=[{"id": "TASK-NEW", "state": "Open"}],
+				frappe_records=[],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="A<-B",
+				full_sync=False,
+			)
+
+		mock_upsert.assert_called_once_with(
+			doctype="Task",
+			existing_name=None,
+			payload={"name": "TASK-NEW", "status": "Open"},
+			dry_run=False,
+		)
+		self.assertEqual([entry["action"] for entry in logged], ["created"])
+		self.assertEqual(logged[0]["frappe_record"], {"name": "TASK-NEW", "status": "Open"})
+		self.assertEqual(logged[0]["partner_record"], {"id": "TASK-NEW", "state": "Open"})
+
 	def test_sync_partner_to_frappe_prefers_partner_identity_link_over_match_fields(self):
 		config = SimpleNamespace(
 			name="SYNC-P2F-ID",
