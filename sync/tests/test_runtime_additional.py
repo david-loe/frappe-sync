@@ -61,7 +61,7 @@ def _identity_match_config(one_way_match_mode="first_match"):
 		name="SYNC-IDENTITY",
 		doctype="Task",
 		partner="PARTNER-1",
-		sync_type="A<->B",
+		sync_type="Frappe <-> Partner",
 		cron=None,
 		filters=None,
 		batch_size=10,
@@ -73,7 +73,7 @@ def _identity_match_config(one_way_match_mode="first_match"):
 		table_name="tabTask",
 		read_query=None,
 		match_fields=["name"],
-		mapping={"name": {"partner_field": "id", "direction": "Both"}},
+		mapping={"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}},
 		value_mapping={},
 		frappe_modified_fields=["modified"],
 		partner_modified_fields=["updated_at"],
@@ -339,7 +339,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			name="SYNC-1",
 			doctype="Task",
 			partner="PARTNER-1",
-			sync_type="A->B",
+			sync_type="Frappe -> Partner",
 			cron=None,
 			filters=None,
 			batch_size=10,
@@ -358,7 +358,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 		coerced_config = runtime._coerce_config(config)
 		self.assertIsNot(coerced_config, config)
-		self.assertEqual(coerced_config.mapping, {"name": {"partner_field": "id", "direction": "Both"}})
+		self.assertEqual(coerced_config.mapping, {"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}})
 
 	def test_sync_stats_and_context_properties(self):
 		stats = runtime.SyncStats()
@@ -459,7 +459,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		definition = SimpleNamespace(name="SYNC-1")
 		config = SimpleNamespace(
 			name="SYNC-1",
-			sync_type="A->B",
+			sync_type="Frappe -> Partner",
 			partner="PARTNER-1",
 			doctype="Task",
 			mapping={"subject": "title"},
@@ -479,11 +479,11 @@ class TestRuntimeAdditional(unittest.TestCase):
 			preview = runtime._build_preview(definition, limit=5)
 
 		self.assertEqual(preview["frappe_records_sample_count"], 1)
-		self.assertEqual(preview["mapping"], {"subject": {"partner_field": "title", "direction": "Both"}})
+		self.assertEqual(preview["mapping"], {"subject": {"partner_field": "title", "direction": "Frappe <-> Partner"}})
 		self.assertEqual(preview["value_mapping_fields"], ["status"])
 
-		coerced = runtime._coerce_config(SimpleNamespace(name="SYNC-2", doctype="Task", partner="PARTNER-1", sync_type="A<-B"))
-		self.assertEqual(coerced.sync_type, "A<-B")
+		coerced = runtime._coerce_config(SimpleNamespace(name="SYNC-2", doctype="Task", partner="PARTNER-1", sync_type="Frappe <- Partner"))
+		self.assertEqual(coerced.sync_type, "Frappe <- Partner")
 		self.assertEqual(coerced.batch_size, 100)
 		self.assertEqual(coerced.frappe_modified_fields, ["modified"])
 		self.assertEqual(coerced.mapping, {})
@@ -493,7 +493,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			name="SYNC-1",
 			doctype="Task",
 			partner="PARTNER-1",
-			sync_type="A<-B",
+			sync_type="Frappe <- Partner",
 			cron=None,
 			filters=None,
 			batch_size=10,
@@ -521,14 +521,14 @@ class TestRuntimeAdditional(unittest.TestCase):
 			result = runtime._run_engine(SimpleNamespace(name="SYNC-1"), SimpleNamespace(name="RUN-1"), config=config)
 
 		mock_branch.assert_called_once()
-		self.assertEqual(result["sync_type"], "A<-B")
+		self.assertEqual(result["sync_type"], "Frappe <- Partner")
 
 	def test_run_engine_streams_a_to_b_batches_without_legacy_list_getters(self):
 		config = SimpleNamespace(
 			name="SYNC-A2B",
 			doctype="Task",
 			partner="PARTNER-1",
-			sync_type="A->B",
+			sync_type="Frappe -> Partner",
 			cron=None,
 			filters=None,
 			batch_size=2,
@@ -571,7 +571,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			name="SYNC-BI",
 			doctype="Task",
 			partner="PARTNER-1",
-			sync_type="A<->B",
+			sync_type="Frappe <-> Partner",
 			cron=None,
 			filters=None,
 			batch_size=2,
@@ -627,7 +627,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 				partner_record={"id": "TASK-1"},
 				partner_payload={"id": "TASK-1"},
 				changes=[("id", None, "TASK-1")],
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				action="updated",
 				status="success",
 				message="updated",
@@ -641,7 +641,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 				partner_record={"id": "TASK-1"},
 				frappe_payload={"name": "TASK-1"},
 				changes=[("name", None, "TASK-1")],
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				action="conflict",
 				status="conflict",
 				message="partner won",
@@ -662,7 +662,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 				partner_record={"id": "TASK-1"},
 				frappe_payload={"name": "TASK-1"},
 				changes=[],
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				action="updated",
 				status="success",
 				message="unused",
@@ -681,7 +681,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 				partner_record={"id": "TASK-1"},
 				partner_payload={"id": "TASK-1"},
 				changes=[],
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				action="updated",
 				status="success",
 				message="unused",
@@ -712,7 +712,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 				partner_records=[{"id": "TASK-1", "state": "open"}, {"id": "TASK-2", "state": "closed"}],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A->B",
+				label_direction="Frappe -> Partner",
 				full_sync=False,
 			)
 
@@ -739,7 +739,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 				],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
 
@@ -759,7 +759,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 				frappe_records=[],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
 
@@ -793,15 +793,16 @@ class TestRuntimeAdditional(unittest.TestCase):
 				SimpleNamespace(fieldname="action", fieldtype="Data"),
 				SimpleNamespace(fieldname="status", fieldtype="Data"),
 				SimpleNamespace(fieldname="message", fieldtype="Data"),
-				SimpleNamespace(fieldname="direction", fieldtype="Data"),
+				SimpleNamespace(fieldname="write_direction", fieldtype="Data"),
 				SimpleNamespace(fieldname="document_name", fieldtype="Data"),
 				SimpleNamespace(fieldname="record_key", fieldtype="Data"),
 				SimpleNamespace(fieldname="source_id", fieldtype="Data"),
 				SimpleNamespace(fieldname="target_id", fieldtype="Data"),
 				SimpleNamespace(fieldname="change_count", fieldtype="Int"),
 				SimpleNamespace(fieldname="changed_fields", fieldtype="Small Text"),
-				SimpleNamespace(fieldname="frappe_payload", fieldtype="Long Text"),
-				SimpleNamespace(fieldname="partner_payload", fieldtype="Long Text"),
+				SimpleNamespace(fieldname="frappe_before_payload", fieldtype="Long Text"),
+				SimpleNamespace(fieldname="partner_before_payload", fieldtype="Long Text"),
+				SimpleNamespace(fieldname="written_after_payload", fieldtype="Long Text"),
 			]
 		)
 		docs = [FakeInsertDoc(name="RUN-1", doctype="Sync Run"), FakeInsertDoc(name="ITEM-1", doctype="Sync Run Item")]
@@ -817,25 +818,31 @@ class TestRuntimeAdditional(unittest.TestCase):
 			),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
 		):
-			run_doc = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "A->B", "partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="manual", dry_run=True)
+			run_doc = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "Frappe -> Partner", "partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="manual", dry_run=True)
 			item_doc = runtime._create_run_item(
 				run_doc=run_doc,
-				config=SimpleNamespace(match_fields=["name"], mapping={"name": "id"}),
+				config=SimpleNamespace(match_fields=["name"], mapping={"name": "id"}, capture_audit_payloads=1),
 				sync_definition_name="SYNC-1",
 				action="created",
 				status="success",
 				frappe_record={"name": "TASK-1"},
 				partner_record={"id": "TASK-1"},
 				message="created",
-				direction="A->B",
+				direction="Frappe -> Partner",
+				partner_before_record=None,
+				written_after_record={"id": "TASK-1"},
 				changes=[("status", "Open", "Closed")],
 			)
 
 		self.assertTrue(run_doc.inserted)
 		self.assertTrue(item_doc.inserted)
 		item_payload = get_doc.call_args_list[1].args[0]
+		self.assertEqual(item_payload["write_direction"], "Frappe -> Partner")
 		self.assertEqual(item_payload["change_count"], 1)
 		self.assertEqual(item_payload["changed_fields"], "status")
+		self.assertEqual(item_payload["frappe_before_payload"], '{"name": "TASK-1"}')
+		self.assertEqual(item_payload["partner_before_payload"], "null")
+		self.assertEqual(item_payload["written_after_payload"], '{"id": "TASK-1"}')
 
 	def test_get_partner_source_records_returns_records_for_full_sync(self):
 		config = SimpleNamespace(table_name="tabTask", read_query=None, batch_size=10, match_fields=["name"], partner_modified_fields=["updated_at"])

@@ -98,7 +98,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			name="SYNC-1",
 			doctype="Task",
 			partner="PARTNER-1",
-			sync_type="A->B",
+			sync_type="Frappe -> Partner",
 			cron="*/5 * * * *",
 			filters=None,
 			batch_size=100,
@@ -204,7 +204,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			name="SYNC-1",
 			doctype="Task",
 			partner="PARTNER-1",
-			sync_type="A->B",
+			sync_type="Frappe -> Partner",
 			mapping={"subject": "title"},
 			match_fields=["name"],
 			value_mapping={"status": {"Open": "1"}},
@@ -223,7 +223,7 @@ class TestRuntimeManagement(unittest.TestCase):
 
 		self.assertEqual(result["frappe_records_sample_count"], 1)
 		self.assertEqual(result["partner_ping"]["ok"], True)
-		self.assertEqual(result["mapping"], {"subject": {"partner_field": "title", "direction": "Both"}})
+		self.assertEqual(result["mapping"], {"subject": {"partner_field": "title", "direction": "Frappe <-> Partner"}})
 		self.assertEqual(result["value_mapping_fields"], ["status"])
 		self.assertEqual(mock_get_all.call_args.kwargs["limit_page_length"], 3)
 
@@ -345,7 +345,7 @@ class TestRuntimeManagement(unittest.TestCase):
 				name="SYNC-1",
 				doctype="Task",
 				partner="PARTNER-1",
-				sync_type="A<-B",
+				sync_type="Frappe <- Partner",
 				batch_size="25",
 				create_new="0",
 				delete_missing="1",
@@ -358,21 +358,21 @@ class TestRuntimeManagement(unittest.TestCase):
 			)
 		)
 
-		self.assertEqual(coerced.sync_type, "A<-B")
+		self.assertEqual(coerced.sync_type, "Frappe <- Partner")
 		self.assertEqual(coerced.batch_size, 25)
 		self.assertFalse(coerced.create_new)
 		self.assertTrue(coerced.delete_missing)
 		self.assertEqual(coerced.one_way_match_mode, "all_matches")
 		self.assertFalse(coerced.use_last_sync_date)
 		self.assertEqual(coerced.timestamp_buffer_seconds, 3)
-		self.assertEqual(coerced.mapping, {"name": {"partner_field": "id", "direction": "Both"}})
+		self.assertEqual(coerced.mapping, {"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}})
 
 	def test_mapping_helpers_support_top_level_string_payloads_and_value_reversal(self):
 		doc = SimpleNamespace(
 			doctype="Sync Definition",
 			get=lambda key, default=None: {
 				"match_fields": "name, external_id",
-				"field_mapping": '{"name": {"partner_field": "id", "direction": "Both"}, "status": {"partner_field": "state", "direction": "Partner to Frappe"}, "subject": {"partner_field": "title", "direction": "Frappe to Partner"}}',
+				"field_mapping": '{"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}, "status": {"partner_field": "state", "direction": "Frappe <- Partner"}, "subject": {"partner_field": "title", "direction": "Frappe -> Partner"}}',
 				"value_mapping": '{"status": {"Open": "1"}}',
 			}.get(key, default),
 		)
@@ -383,9 +383,9 @@ class TestRuntimeManagement(unittest.TestCase):
 			self.assertEqual(
 				mapping,
 				{
-					"name": {"partner_field": "id", "direction": "Both"},
-					"status": {"partner_field": "state", "direction": "Partner to Frappe"},
-					"subject": {"partner_field": "title", "direction": "Frappe to Partner"},
+					"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+					"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
+					"subject": {"partner_field": "title", "direction": "Frappe -> Partner"},
 				},
 			)
 			self.assertEqual(runtime._get_value_mapping(doc), {"status": {"Open": "1"}})
@@ -405,7 +405,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			),
 			{"id": "TASK-1", "title": "Hello"},
 		)
-		datetime_mapping = {"scheduled_at": {"partner_field": "scheduled_at", "direction": "Both"}}
+		datetime_mapping = {"scheduled_at": {"partner_field": "scheduled_at", "direction": "Frappe <-> Partner"}}
 		datetime_meta = DummyMeta([_field("scheduled_at", "Datetime")])
 		with (
 			patch("sync.sync.service.runtime.frappe.get_meta", return_value=datetime_meta),
@@ -520,7 +520,7 @@ class TestRuntimeManagement(unittest.TestCase):
 				partner_records=[{"id": "TASK-1", "state": "Open"}, {"id": "TASK-2", "state": "Old"}],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A->B",
+				label_direction="Frappe -> Partner",
 				full_sync=True,
 			)
 			runtime._sync_partner_to_frappe(
@@ -531,7 +531,7 @@ class TestRuntimeManagement(unittest.TestCase):
 				frappe_records=[{"name": "TASK-1", "status": "Open"}],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
 		with (
@@ -545,7 +545,7 @@ class TestRuntimeManagement(unittest.TestCase):
 				frappe_records=[],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
 
@@ -556,7 +556,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			name="SYNC-P2F",
 			doctype="Task",
 			partner="PARTNER-1",
-			sync_type="A<-B",
+			sync_type="Frappe <- Partner",
 			cron=None,
 			filters=None,
 			batch_size=10,
@@ -680,15 +680,16 @@ class TestRuntimeManagement(unittest.TestCase):
 				_field("action"),
 				_field("status"),
 				_field("message"),
-				_field("direction"),
+				_field("write_direction"),
 				_field("document_name"),
 				_field("record_key"),
 				_field("source_id"),
 				_field("target_id"),
 				_field("change_count"),
 				_field("changed_fields"),
-				_field("frappe_payload"),
-				_field("partner_payload"),
+				_field("frappe_before_payload"),
+				_field("partner_before_payload"),
+				_field("written_after_payload"),
 			]
 		)
 		run_doc = DummyDoc(name="RUN-1", doctype="Sync Run")
@@ -705,9 +706,9 @@ class TestRuntimeManagement(unittest.TestCase):
 			),
 			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0, 0)),
 		):
-			created_run = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "A->B", "partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="api", dry_run=True)
+			created_run = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "Frappe -> Partner", "partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="api", dry_run=True)
 			created_item = runtime._create_run_item(
-				run_doc=SimpleNamespace(name="RUN-1", get=lambda key, default=None: {"sync_type": "A->B"}.get(key, default)),
+				run_doc=SimpleNamespace(name="RUN-1", get=lambda key, default=None: {"sync_type": "Frappe -> Partner"}.get(key, default)),
 				config=SimpleNamespace(match_fields=["name"], mapping={"name": "id"}),
 				sync_definition_name="SYNC-1",
 				action="created",
@@ -721,6 +722,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertTrue(created_run.inserted)
 		self.assertTrue(created_item.inserted)
 		item_payload = get_doc.call_args_list[1].args[0]
+		self.assertEqual(item_payload["write_direction"], "Frappe -> Partner")
 		self.assertEqual(item_payload["change_count"], 1)
 		self.assertEqual(item_payload["changed_fields"], "status")
 

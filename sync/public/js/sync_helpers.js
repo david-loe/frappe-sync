@@ -635,14 +635,14 @@ sync.helpers.getPreviewMapping = function (payload) {
 			Object.values(source).some((entry) => entry && typeof entry === "object")
 		);
 	return sync.helpers.normalizeFieldMapping(source, {
-		default_direction: structuredSource ? "Both" : "",
+		default_direction: structuredSource ? "Frappe <-> Partner" : "",
 	});
 };
 
 sync.helpers.normalizeFieldMappingDirection = function (direction, options = {}) {
 	const fallback = options.default_direction ?? "";
 	const value = String(direction || "").trim();
-	const allowed = new Set(["Both", "Frappe to Partner", "Partner to Frappe"]);
+	const allowed = new Set(["Frappe <-> Partner", "Frappe -> Partner", "Frappe <- Partner"]);
 	if (!value) {
 		return fallback;
 	}
@@ -1222,7 +1222,7 @@ sync.helpers.toggleSourceFields = function (frm) {
 		"one_way_match_mode",
 		"description",
 		__(
-			"For A->B and A<-B only: choose whether one source record updates only one matched target or all matched targets."
+			"For Frappe -> Partner and Frappe <- Partner only: choose whether one source record updates only one matched target or all matched targets."
 		)
 	);
 
@@ -1231,9 +1231,9 @@ sync.helpers.toggleSourceFields = function (frm) {
 
 sync.helpers.toggleSyncTypeSections = function (frm) {
 	const direction = (frm.doc.sync_type || "").toLowerCase();
-	const frappeVisible = direction !== "a<-b";
-	const partnerVisible = direction !== "a->b";
-	const oneWayVisible = direction === "a->b" || direction === "a<-b";
+	const frappeVisible = direction !== "frappe <- partner";
+	const partnerVisible = direction !== "frappe -> partner";
+	const oneWayVisible = direction === "frappe -> partner" || direction === "frappe <- partner";
 	frm.toggle_display("frappe_modified_field_rows", frappeVisible);
 	frm.toggle_display("partner_modified_field_rows", partnerVisible);
 	frm.toggle_display("one_way_match_mode", oneWayVisible);

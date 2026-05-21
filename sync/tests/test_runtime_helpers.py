@@ -97,7 +97,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		doc = FakeDoc(
 			{
 				"name": "SYNC-DELTA",
-				"sync_type": "A->B",
+				"sync_type": "Frappe -> Partner",
 				"frequency_cron": "*/5 * * * *",
 				"use_last_sync_date": 1,
 				"partner": "PARTNER-1",
@@ -117,7 +117,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			config = runtime._build_definition_config(doc)
 
 		self.assertEqual(config.match_fields, ["name"])
-		self.assertEqual(config.mapping, {"name": {"partner_field": "name", "direction": "Both"}})
+		self.assertEqual(config.mapping, {"name": {"partner_field": "name", "direction": "Frappe <-> Partner"}})
 		self.assertEqual(config.value_mapping, {"state": {"open": "1"}})
 		self.assertIsInstance(config.filters, list)
 		self.assertEqual(config.use_last_sync_date, True)
@@ -140,7 +140,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		doc = FakeDoc(
 			{
 				"name": "SYNC-LEGACY",
-				"sync_type": "A->B",
+				"sync_type": "Frappe -> Partner",
 				"partner": "PARTNER-1",
 				"doctype_name": "Task",
 				"table_name": "  tabTask  ",
@@ -173,26 +173,26 @@ class TestRuntimeHelpers(unittest.TestCase):
 			config = runtime._build_definition_config(doc)
 
 		self.assertEqual(config.match_fields, ["subject"])
-		self.assertEqual(config.mapping, {"subject": {"partner_field": "title", "direction": "Both"}})
+		self.assertEqual(config.mapping, {"subject": {"partner_field": "title", "direction": "Frappe <-> Partner"}})
 
 	@patch("sync.sync.service.runtime._get_child_rows_by_options", return_value=[])
 	def test_build_definition_config_rejects_key_mapping_direction_mismatch(self, _mock_children):
 		doc = FakeDoc(
 			{
 				"name": "SYNC-DIR",
-				"sync_type": "A->B",
+				"sync_type": "Frappe -> Partner",
 				"partner": "PARTNER-1",
 				"doctype_name": "Task",
 				"match_fields": "name",
 				"field_mapping": {
-					"name": {"partner_field": "id", "direction": "Partner to Frappe"},
+					"name": {"partner_field": "id", "direction": "Frappe <- Partner"},
 				},
 			}
 		)
 
 		with (
 			patch("sync.sync.service.runtime.frappe.get_meta", return_value=SimpleNamespace(fields=[])),
-			self.assertRaisesRegex(frappe.ValidationError, "name \\(Frappe to Partner\\)"),
+			self.assertRaisesRegex(frappe.ValidationError, "name \\(Frappe -> Partner\\)"),
 		):
 			runtime._build_definition_config(doc)
 
@@ -349,10 +349,10 @@ class TestRuntimeHelpers(unittest.TestCase):
 	def test_get_frappe_source_records_builds_delta_or_filters_from_existing_fields(self):
 		config = SimpleNamespace(
 			doctype="Task",
-			sync_type="A->B",
+			sync_type="Frappe -> Partner",
 			mapping={
-				"subject": {"partner_field": "title", "direction": "Frappe to Partner"},
-				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+				"subject": {"partner_field": "title", "direction": "Frappe -> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
 			},
 			match_fields=["name"],
 			frappe_modified_fields=["modified", "changed_on", "missing_field"],
@@ -493,7 +493,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			name="SYNC-ENGINE",
 			doctype="Task",
 			partner="PARTNER-1",
-			sync_type="A->B",
+			sync_type="Frappe -> Partner",
 			cron="* * * * *",
 			filters=None,
 			batch_size=10,
@@ -532,7 +532,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			name="SYNC-PING",
 			doctype="Task",
 			partner="PARTNER-1",
-			sync_type="A->B",
+			sync_type="Frappe -> Partner",
 			batch_size=10,
 			create_new=True,
 			delete_missing=False,
@@ -586,7 +586,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				partner_records=[{"id": "TASK-2", "state": "closed"}],
 				dry_run=False,
 				stats=stats,
-				label_direction="A->B",
+				label_direction="Frappe -> Partner",
 				full_sync=True,
 			)
 
@@ -598,9 +598,9 @@ class TestRuntimeHelpers(unittest.TestCase):
 			name="SYNC-F2P-DIR",
 			match_fields=["name"],
 			mapping={
-				"name": {"partner_field": "id", "direction": "Both"},
-				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
-				"subject": {"partner_field": "title", "direction": "Frappe to Partner"},
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
+				"subject": {"partner_field": "title", "direction": "Frappe -> Partner"},
 			},
 			value_mapping={},
 			create_new=True,
@@ -634,7 +634,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				partner_records=[],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A->B",
+				label_direction="Frappe -> Partner",
 				full_sync=False,
 			)
 
@@ -654,8 +654,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 			doctype="Task",
 			match_fields=["customer_code"],
 			mapping={
-				"customer_code": {"partner_field": "code", "direction": "Both"},
-				"status": {"partner_field": "state", "direction": "Frappe to Partner"},
+				"customer_code": {"partner_field": "code", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe -> Partner"},
 			},
 			value_mapping={},
 			create_new=True,
@@ -695,7 +695,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				partner_records=[],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A->B",
+				label_direction="Frappe -> Partner",
 				full_sync=False,
 			)
 
@@ -731,7 +731,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				frappe_records=[{"name": "TASK-1", "status": "closed"}, {"name": "TASK-2", "status": "stale"}],
 				dry_run=False,
 				stats=stats,
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=True,
 			)
 
@@ -763,7 +763,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				frappe_records=[],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
 
@@ -783,8 +783,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 			doctype="Task",
 			match_fields=["customer_code"],
 			mapping={
-				"customer_code": {"partner_field": "code", "direction": "Both"},
-				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+				"customer_code": {"partner_field": "code", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
 			},
 			value_mapping={},
 			create_new=True,
@@ -805,7 +805,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				frappe_records=[{"name": "TASK-LOCAL", "partner_nr": 77, "customer_code": "OLD", "status": "Closed"}],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
 
@@ -821,8 +821,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 			doctype="Task",
 			match_fields=["customer_code"],
 			mapping={
-				"customer_code": {"partner_field": "code", "direction": "Both"},
-				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+				"customer_code": {"partner_field": "code", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
 			},
 			value_mapping={},
 			create_new=True,
@@ -845,7 +845,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
 
@@ -861,8 +861,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 			doctype="Task",
 			match_fields=["customer_code"],
 			mapping={
-				"customer_code": {"partner_field": "code", "direction": "Both"},
-				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
+				"customer_code": {"partner_field": "code", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
 			},
 			value_mapping={},
 			create_new=True,
@@ -885,7 +885,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
 
@@ -898,8 +898,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 			doctype="Task",
 			match_fields=["customer_code"],
 			mapping={
-				"customer_code": {"partner_field": "code", "direction": "Both"},
-				"status": {"partner_field": "state", "direction": "Frappe to Partner"},
+				"customer_code": {"partner_field": "code", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe -> Partner"},
 			},
 			value_mapping={},
 			create_new=True,
@@ -937,7 +937,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A->B",
+				label_direction="Frappe -> Partner",
 				full_sync=False,
 			)
 
@@ -950,9 +950,9 @@ class TestRuntimeHelpers(unittest.TestCase):
 			doctype="Task",
 			match_fields=["name"],
 			mapping={
-				"name": {"partner_field": "id", "direction": "Both"},
-				"status": {"partner_field": "state", "direction": "Partner to Frappe"},
-				"subject": {"partner_field": "title", "direction": "Frappe to Partner"},
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
+				"subject": {"partner_field": "title", "direction": "Frappe -> Partner"},
 			},
 			value_mapping={"status": {"Open": "1"}},
 			create_new=True,
@@ -971,7 +971,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				frappe_records=[{"name": "TASK-1", "status": "Closed", "subject": "Old"}],
 				dry_run=False,
 				stats=runtime.SyncStats(),
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
 

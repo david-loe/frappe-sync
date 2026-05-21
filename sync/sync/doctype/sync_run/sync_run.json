@@ -57,7 +57,7 @@
    "fieldname": "sync_type",
    "fieldtype": "Select",
    "label": "Sync Type",
-   "options": "A->B\nA<-B\nA<->B",
+   "options": "Frappe -> Partner\nFrappe <- Partner\nFrappe <-> Partner",
    "read_only": 1
   },
   {
@@ -216,7 +216,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-21 00:00:00.000000",
+ "modified": "2026-05-21 12:00:00.000000",
  "module": "Sync",
  "name": "Sync Run",
  "permissions": [

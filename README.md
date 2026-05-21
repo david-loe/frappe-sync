@@ -28,7 +28,7 @@ bench setup requirements
 
 ### Configuration snapshot
 
-Each sync entry links to a `Sync Partner` (host / port / credentials) plus a `Sync Definition` describing the DocType, cron schedule, batch size, direction (`A->B`, `A<-B`, `A<->B`), field mapping, value mapping and granular options such as `create_new` or `delete_missing`.
+Each sync entry links to a `Sync Partner` (host / port / credentials) plus a `Sync Definition` describing the DocType, cron schedule, batch size, direction (`Frappe -> Partner`, `Frappe <- Partner`, `Frappe <-> Partner`), field mapping, value mapping and granular options such as `create_new` or `delete_missing`.
 
 The app ships with Desk helpers (Run, Preview, Export YAML, Import YAML, Open Latest Run, Test Connection). Use the YAML export/import as a transport format, but keep secret values out of shared exports.
 

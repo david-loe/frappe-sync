@@ -48,7 +48,7 @@ sync.run.getDefinitionDoctype = function (frm) {
 
 sync.run.fetchItems = function (frm) {
 	return sync.helpers.getList("Sync Run Item", {
-		fields: ["name", "record_key", "document_name", "action", "status", "message", "creation"],
+		fields: ["name", "record_key", "document_name", "write_direction", "action", "status", "message", "creation"],
 		filters: { sync_run: frm.doc.name },
 		order_by: "creation desc",
 		limit: 50,
@@ -220,6 +220,7 @@ sync.run.buildHtml = function (frm, doctypeName, items) {
 					<td>${recordCell}</td>
 					<td>${sync.run.indicator(item.action)}</td>
 					<td>${sync.run.indicator(item.status)}</td>
+					<td>${frappe.utils.escape_html(item.write_direction || __("No write"))}</td>
 					<td>${documentCell}</td>
 					<td>${frappe.utils.escape_html(sync.run.relativeTimestamp(item.creation))}</td>
 					<td title="${frappe.utils.escape_html(item.message || "")}">${frappe.utils.escape_html(message)}</td>
@@ -232,7 +233,7 @@ sync.run.buildHtml = function (frm, doctypeName, items) {
 		...header,
 		`<div class="table-responsive">`,
 		`<table class="table table-bordered table-hover table-sm mb-0">`,
-		`<thead><tr><th>${__("Record")}</th><th>${__("Action")}</th><th>${__("Status")}</th><th>${__("Document")}</th><th>${__("Created")}</th><th>${__("Message")}</th></tr></thead>`,
+		`<thead><tr><th>${__("Record")}</th><th>${__("Action")}</th><th>${__("Status")}</th><th>${__("Write Direction")}</th><th>${__("Document")}</th><th>${__("Created")}</th><th>${__("Message")}</th></tr></thead>`,
 		`<tbody>${rows}</tbody>`,
 		`</table>`,
 		`</div>`,
@@ -394,6 +395,7 @@ sync.run.renderIssueList = function (doctypeName, issueItems, errorText) {
 				`<td><a href="#" class="sync-run-item-link" data-item-name="${frappe.utils.escape_html(item.name)}">${frappe.utils.escape_html(recordLabel)}</a></td>`,
 				`<td>${sync.run.indicator(item.action || item.status)}</td>`,
 				`<td>${sync.run.indicator(item.status)}</td>`,
+				`<td>${frappe.utils.escape_html(item.write_direction || __("No write"))}</td>`,
 				`<td>${documentCell}</td>`,
 				`<td>${frappe.utils.escape_html(sync.run.relativeTimestamp(item.creation))}</td>`,
 				`<td title="${frappe.utils.escape_html(item.message || "")}">${frappe.utils.escape_html(sync.run.truncateText(item.message || "", 110))}</td>`,
@@ -405,7 +407,7 @@ sync.run.renderIssueList = function (doctypeName, issueItems, errorText) {
 	return [
 		`<div class="table-responsive">`,
 		`<table class="table table-sm table-bordered mb-0">`,
-		`<thead><tr><th>${__("Record")}</th><th>${__("Action")}</th><th>${__("Status")}</th><th>${__("Document")}</th><th>${__("Created")}</th><th>${__("Message")}</th></tr></thead>`,
+		`<thead><tr><th>${__("Record")}</th><th>${__("Action")}</th><th>${__("Status")}</th><th>${__("Write Direction")}</th><th>${__("Document")}</th><th>${__("Created")}</th><th>${__("Message")}</th></tr></thead>`,
 		`<tbody>${rows}</tbody>`,
 		`</table>`,
 		`</div>`,

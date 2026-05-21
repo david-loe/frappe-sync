@@ -3,8 +3,8 @@
 ## Purpose
 
 `sync` is a Frappe app for synchronizing records between Frappe DocTypes and
-external partner systems. It supports one-way Frappe-to-partner sync (`A->B`),
-one-way partner-to-Frappe sync (`A<-B`), and bidirectional sync (`A<->B`).
+external partner systems. It supports one-way Frappe-to-partner sync (`Frappe -> Partner`),
+one-way partner-to-Frappe sync (`Frappe <- Partner`), and bidirectional sync (`Frappe <-> Partner`).
 
 The app is built around configurable sync definitions, partner connectors,
 runtime execution with audit records, YAML import/export, and Desk helpers for
@@ -44,14 +44,14 @@ Important child doctypes include `Sync Field Mapping`, `Sync Key Field`,
 {
     "frappe_field": {
         "partner_field": "external_field",
-        "direction": "Both" | "Frappe to Partner" | "Partner to Frappe",
+        "direction": "Frappe <-> Partner" | "Frappe -> Partner" | "Frappe <- Partner",
     }
 }
 ```
 
 - Mapping `direction` affects payload construction. Frappe-to-partner mappings
   are used only when writing partner payloads; partner-to-Frappe mappings are
-  used only when writing Frappe payloads; `Both` applies in both directions.
+  used only when writing Frappe payloads; `Frappe <-> Partner` applies in both directions.
 - Match-field mappings must be valid for the active sync direction.
 - `table_name` is the partner write target. `read_query` is read-only and must
   never change where writes go.

@@ -92,7 +92,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Sync Type",
-   "options": "A->B\nA<->B\nA<-B",
+   "options": "Frappe -> Partner\nFrappe <-> Partner\nFrappe <- Partner",
    "reqd": 1
   },
   {
@@ -159,7 +159,7 @@
    "fieldtype": "Select",
    "label": "One-Way Match Mode",
    "options": "first_match\nall_matches",
-   "description": "For A->B and A<-B only: update only one matched target or all matched targets when multiple records share the same logical match."
+   "description": "For Frappe -> Partner and Frappe <- Partner only: update only one matched target or all matched targets when multiple records share the same logical match."
   },
   {
    "default": "newest_wins",

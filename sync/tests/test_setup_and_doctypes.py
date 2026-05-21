@@ -62,7 +62,7 @@ class FakeSyncDefinitionDoc:
 		self.name = values.get("name", "SYNC-DEF")
 		self.enabled = values.get("enabled", 1)
 		self.partner = values.get("partner", "PARTNER-1")
-		self.sync_type = values.get("sync_type", "A->B")
+		self.sync_type = values.get("sync_type", "Frappe -> Partner")
 		self.doctype_name = values.get("doctype_name", "Task")
 		self.frequency_cron = values.get("frequency_cron", "*/15 * * * *")
 		self.filter_expression = values.get("filter_expression")
@@ -227,27 +227,8 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 			update_modified=False,
 		)
 
-	def test_sync_run_item_on_trash_deletes_item_change_rows(self):
-		def fake_get_all(doctype, filters=None, fields=None, order_by=None):
-			self.assertEqual(doctype, "Sync Run Item Change")
-			self.assertEqual(filters, {"sync_run_item": "ITEM-1"})
-			return [{"name": "CHANGE-1"}, SimpleNamespace(name="CHANGE-2")]
-
-		delete_doc = Mock()
-
-		with patch.object(
-			sync_run_item_module,
-			"frappe",
-			SimpleNamespace(get_all=fake_get_all, delete_doc=delete_doc),
-		):
-			sync_run_item_module.SyncRunItem.on_trash(SimpleNamespace(name="ITEM-1"))
-
-		delete_doc.assert_has_calls(
-			[
-				call("Sync Run Item Change", "CHANGE-1", ignore_permissions=True),
-				call("Sync Run Item Change", "CHANGE-2", ignore_permissions=True),
-			]
-		)
+	def test_sync_run_item_no_longer_owns_field_level_change_rows(self):
+		self.assertFalse(hasattr(sync_run_item_module.SyncRunItem, "on_trash"))
 
 	def test_sync_definition_on_trash_deletes_runs_and_leftover_items(self):
 		def fake_get_all(doctype, filters=None, fields=None, order_by=None):
@@ -305,12 +286,12 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 
 		self.assertEqual(doc.field_mapping[0].frappe_field, "name")
 		self.assertEqual(doc.field_mapping[0].partner_field, "id")
-		self.assertEqual(doc.field_mapping[0].direction, "Both")
+		self.assertEqual(doc.field_mapping[0].direction, "Frappe <-> Partner")
 
 		duplicate_doc = FakeSyncDefinitionDoc(
 			field_mapping=[
-				SimpleNamespace(frappe_field="name", partner_field="id", direction="Both"),
-				SimpleNamespace(frappe_field=" name ", partner_field="external_id", direction="Frappe to Partner"),
+				SimpleNamespace(frappe_field="name", partner_field="id", direction="Frappe <-> Partner"),
+				SimpleNamespace(frappe_field=" name ", partner_field="external_id", direction="Frappe -> Partner"),
 			]
 		)
 
@@ -328,7 +309,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 				sync_definition_module.SyncDefinition.validate_field_mapping(doc)
 
 		mock_throw.assert_called_once_with(
-			"Direction must be one of: Both, Frappe to Partner, Partner to Frappe"
+			"Direction must be one of: Frappe <-> Partner, Frappe -> Partner, Frappe <- Partner"
 		)
 
 	def test_validate_source_settings_requires_table_name(self):
@@ -409,7 +390,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 			match_fields=[SimpleNamespace(frappe_field=" name "), SimpleNamespace(frappe_field="")],
 			field_mapping=[
 				SimpleNamespace(frappe_field=" name ", partner_field=" id ", direction=None),
-				SimpleNamespace(frappe_field="", partner_field="status", direction="Both"),
+				SimpleNamespace(frappe_field="", partner_field="status", direction="Frappe <-> Partner"),
 			],
 			value_mapping=[
 				SimpleNamespace(frappe_field=" status ", frappe_value="Open", partner_value="1"),
@@ -422,7 +403,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		self.assertEqual(sync_definition_module.SyncDefinition.get_match_fields(doc), ["name"])
 		self.assertEqual(
 			sync_definition_module.SyncDefinition.get_field_mapping(doc),
-			{"name": {"partner_field": "id", "direction": "Both"}},
+			{"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}},
 		)
 		self.assertEqual(sync_definition_module.SyncDefinition.get_value_mapping(doc), {"status": {"Open": "1"}})
 		self.assertEqual(sync_definition_module.SyncDefinition.get_frappe_modified_fields(doc), ["modified", "changed_on"])
@@ -431,7 +412,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 	def test_export_payload_helpers_cover_preview_limit_and_serialization(self):
 		doc = FakeSyncDefinitionDoc(
 			value_mapping=[SimpleNamespace(frappe_field="status", frappe_value={"a": 1}, partner_value=["x"])],
-			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id", direction="Partner to Frappe")],
+			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id", direction="Frappe <- Partner")],
 			match_fields=[SimpleNamespace(frappe_field="name")],
 			frappe_modified_field_rows=[SimpleNamespace(field_name="modified")],
 			partner_modified_field_rows=[SimpleNamespace(field_name="updated_at")],
@@ -441,7 +422,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 
 		self.assertEqual(sync_definition_module.SyncDefinition.get_preview_limit(doc), 50)
 		exported = sync_definition_module.SyncDefinition.as_export_dict(doc)
-		self.assertEqual(exported["field_mapping"]["name"]["direction"], "Partner to Frappe")
+		self.assertEqual(exported["field_mapping"]["name"]["direction"], "Frappe <- Partner")
 		self.assertEqual(exported["value_mapping"]["status"], {'{"a": 1}': '["x"]'})
 		self.assertEqual(exported["one_way_match_mode"], "all_matches")
 		payload = sync_definition_module.SyncDefinition.get_export_payload(doc)
@@ -452,12 +433,12 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		self.assertEqual(sync_definition_module._split_lines(" a \n\n b "), ["a", "b"])
 		self.assertIsNone(sync_definition_module._clean_value("   "))
 		self.assertIsNone(sync_definition_module._normalize_filter_expression("   "))
-		self.assertEqual(sync_definition_module._normalize_mapping_direction(""), "Both")
+		self.assertEqual(sync_definition_module._normalize_mapping_direction(""), "Frappe <-> Partner")
 		self.assertEqual(
 			sync_definition_module._normalize_field_mapping_row(
 				SimpleNamespace(frappe_field=" name ", partner_field=" id ", direction="")
 			),
-			{"frappe_field": "name", "partner_field": "id", "direction": "Both"},
+			{"frappe_field": "name", "partner_field": "id", "direction": "Frappe <-> Partner"},
 		)
 		self.assertEqual(
 			sync_definition_module._extract_modified_fields(

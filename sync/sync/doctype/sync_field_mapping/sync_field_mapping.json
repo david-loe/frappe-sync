@@ -26,12 +26,12 @@
    "reqd": 1
   },
   {
-   "default": "Both",
+   "default": "Frappe <-> Partner",
    "fieldname": "direction",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Direction",
-   "options": "Both\nFrappe to Partner\nPartner to Frappe"
+   "options": "Frappe <-> Partner\nFrappe -> Partner\nFrappe <- Partner"
   }
  ],
  "grid_page_length": 50,

@@ -35,14 +35,19 @@ class TestRuntimeExecution(IntegrationTestCase):
 				"doctype": "Sync Definition",
 				"title": f"SYNC-DEF-{suffix}",
 				"partner": partner_name,
-				"sync_type": "A->B",
+				"sync_type": "Frappe -> Partner",
 				"doctype_name": "ToDo",
 				"frequency_cron": "*/15 * * * *",
 				"table_name": "tabToDo",
 				"batch_size": 25,
 				"match_fields": [{"doctype": "Sync Key Field", "frappe_field": "name"}],
 				"field_mapping": [
-					{"doctype": "Sync Field Mapping", "frappe_field": "name", "partner_field": "external_name"}
+					{
+						"doctype": "Sync Field Mapping",
+						"frappe_field": "name",
+						"partner_field": "external_name",
+						"direction": "Frappe <-> Partner",
+					}
 				],
 				"frappe_modified_field_rows": [{"doctype": "Sync Modified Field", "field_name": "modified"}],
 				"partner_modified_field_rows": [{"doctype": "Sync Modified Field", "field_name": "updated_at"}],
@@ -78,7 +83,7 @@ class TestRuntimeExecution(IntegrationTestCase):
 		definition = self._make_definition(partner.name)
 		result_payload = {
 			"sync_definition": definition.name,
-			"sync_type": "A->B",
+			"sync_type": "Frappe -> Partner",
 			"last_successful_sync_before_run": None,
 			"delta_since": None,
 			"dry_run": False,
@@ -119,7 +124,7 @@ class TestRuntimeExecution(IntegrationTestCase):
 		definition = self._make_definition(partner.name)
 		result_payload = {
 			"sync_definition": definition.name,
-			"sync_type": "A->B",
+			"sync_type": "Frappe -> Partner",
 			"last_successful_sync_before_run": None,
 			"delta_since": None,
 			"dry_run": False,
@@ -149,7 +154,7 @@ class TestRuntimeExecution(IntegrationTestCase):
 		definition = self._make_definition(partner.name)
 		result_payload = {
 			"sync_definition": definition.name,
-			"sync_type": "A<->B",
+			"sync_type": "Frappe <-> Partner",
 			"last_successful_sync_before_run": None,
 			"delta_since": None,
 			"dry_run": False,
@@ -182,7 +187,7 @@ class TestRuntimeExecution(IntegrationTestCase):
 		definition.db_set("last_run_summary", "previous failure", update_modified=False)
 		result_payload = {
 			"sync_definition": definition.name,
-			"sync_type": "A->B",
+			"sync_type": "Frappe -> Partner",
 			"last_successful_sync_before_run": None,
 			"delta_since": None,
 			"dry_run": True,
@@ -281,7 +286,7 @@ class TestRuntimeExecution(IntegrationTestCase):
 		definition = self._make_definition(partner.name)
 		result_payload = {
 			"sync_definition": definition.name,
-			"sync_type": "A->B",
+			"sync_type": "Frappe -> Partner",
 			"last_successful_sync_before_run": None,
 			"delta_since": None,
 			"dry_run": True,

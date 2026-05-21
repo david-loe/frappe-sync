@@ -5,15 +5,13 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "section_break_monitoring",
-  "monitoring_html",
   "section_break_links",
   "sync_run",
   "sync_definition",
   "column_break_links",
   "record_key",
   "document_name",
-  "direction",
+  "write_direction",
   "action",
   "status",
   "section_break_identifiers",
@@ -22,23 +20,14 @@
   "change_count",
   "changed_fields",
   "section_break_payloads",
-  "frappe_payload",
+  "frappe_before_payload",
   "column_break_payloads",
-  "partner_payload",
+  "partner_before_payload",
+  "written_after_payload",
   "section_break_message",
   "message"
  ],
  "fields": [
-  {
-   "fieldname": "section_break_monitoring",
-   "fieldtype": "Section Break",
-   "label": "Monitoring"
-  },
-  {
-   "fieldname": "monitoring_html",
-   "fieldtype": "HTML",
-   "label": "Operator Summary"
-  },
   {
    "fieldname": "section_break_links",
    "fieldtype": "Section Break",
@@ -77,10 +66,11 @@
    "read_only": 1
   },
   {
-   "fieldname": "direction",
+   "fieldname": "write_direction",
    "fieldtype": "Select",
-   "label": "Direction",
-   "options": "A->B\nA<-B\nA<->B",
+   "in_list_view": 1,
+   "label": "Write Direction",
+   "options": "\nFrappe -> Partner\nFrappe <- Partner",
    "read_only": 1
   },
   {
@@ -136,9 +126,9 @@
    "label": "Payloads"
   },
   {
-   "fieldname": "frappe_payload",
+   "fieldname": "frappe_before_payload",
    "fieldtype": "Long Text",
-   "label": "Frappe Payload",
+   "label": "Frappe Before Payload",
    "read_only": 1
   },
   {
@@ -146,9 +136,15 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "partner_payload",
+   "fieldname": "partner_before_payload",
    "fieldtype": "Long Text",
-   "label": "Partner Payload",
+   "label": "Partner Before Payload",
+   "read_only": 1
+  },
+  {
+   "fieldname": "written_after_payload",
+   "fieldtype": "Long Text",
+   "label": "Written After Payload",
    "read_only": 1
   },
   {
@@ -166,7 +162,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-21 00:00:00.000000",
+ "modified": "2026-05-21 13:00:00.000000",
  "module": "Sync",
  "name": "Sync Run Item",
  "permissions": [

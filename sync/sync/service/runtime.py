@@ -43,12 +43,17 @@ SYSTEM_KEYS = {
 	"_liked_by",
 }
 
-MAPPING_DIRECTION_BOTH = "Both"
-MAPPING_DIRECTION_FRAPPE_TO_PARTNER = "Frappe to Partner"
-MAPPING_DIRECTION_PARTNER_TO_FRAPPE = "Partner to Frappe"
+MAPPING_DIRECTION_BOTH = "Frappe <-> Partner"
+MAPPING_DIRECTION_FRAPPE_TO_PARTNER = "Frappe -> Partner"
+MAPPING_DIRECTION_PARTNER_TO_FRAPPE = "Frappe <- Partner"
+
+SYNC_TYPE_FRAPPE_TO_PARTNER = MAPPING_DIRECTION_FRAPPE_TO_PARTNER
+SYNC_TYPE_PARTNER_TO_FRAPPE = MAPPING_DIRECTION_PARTNER_TO_FRAPPE
+SYNC_TYPE_BIDIRECTIONAL = MAPPING_DIRECTION_BOTH
 
 DEFAULT_RUNTIME_COMMIT_BATCH = 50
 RUN_DOC_PENDING_WRITES_ATTR = "_sync_pending_write_count"
+AUDIT_RECORD_UNSET = object()
 
 
 @dataclass(slots=True)
@@ -594,7 +599,7 @@ def _run_engine(
 		raise frappe.ValidationError(f"Partner connector validation failed: {ping.message}")
 
 	stats = SyncStats()
-	if config.sync_type == "A->B":
+	if config.sync_type == "Frappe -> Partner":
 		partner_batches = _iter_partner_source_batches(config, connector, context)
 		if config.delete_missing and context.is_full_sync:
 			partner_records = [
@@ -624,7 +629,7 @@ def _run_engine(
 				partner_records=partner_records,
 				dry_run=context.dry_run,
 				stats=stats,
-				label_direction="A->B",
+				label_direction="Frappe -> Partner",
 				full_sync=True,
 			)
 		else:
@@ -638,12 +643,12 @@ def _run_engine(
 					partner_records=partner_records,
 					dry_run=context.dry_run,
 					stats=stats,
-					label_direction="A->B",
+					label_direction="Frappe -> Partner",
 					full_sync=False,
 					source_keys=source_keys,
 				)
 			_flush_pending_run_writes(run_doc, force=True)
-	elif config.sync_type == "A<-B":
+	elif config.sync_type == "Frappe <- Partner":
 		frappe_records = _get_frappe_source_records(config, context)
 		if config.delete_missing and context.is_full_sync:
 			partner_source = [
@@ -659,7 +664,7 @@ def _run_engine(
 				frappe_records=frappe_records,
 				dry_run=context.dry_run,
 				stats=stats,
-				label_direction="A<-B",
+				label_direction="Frappe <- Partner",
 				full_sync=True,
 			)
 		else:
@@ -673,7 +678,7 @@ def _run_engine(
 					frappe_records=frappe_records,
 					dry_run=context.dry_run,
 					stats=stats,
-					label_direction="A<-B",
+					label_direction="Frappe <- Partner",
 					full_sync=False,
 					source_keys=source_keys,
 				)
@@ -723,7 +728,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		name=str(getattr(config, "name", "")),
 		doctype=str(getattr(config, "doctype", "")),
 		partner=str(getattr(config, "partner", "")),
-		sync_type=str(getattr(config, "sync_type", "A->B")),
+		sync_type=str(getattr(config, "sync_type", "Frappe -> Partner")),
 		cron=getattr(config, "cron", None),
 		filters=getattr(config, "filters", None),
 		batch_size=cint(getattr(config, "batch_size", 100)) or 100,
@@ -909,6 +914,8 @@ def _sync_frappe_to_partner(
 				direction=label_direction,
 				frappe_record=frappe_record,
 				partner_record=getattr(write, "record", None) or partner_payload,
+				partner_before_record=None,
+				written_after_record=getattr(write, "record", None) or partner_payload,
 				changes=[],
 				commit=False,
 			)
@@ -980,6 +987,8 @@ def _sync_frappe_to_partner(
 				direction=label_direction,
 				frappe_record=frappe_record,
 				partner_record=getattr(write, "record", None) or existing_partner or partner_payload,
+				partner_before_record=existing_partner,
+				written_after_record=getattr(write, "record", None) or existing_partner or partner_payload,
 				changes=change_sets[-1],
 				commit=False,
 			)
@@ -1047,6 +1056,8 @@ def _sync_frappe_to_partner(
 				direction=label_direction,
 				frappe_record=frappe_record,
 				partner_record=getattr(write, "record", None) or partner_payload,
+				partner_before_record=matched_partner,
+				written_after_record=getattr(write, "record", None) or partner_payload,
 				changes=changes,
 				commit=False,
 			)
@@ -1175,6 +1186,8 @@ def _sync_partner_to_frappe(
 				direction=label_direction,
 				frappe_record=frappe_payload,
 				partner_record=partner_record,
+				frappe_before_record=None,
+				written_after_record=frappe_payload,
 				changes=[],
 				commit=False,
 			)
@@ -1239,6 +1252,8 @@ def _sync_partner_to_frappe(
 				direction=label_direction,
 				frappe_record=target_payload,
 				partner_record=partner_record,
+				frappe_before_record=matched_frappe,
+				written_after_record=target_payload,
 				changes=changes,
 				commit=False,
 			)
@@ -1380,7 +1395,7 @@ def _sync_bidirectional(
 				partner_records=[],
 				dry_run=dry_run,
 				stats=stats,
-				label_direction="A<->B",
+				label_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
 				full_sync=False,
 			)
 			continue
@@ -1394,7 +1409,7 @@ def _sync_bidirectional(
 				frappe_records=[],
 				dry_run=dry_run,
 				stats=stats,
-				label_direction="A<->B",
+				label_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
 				full_sync=False,
 			)
 			continue
@@ -1440,7 +1455,7 @@ def _sync_bidirectional(
 				action="skipped",
 				status="skipped",
 				message="No differences between both sides.",
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				frappe_record=frappe_record,
 				partner_record=partner_record,
 				commit=False,
@@ -1472,7 +1487,7 @@ def _sync_bidirectional(
 				partner_record=partner_record,
 				partner_payload=partner_payload,
 				changes=to_partner_changes,
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				action="updated",
 				status="success",
 				message="Updated partner from frappe.",
@@ -1490,7 +1505,7 @@ def _sync_bidirectional(
 				partner_record=partner_record,
 				frappe_payload=frappe_payload,
 				changes=to_frappe_changes,
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				action="updated",
 				status="success",
 				message="Updated frappe from partner.",
@@ -1506,7 +1521,7 @@ def _sync_bidirectional(
 				action="conflict",
 				status="conflict",
 				message=f"Unsupported conflict policy: {config.conflict_policy}",
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				frappe_record=frappe_record,
 				partner_record=partner_record,
 				commit=False,
@@ -1534,7 +1549,7 @@ def _sync_bidirectional(
 				partner_record=partner_record,
 				frappe_payload=frappe_payload,
 				changes=to_frappe_changes,
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				action="conflict",
 				status="conflict",
 				message="Conflict resolved with newest_wins: partner won.",
@@ -1551,7 +1566,7 @@ def _sync_bidirectional(
 				partner_record=partner_record,
 				partner_payload=partner_payload,
 				changes=to_partner_changes,
-				direction="A<->B",
+				direction="Frappe <-> Partner",
 				action="conflict",
 				status="conflict",
 				message="Conflict resolved with newest_wins: frappe won.",
@@ -1602,6 +1617,9 @@ def _apply_partner_update(
 			direction=direction,
 			frappe_record=frappe_record,
 			partner_record=getattr(write, "record", None) or partner_payload,
+			write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+			partner_before_record=partner_record,
+			written_after_record=getattr(write, "record", None) or partner_payload,
 			changes=changes,
 			commit=commit,
 		)
@@ -1616,6 +1634,7 @@ def _apply_partner_update(
 			direction=direction,
 			frappe_record=frappe_record,
 			partner_record=partner_record,
+			write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
 			commit=commit,
 		)
 
@@ -1655,6 +1674,9 @@ def _apply_frappe_update(
 			direction=direction,
 			frappe_record=frappe_payload,
 			partner_record=partner_record,
+			write_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+			frappe_before_record=frappe_record,
+			written_after_record=frappe_payload,
 			changes=changes,
 			commit=commit,
 		)
@@ -1669,6 +1691,7 @@ def _apply_frappe_update(
 			direction=direction,
 			frappe_record=frappe_record,
 			partner_record=partner_record,
+			write_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
 			commit=commit,
 		)
 
@@ -1853,7 +1876,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 	if not partner:
 		raise frappe.ValidationError("Sync Definition is missing Sync Partner reference.")
 
-	sync_type = _first_value(sync_definition_doc, ["sync_type"], default="A->B")
+	sync_type = _first_value(sync_definition_doc, ["sync_type"], default="Frappe -> Partner")
 	cron_expr = _first_value(sync_definition_doc, ["frequency_cron"])
 	filters = _parse_filter_expression(_first_value(sync_definition_doc, ["filter_expression"]))
 	batch_size = cint(_first_value(sync_definition_doc, ["batch_size"], default=100)) or 100
@@ -1958,11 +1981,11 @@ def _normalize_mapping_direction(direction: Any) -> str:
 	if not value:
 		return MAPPING_DIRECTION_BOTH
 	normalized = value.lower()
-	if normalized in {"both", "a<->b", "bidirectional"}:
+	if normalized in {"frappe <-> partner", "bidirectional"}:
 		return MAPPING_DIRECTION_BOTH
-	if normalized in {"frappe to partner", "frappe_to_partner", "a->b"}:
+	if normalized in {"frappe -> partner", "frappe_to_partner"}:
 		return MAPPING_DIRECTION_FRAPPE_TO_PARTNER
-	if normalized in {"partner to frappe", "partner_to_frappe", "a<-b"}:
+	if normalized in {"frappe <- partner", "partner_to_frappe"}:
 		return MAPPING_DIRECTION_PARTNER_TO_FRAPPE
 	return value
 
@@ -2044,9 +2067,9 @@ def _mapping_fields_for_sync_type(mapping: dict[str, Any], sync_type: str) -> se
 
 def _required_mapping_directions(sync_type: str) -> list[str]:
 	required: list[str] = []
-	if sync_type in {"A->B", "A<->B"}:
+	if sync_type in {"Frappe -> Partner", "Frappe <-> Partner"}:
 		required.append(MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
-	if sync_type in {"A<-B", "A<->B"}:
+	if sync_type in {"Frappe <- Partner", "Frappe <-> Partner"}:
 		required.append(MAPPING_DIRECTION_PARTNER_TO_FRAPPE)
 	if not required:
 		required.append(MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
@@ -2846,10 +2869,15 @@ def _register_and_log(
 	direction: str,
 	frappe_record: dict[str, Any] | None,
 	partner_record: dict[str, Any] | None,
+	write_direction: str | None = None,
+	frappe_before_record: dict[str, Any] | None | object = AUDIT_RECORD_UNSET,
+	partner_before_record: dict[str, Any] | None | object = AUDIT_RECORD_UNSET,
+	written_after_record: dict[str, Any] | None = None,
 	changes: list[tuple[str, Any, Any]] | None = None,
 	commit: bool = True,
 ):
 	stats.register(action=action, status=status)
+	actual_write_direction = write_direction or _default_write_direction(action, status, direction)
 	_create_run_item(
 		run_doc=run_doc,
 		config=config,
@@ -2860,6 +2888,10 @@ def _register_and_log(
 		partner_record=partner_record,
 		message=message,
 		direction=direction,
+		write_direction=actual_write_direction,
+		frappe_before_record=frappe_before_record,
+		partner_before_record=partner_before_record,
+		written_after_record=written_after_record,
 		changes=changes,
 		commit=False,
 	)
@@ -2894,7 +2926,7 @@ def _create_run_doc(sync_definition_doc: Any, *, status: str, trigger: str, dry_
 			"trigger_type": trigger,
 			"dry_run": cint(dry_run),
 			"started_at": now_datetime(),
-			"sync_type": _first_value(sync_definition_doc, ["sync_type"], default="A->B"),
+			"sync_type": _first_value(sync_definition_doc, ["sync_type"], default="Frappe -> Partner"),
 			"sync_partner": _first_value(sync_definition_doc, ["partner"]),
 		}
 	)
@@ -2915,6 +2947,10 @@ def _create_run_item(
 	partner_record: dict[str, Any] | None,
 	message: str | None,
 	direction: str | None = None,
+	write_direction: str | None = None,
+	frappe_before_record: dict[str, Any] | None | object = AUDIT_RECORD_UNSET,
+	partner_before_record: dict[str, Any] | None | object = AUDIT_RECORD_UNSET,
+	written_after_record: dict[str, Any] | None = None,
 	changes: list[tuple[str, Any, Any]] | None = None,
 	commit: bool = True,
 ) -> Any:
@@ -2927,29 +2963,72 @@ def _create_run_item(
 			"action": action,
 			"status": status,
 			"message": message,
-			"direction": direction or _first_value(run_doc, ["sync_type"]),
 		}
 	)
 
 	record_name = (frappe_record or {}).get("name")
 	record_key = _compact_record_key(config, frappe_record=frappe_record, partner_record=partner_record)
-	source_id = record_name or _compact_source_id(config, frappe_record=frappe_record)
-	target_id = _compact_target_id(config, partner_record=partner_record)
+	planned_direction = direction or _first_value(run_doc, ["sync_type"])
+	actual_write_direction = write_direction or _default_write_direction(action, status, planned_direction)
+	source_id, target_id = _source_and_target_ids(
+		config,
+		direction=actual_write_direction or planned_direction,
+		frappe_record=frappe_record,
+		partner_record=partner_record,
+	)
 	_set_first_existing(payload, meta, ["document_name", "frappe_name", "frappe_record_name"], record_name)
 	_set_first_existing(payload, meta, ["record_key"], _fit_data_value(record_key))
+	_set_first_existing(payload, meta, ["write_direction"], actual_write_direction)
 	_set_first_existing(payload, meta, ["source_id"], _fit_data_value(source_id))
 	_set_first_existing(payload, meta, ["target_id"], _fit_data_value(target_id))
 	_set_first_existing(payload, meta, ["change_count"], len(changes or []))
 	_set_first_existing(payload, meta, ["changed_fields"], _summarize_changed_fields(changes))
 	if _capture_audit_payloads(config):
-		_set_first_existing(payload, meta, ["frappe_payload", "frappe_record_json"], json.dumps(frappe_record, default=str, ensure_ascii=True) if frappe_record else None)
-		_set_first_existing(payload, meta, ["partner_payload", "partner_record_json"], json.dumps(partner_record, default=str, ensure_ascii=True) if partner_record else None)
+		frappe_before_record = frappe_record if frappe_before_record is AUDIT_RECORD_UNSET else frappe_before_record
+		partner_before_record = partner_record if partner_before_record is AUDIT_RECORD_UNSET else partner_before_record
+		_set_first_existing(payload, meta, ["frappe_before_payload"], _json_payload(frappe_before_record))
+		_set_first_existing(payload, meta, ["partner_before_payload"], _json_payload(partner_before_record))
+		_set_first_existing(payload, meta, ["written_after_payload"], _json_payload(written_after_record))
 
 	doc = frappe.get_doc(payload)
 	doc.insert(ignore_permissions=True)
 	if commit:
 		frappe.db.commit()
 	return doc
+
+
+def _default_write_direction(action: str, status: str, direction: str | None) -> str | None:
+	if action == "skipped" or status == "skipped":
+		return None
+	if action in {"created", "updated", "deleted", "conflict", "error"}:
+		return _one_way_write_direction(direction)
+	return None
+
+
+def _one_way_write_direction(direction: str | None) -> str | None:
+	if direction == SYNC_TYPE_FRAPPE_TO_PARTNER:
+		return SYNC_TYPE_FRAPPE_TO_PARTNER
+	if direction == SYNC_TYPE_PARTNER_TO_FRAPPE:
+		return SYNC_TYPE_PARTNER_TO_FRAPPE
+	return None
+
+
+def _source_and_target_ids(
+	config: SyncDefinitionConfig | None,
+	*,
+	direction: str | None,
+	frappe_record: dict[str, Any] | None,
+	partner_record: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+	frappe_id = _compact_source_id(config, frappe_record=frappe_record)
+	partner_id = _compact_target_id(config, partner_record=partner_record)
+	if direction == SYNC_TYPE_PARTNER_TO_FRAPPE:
+		return partner_id, frappe_id
+	return frappe_id, partner_id
+
+
+def _json_payload(record: dict[str, Any] | None | object) -> str:
+	return json.dumps(record, default=str, ensure_ascii=True)
 
 
 def _summarize_changed_fields(changes: list[tuple[str, Any, Any]] | None) -> str | None:

@@ -6,7 +6,7 @@ import json
 import frappe
 from frappe.model.document import Document
 
-MAPPING_DIRECTIONS = ("Both", "Frappe to Partner", "Partner to Frappe")
+MAPPING_DIRECTIONS = ("Frappe <-> Partner", "Frappe -> Partner", "Frappe <- Partner")
 
 
 class SyncDefinition(Document):
@@ -251,7 +251,7 @@ def _assign_row_value(row, fieldname: str, value):
 			row.update({fieldname: value})
 
 
-def _normalize_mapping_direction(value, *, default: str = "Both") -> str:
+def _normalize_mapping_direction(value, *, default: str = "Frappe <-> Partner") -> str:
 	direction = _clean_value(value) or default
 	if direction not in MAPPING_DIRECTIONS:
 		frappe.throw(f"Direction must be one of: {', '.join(MAPPING_DIRECTIONS)}")

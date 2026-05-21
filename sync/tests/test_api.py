@@ -104,7 +104,7 @@ class TestSyncApi(ApiTestCase):
 		sample_definition = {
 			"doctype": "Sync Definition",
 			"name": "SYNC-TEST",
-			"sync_type": "A->B",
+			"sync_type": "Frappe -> Partner",
 			"frequency_cron": "*/15 * * * *",
 			"batch_size": 100,
 			"filter_expression": '[["docstatus","=",0]]',
@@ -242,7 +242,7 @@ class TestSyncApi(ApiTestCase):
 		self.assertEqual(response["message"], "down")
 
 	def test_preview_returns_summary(self):
-		preview_data = {"actions": [{"direction": "A->B", "result": "ok"}]}
+		preview_data = {"actions": [{"direction": "Frappe -> Partner", "result": "ok"}]}
 		definition = _doc_stub("Sync Definition", "SYNC-1", doctype_name="Task")
 		partner = _doc_stub("Sync Partner", "PARTNER-1")
 		definition.get = lambda key, default=None: {"doctype_name": "Task", "sync_partner": "PARTNER-1"}.get(key, default)
@@ -274,7 +274,7 @@ class TestSyncApi(ApiTestCase):
 			"sync_definition": {
 				"doctype": "Sync Definition",
 				"name": "SYNC-NEW",
-				"sync_type": "A->B",
+				"sync_type": "Frappe -> Partner",
 				"sync_partner": "PARTNER-1",
 			},
 		}
