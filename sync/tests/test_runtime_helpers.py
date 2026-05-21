@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -978,6 +979,87 @@ class TestRuntimeHelpers(unittest.TestCase):
 			mock_upsert.call_args.kwargs["payload"],
 			{"name": "TASK-1", "status": "Open"},
 		)
+
+	def test_pairing_key_normalization_matches_scalar_type_differences(self):
+		config = SimpleNamespace(
+			name="SYNC-CONTACT-BI",
+			doctype="Contact",
+			match_fields=["custom_f_key"],
+			mapping={"custom_f_key": "id"},
+			value_mapping={},
+			conflict_policy="newest_wins",
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+			table_name="contacts",
+			read_query=None,
+		)
+		frappe_record = {"name": "CONTACT-1", "custom_f_key": "1", "modified": "2026-03-17 10:00:00"}
+		partner_record = {"id": 1, "updated_at": "2026-03-17 10:00:00"}
+
+		self.assertEqual(
+			runtime._pair_token_from_frappe(config, frappe_record),
+			runtime._pair_token_from_partner(config, partner_record),
+		)
+		self.assertEqual(
+			runtime._key_tuple_from_frappe({"custom_f_key": Decimal("1.0")}, ["custom_f_key"]),
+			runtime._key_tuple_from_partner({"id": 1}, ["custom_f_key"], {"custom_f_key": "id"}),
+		)
+		self.assertNotEqual(
+			runtime._key_tuple_from_frappe({"custom_f_key": True}, ["custom_f_key"]),
+			runtime._key_tuple_from_partner({"id": 1}, ["custom_f_key"], {"custom_f_key": "id"}),
+		)
+		self.assertFalse(runtime._valid_key(runtime._key_tuple_from_frappe({"custom_f_key": ""}, ["custom_f_key"])))
+		identity_config = SimpleNamespace(
+			**{
+				**config.__dict__,
+				"partner_identity_field": "id",
+				"frappe_partner_identity_field": "custom_f_key",
+			}
+		)
+		self.assertEqual(
+			runtime._find_existing_partner_records(
+				identity_config,
+				frappe_record,
+				{},
+				runtime._build_partner_identity_index(identity_config, [partner_record]),
+			),
+			[partner_record],
+		)
+		self.assertEqual(
+			runtime._find_existing_frappe_records(
+				identity_config,
+				partner_record,
+				{},
+				runtime._build_frappe_partner_identity_index(identity_config, [frappe_record]),
+			),
+			[frappe_record],
+		)
+
+		with (
+			patch("sync.sync.service.runtime._sync_frappe_to_partner") as mock_f2p,
+			patch("sync.sync.service.runtime._sync_partner_to_frappe") as mock_p2f,
+			patch("sync.sync.service.runtime._apply_partner_update") as mock_apply_partner,
+			patch("sync.sync.service.runtime._apply_frappe_update") as mock_apply_frappe,
+			patch("sync.sync.service.runtime._diff_target_values", return_value=[]),
+			patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+			patch("sync.sync.service.runtime._register_and_log") as mock_log,
+		):
+			runtime._sync_bidirectional(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=object(),
+				frappe_records=[frappe_record],
+				partner_records=[partner_record],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				last_successful_sync=datetime(2026, 3, 17, 9, 0),
+			)
+
+		mock_f2p.assert_not_called()
+		mock_p2f.assert_not_called()
+		mock_apply_partner.assert_not_called()
+		mock_apply_frappe.assert_not_called()
+		self.assertEqual(mock_log.call_args.kwargs["action"], "skipped")
 
 	def test_sync_bidirectional_resolves_conflicts_and_unsupported_policy(self):
 		config = SimpleNamespace(

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 import json
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -1270,7 +1271,7 @@ def _delete_missing_partner_records(
 	for key, partner_record in partner_index.items():
 		if key in source_keys:
 			continue
-		key_values = _partner_key_values_from_tuple(config, key)
+		key_values = _partner_key_values_from_partner_record(config, partner_record)
 		try:
 			write = connector.delete_record(
 				key_values=key_values,
@@ -2419,11 +2420,83 @@ def _index_partner_records(config: SyncDefinitionConfig, records: list[dict[str,
 
 
 def _key_tuple_from_frappe(record: dict[str, Any], key_fields: list[str]) -> tuple[Any, ...]:
-	return tuple(record.get(field_name) for field_name in key_fields)
+	return _normalize_pairing_key_tuple(record.get(field_name) for field_name in key_fields)
 
 
 def _key_tuple_from_partner(record: dict[str, Any], key_fields: list[str], mapping: dict[str, Any]) -> tuple[Any, ...]:
+	return _normalize_pairing_key_tuple(
+		record.get(_partner_field_for_mapping(mapping, field_name, field_name)) for field_name in key_fields
+	)
+
+
+def _raw_key_tuple_from_frappe(record: dict[str, Any], key_fields: list[str]) -> tuple[Any, ...]:
+	return tuple(record.get(field_name) for field_name in key_fields)
+
+
+def _raw_key_tuple_from_partner(record: dict[str, Any], key_fields: list[str], mapping: dict[str, Any]) -> tuple[Any, ...]:
 	return tuple(record.get(_partner_field_for_mapping(mapping, field_name, field_name)) for field_name in key_fields)
+
+
+def _normalize_pairing_key_tuple(values: Any) -> tuple[Any, ...]:
+	return tuple(_normalize_pairing_key_value(value) for value in values)
+
+
+def _normalize_pairing_key_value(value: Any) -> Any:
+	if value is None:
+		return None
+	if isinstance(value, bool):
+		return ("bool", value)
+	if isinstance(value, datetime):
+		return ("datetime", _normalize_datetime_pairing_key(value))
+	if isinstance(value, Decimal):
+		return _normalize_decimal_pairing_key(value)
+	if isinstance(value, int):
+		return str(value)
+	if isinstance(value, float):
+		return _normalize_number_pairing_key(str(value))
+	if isinstance(value, str):
+		value = value.strip()
+		if not value:
+			return ""
+		datetime_key = _normalize_datetime_string_pairing_key(value)
+		if datetime_key is not None:
+			return ("datetime", datetime_key)
+		return value
+	return str(value)
+
+
+def _normalize_number_pairing_key(value: str) -> str:
+	try:
+		decimal_value = Decimal(value)
+	except (InvalidOperation, ValueError):
+		return value
+	if not decimal_value.is_finite():
+		return value
+	return _normalize_decimal_pairing_key(decimal_value)
+
+
+def _normalize_decimal_pairing_key(value: Decimal) -> str:
+	if not value.is_finite():
+		return str(value)
+	if value.is_zero():
+		return "0"
+	return format(value.normalize(), "f")
+
+
+def _normalize_datetime_pairing_key(value: datetime) -> str:
+	if value.tzinfo is not None and value.utcoffset() is not None:
+		value = value.astimezone(timezone.utc)
+	return value.isoformat(timespec="microseconds")
+
+
+def _normalize_datetime_string_pairing_key(value: str) -> str | None:
+	if "-" not in value or (":" not in value and "T" not in value):
+		return None
+	try:
+		parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+	except ValueError:
+		return None
+	return _normalize_datetime_pairing_key(parsed)
 
 
 def _valid_key(key: tuple[Any, ...]) -> bool:
@@ -2436,6 +2509,17 @@ def _partner_key_values_from_tuple(config: SyncDefinitionConfig, key_values: tup
 		partner_field = _partner_field_for_mapping(config.mapping, frappe_key, frappe_key)
 		result[partner_field] = key_values[idx]
 	return result
+
+
+def _partner_key_values_from_frappe_record(config: SyncDefinitionConfig, record: dict[str, Any]) -> dict[str, Any]:
+	return _partner_key_values_from_tuple(config, _raw_key_tuple_from_frappe(record, _config_match_fields(config)))
+
+
+def _partner_key_values_from_partner_record(config: SyncDefinitionConfig, record: dict[str, Any]) -> dict[str, Any]:
+	return _partner_key_values_from_tuple(
+		config,
+		_raw_key_tuple_from_partner(record, _config_match_fields(config), config.mapping),
+	)
 
 
 def _partner_fetch_key_fields(config: SyncDefinitionConfig) -> list[str]:
@@ -2498,7 +2582,7 @@ def _build_partner_identity_index(
 	iterable = records.values() if isinstance(records, dict) else records
 	index: dict[Any, dict[str, Any]] = {}
 	for record in iterable:
-		identity = _partner_identity_value(config, record)
+		identity = _normalize_pairing_key_value(_partner_identity_value(config, record))
 		if identity not in (None, ""):
 			index[identity] = record
 	return index
@@ -2523,7 +2607,7 @@ def _build_frappe_partner_identity_index(
 	iterable = records.values() if isinstance(records, dict) else records
 	index: dict[Any, dict[str, Any]] = {}
 	for record in iterable:
-		identity = record.get(fieldname)
+		identity = _normalize_pairing_key_value(record.get(fieldname))
 		if identity not in (None, ""):
 			index[identity] = record
 	return index
@@ -2563,7 +2647,7 @@ def _find_existing_partner_records(
 	partner_groups: dict[tuple[Any, ...], list[dict[str, Any]]],
 	partner_identity_index: dict[Any, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-	frappe_partner_id = _frappe_partner_identity_value(config, frappe_record)
+	frappe_partner_id = _normalize_pairing_key_value(_frappe_partner_identity_value(config, frappe_record))
 	if frappe_partner_id not in (None, ""):
 		existing = partner_identity_index.get(frappe_partner_id)
 		if existing:
@@ -2602,7 +2686,7 @@ def _find_existing_frappe_records(
 	frappe_groups: dict[tuple[Any, ...], list[dict[str, Any]]],
 	frappe_partner_identity_index: dict[Any, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-	partner_identity = _partner_identity_value(config, partner_record)
+	partner_identity = _normalize_pairing_key_value(_partner_identity_value(config, partner_record))
 	if partner_identity not in (None, ""):
 		existing = frappe_partner_identity_index.get(partner_identity)
 		if existing:
@@ -2617,7 +2701,7 @@ def _find_existing_frappe_records(
 
 
 def _pair_token_from_frappe(config: SyncDefinitionConfig, record: dict[str, Any]) -> tuple[Any, ...] | None:
-	identity = _frappe_partner_identity_value(config, record)
+	identity = _normalize_pairing_key_value(_frappe_partner_identity_value(config, record))
 	if _config_partner_identity_field(config) and identity not in (None, ""):
 		return ("partner_identity", identity)
 	key = _key_tuple_from_frappe(record, _config_match_fields(config))
@@ -2627,7 +2711,7 @@ def _pair_token_from_frappe(config: SyncDefinitionConfig, record: dict[str, Any]
 
 
 def _pair_token_from_partner(config: SyncDefinitionConfig, record: dict[str, Any]) -> tuple[Any, ...] | None:
-	identity = _partner_identity_value(config, record)
+	identity = _normalize_pairing_key_value(_partner_identity_value(config, record))
 	if _config_partner_identity_field(config) and identity not in (None, ""):
 		return ("partner_identity", identity)
 	key = _key_tuple_from_partner(record, _config_match_fields(config), config.mapping)
@@ -2671,7 +2755,7 @@ def _partner_key_values_for_write(
 	partner_identity_field = _config_partner_identity_field(config)
 	if partner_identity_field and frappe_partner_id not in (None, ""):
 		return {partner_identity_field: frappe_partner_id}
-	return _partner_key_values_from_tuple(config, key)
+	return _partner_key_values_from_frappe_record(config, frappe_record)
 
 
 def _partner_key_values_for_existing_match(
