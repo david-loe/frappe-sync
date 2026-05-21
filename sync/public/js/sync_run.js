@@ -349,7 +349,8 @@ sync.run.metricCard = function (label, value, color) {
 };
 
 sync.run.detailLine = function (label, value) {
-	return `<div class="mb-1"><span class="text-muted">${frappe.utils.escape_html(label)}:</span> ${frappe.utils.escape_html(String(value || ""))}</div>`;
+	const displayValue = value === null || value === undefined || value === "" ? "" : value;
+	return `<div class="mb-1"><span class="text-muted">${frappe.utils.escape_html(label)}:</span> ${frappe.utils.escape_html(String(displayValue))}</div>`;
 };
 
 sync.run.isIssueItem = function (item) {
@@ -424,8 +425,8 @@ sync.run.relativeTimestamp = function (value) {
 	if (!value) {
 		return __("Unknown");
 	}
-	if (frappe.datetime && frappe.datetime.comment_when) {
-		return frappe.datetime.comment_when(value);
+	if (frappe.datetime && frappe.datetime.prettyDate) {
+		return frappe.datetime.prettyDate(value) || String(value);
 	}
 	return String(value);
 };

@@ -40,8 +40,8 @@ sync.helpers.getSyncDefinitionDoctype = function (syncDefinitionName, opts = {})
 		return sync.helpers._sync_definition_doctype_promises[name];
 	}
 
-	const request = frappe.db
-		.get_value("Sync Definition", name, "doctype_name")
+	const request = Promise.resolve()
+		.then(() => frappe.db.get_value("Sync Definition", name, "doctype_name"))
 		.then((response) => {
 			const payload = response?.message;
 			const doctypeName = typeof payload === "string" ? payload : payload?.doctype_name || "";
@@ -569,18 +569,18 @@ sync.helpers.renderPreviewModal = function (payload) {
 		`
 			<div class="mb-3">
 				<h5 class="mb-2">${__("Sample Records")}</h5>
-				${sync.helpers.renderSampleRecordsTable(records)}
+				${sync.helpers.renderSampleRecordsTable(records, { visible_limit: 10 })}
 			</div>
 		`,
 		`
 			<details class="mb-1">
 				<summary class="text-muted">${__("Raw JSON")}</summary>
-				<pre class="mt-2">${frappe.utils.escape_html(JSON.stringify(data, null, 2))}</pre>
+				<pre class="mt-2 mb-0" style="max-height: 320px; overflow: auto; white-space: pre;">${frappe.utils.escape_html(JSON.stringify(data, null, 2))}</pre>
 			</details>
 		`,
 	];
 
-	return `<div class="sync-preview">${sections.join("")}</div>`;
+	return `<div class="sync-preview" style="max-width: 100%; overflow-x: hidden;">${sections.join("")}</div>`;
 };
 
 sync.helpers.renderKeyValueTable = function (rows) {
@@ -766,14 +766,17 @@ sync.helpers.renderActionsTable = function (actions) {
 	`;
 };
 
-sync.helpers.renderSampleRecordsTable = function (records) {
+sync.helpers.renderSampleRecordsTable = function (records, options = {}) {
 	if (!records.length) {
 		return `<div class="text-muted">${__("No sample records returned.")}</div>`;
 	}
 
-	const columns = sync.helpers.getPreviewColumns(records);
+	const visibleLimit = cint(options.visible_limit || 0) || records.length;
+	const visibleRecords = records.slice(0, visibleLimit);
+	const omittedCount = Math.max(records.length - visibleRecords.length, 0);
+	const columns = sync.helpers.getPreviewColumns(visibleRecords);
 	const header = columns.map((column) => `<th>${frappe.utils.escape_html(column)}</th>`).join("");
-	const body = records
+	const body = visibleRecords
 		.map((record) => {
 			const cells = columns
 				.map((column) => `<td>${sync.helpers.renderPreviewValue(record?.[column])}</td>`)
@@ -783,7 +786,8 @@ sync.helpers.renderSampleRecordsTable = function (records) {
 		.join("");
 
 	return `
-		<div class="table-responsive">
+		${omittedCount ? `<div class="text-muted small mb-2">${frappe.utils.escape_html(__("Showing first {0} of {1} sample records.", [visibleRecords.length, records.length]))}</div>` : ""}
+		<div class="table-responsive" style="max-height: 360px; overflow: auto;">
 			<table class="table table-bordered table-sm mb-0">
 				<thead><tr>${header}</tr></thead>
 				<tbody>${body}</tbody>
@@ -865,13 +869,22 @@ sync.helpers.getImportPreviewSummaryRows = function (payload, values, options = 
 	const conflicts = sync.helpers.getImportPreviewConflicts(data);
 	const warnings = sync.helpers.getImportPreviewWarnings(data);
 	const summary = sync.helpers.getImportPreviewSummary(data);
+	const definitionEntry = sync.helpers.getImportPreviewDefinitionEntry(data);
 	const yamlText = String(values?.yaml || "");
 	const yamlLines = yamlText ? yamlText.split(/\r?\n/).length : 0;
 
 	return [
 		["Preview Endpoint", options.preview_available === false ? __("Fallback review only") : __("Available")],
-		["Definition", data.sync_definition || data.sync_definition_name || data.title || data.name],
-		["Existing Definition", data.existing_sync_definition || data.existing_name || data.existing_definition],
+		["Definition", data.sync_definition || data.sync_definition_name || data.title || data.name || definitionEntry?.name],
+		[
+			"Existing Definition",
+			data.existing_sync_definition ||
+				data.existing_name ||
+				data.existing_definition ||
+				definitionEntry?.existing_name ||
+				definitionEntry?.existing ||
+				(definitionEntry?.exists ? definitionEntry?.name : ""),
+		],
 		["Overwrite Existing", values?.overwrite ? __("Yes") : __("No")],
 		["Can Import", data.can_import ?? data.allowed ?? data.ok],
 		["Conflict Count", Array.isArray(conflicts) ? conflicts.length : 0],
@@ -925,12 +938,12 @@ sync.helpers.renderImportPreviewModal = function (payload, values, options = {})
 		`
 			<details class="mb-1">
 				<summary class="text-muted">${__("Raw Preview Data")}</summary>
-				<pre class="mt-2">${frappe.utils.escape_html(JSON.stringify(data, null, 2))}</pre>
+				<pre class="mt-2 mb-0" style="max-height: 320px; overflow: auto; white-space: pre;">${frappe.utils.escape_html(JSON.stringify(data, null, 2))}</pre>
 			</details>
 		`,
 	].filter(Boolean);
 
-	return `<div class="sync-import-preview">${sections.join("")}</div>`;
+	return `<div class="sync-import-preview" style="max-width: 100%; overflow-x: hidden;">${sections.join("")}</div>`;
 };
 
 sync.helpers.getImportPreviewSummary = function (payload) {
@@ -956,6 +969,12 @@ sync.helpers.getImportPreviewDocuments = function (payload) {
 			return Object.assign({ doctype }, entry);
 		})
 		.filter(Boolean);
+};
+
+sync.helpers.getImportPreviewDefinitionEntry = function (payload) {
+	return sync.helpers
+		.getImportPreviewDocuments(payload)
+		.find((entry) => String(entry?.doctype || "") === "Sync Definition") || null;
 };
 
 sync.helpers.getImportPreviewConflicts = function (payload) {

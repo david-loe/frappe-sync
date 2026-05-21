@@ -13,11 +13,11 @@ frappe.listview_settings["Sync Run"] = {
 	onload(listview) {
 		listview.page.add_inner_button(__("Errors"), () => {
 			listview.filter_area.clear(false);
-			listview.filter_area.add("Sync Run", "status", "in", ["Error", "Partial Error"]);
+			listview.filter_area.add("Sync Run", "error_count", ">", 0);
 		});
 		listview.page.add_inner_button(__("Conflicts"), () => {
 			listview.filter_area.clear(false);
-			listview.filter_area.add("Sync Run", "status", "=", "Needs Review");
+			listview.filter_area.add("Sync Run", "conflict_count", ">", 0);
 		});
 		listview.page.add_inner_button(__("Active"), () => {
 			listview.filter_area.clear(false);

@@ -256,7 +256,8 @@ sync.run_item.indicatorColor = function (action, status) {
 };
 
 sync.run_item.detailLine = function (label, value) {
-	return `<div class="mb-1"><span class="text-muted">${frappe.utils.escape_html(label)}:</span> ${frappe.utils.escape_html(String(value || ""))}</div>`;
+	const displayValue = value === null || value === undefined || value === "" ? "" : value;
+	return `<div class="mb-1"><span class="text-muted">${frappe.utils.escape_html(label)}:</span> ${frappe.utils.escape_html(String(displayValue))}</div>`;
 };
 
 sync.run_item.truncate = function (value, maxLength) {
