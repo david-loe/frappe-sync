@@ -55,6 +55,8 @@ class SyncDefinition(Document):
 		read_query = _clean_value(getattr(self, "read_query", None))
 		if not table_name:
 			frappe.throw("Table Name is required.")
+		if read_query and getattr(self, "delete_missing", None):
+			frappe.throw("Delete Missing cannot be used together with Read Query.")
 		self.table_name = table_name
 		self.read_query = read_query
 

@@ -181,7 +181,8 @@ class TestRuntimeAdditional(unittest.TestCase):
 		invalid_section = runtime.preview_import_sync_definition_yaml("sync_definition: []")
 		self.assertFalse(invalid_section["ok"])
 		self.assertEqual(invalid_section["documents"]["Sync Definition"]["status"], "invalid")
-		self.assertEqual(runtime.import_sync_definition_yaml("sync_definition: []"), {"ok": True, "documents": {}})
+		with self.assertRaises(frappe.ValidationError):
+			runtime.import_sync_definition_yaml("sync_definition: []")
 
 	def test_build_preview_and_coerce_config(self):
 		definition = SimpleNamespace(name="SYNC-1")

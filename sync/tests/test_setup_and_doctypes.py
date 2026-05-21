@@ -338,6 +338,13 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 					FakeSyncDefinitionDoc(one_way_match_mode="fanout")
 				)
 
+	def test_validate_source_settings_rejects_delete_missing_with_read_query(self):
+		doc = FakeSyncDefinitionDoc(table_name="people", read_query="select * from people where active = 1", delete_missing=1)
+
+		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("unsafe-source")):
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_source_settings(doc)
+
 	def test_validate_filter_expression_accepts_valid_values_during_validate(self):
 		string_doc = FakeSyncDefinitionDoc(
 			table_name="tabTask",

@@ -13,11 +13,11 @@ frappe.listview_settings["Sync Run"] = {
 	onload(listview) {
 		listview.page.add_inner_button(__("Errors"), () => {
 			listview.filter_area.clear(false);
-			listview.filter_area.add("Sync Run", "status", "=", "Error");
+			listview.filter_area.add("Sync Run", "status", "in", ["Error", "Partial Error"]);
 		});
 		listview.page.add_inner_button(__("Conflicts"), () => {
 			listview.filter_area.clear(false);
-			listview.filter_area.add("Sync Run", "conflict_count", ">", 0);
+			listview.filter_area.add("Sync Run", "status", "=", "Needs Review");
 		});
 		listview.page.add_inner_button(__("Active"), () => {
 			listview.filter_area.clear(false);
@@ -39,11 +39,11 @@ frappe.listview_settings["Sync Run"] = {
 			}
 			return `<span title="${frappe.utils.escape_html(String(value || ""))}">${frappe.utils.escape_html(sync.run_list.truncate(text, 90))}</span>`;
 		},
-	},
+		},
 
 	button: {
 		show(doc) {
-			return Boolean(doc.status === "Error" || cint(doc.error_count) > 0 || cint(doc.conflict_count) > 0);
+			return Boolean(["Error", "Partial Error", "Needs Review"].includes(doc.status) || cint(doc.error_count) > 0 || cint(doc.conflict_count) > 0);
 		},
 		get_label() {
 			return __("Open Items");
@@ -101,6 +101,12 @@ sync.run_list.indicatorColor = function (status) {
 	}
 	if (key === "error") {
 		return "red";
+	}
+	if (key === "partial error") {
+		return "red";
+	}
+	if (key === "needs review") {
+		return "orange";
 	}
 	if (["queued", "running"].includes(key)) {
 		return "blue";

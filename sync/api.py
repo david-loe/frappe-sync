@@ -15,7 +15,10 @@ from sync.sync.service import (
 	run_due_sync_definitions as service_run_due_sync_definitions,
 )
 from sync.sync.service.connectors import get_connector_for_partner
-from sync.sync.service.runtime import preview_import_sync_definition_yaml as service_preview_import_sync_definition_yaml
+from sync.sync.service.runtime import (
+	VALID_TRIGGER_TYPES,
+	preview_import_sync_definition_yaml as service_preview_import_sync_definition_yaml,
+)
 
 
 SYSTEM_MANAGER_ROLE = "System Manager"
@@ -125,8 +128,17 @@ def _normalize_import_result(result: dict[str, Any], *, overwrite: bool) -> dict
 	}
 
 
-def _require_import_permissions(yaml_payload: str, *, overwrite: bool) -> None:
-	preview = service_preview_import_sync_definition_yaml(yaml_payload=yaml_payload, overwrite=overwrite)
+def _validate_trigger_type(trigger: str | None) -> str:
+	normalized = _clean_string(trigger) or "manual"
+	if normalized not in VALID_TRIGGER_TYPES:
+		frappe.throw(
+			f"Trigger Type must be one of: {', '.join(sorted(VALID_TRIGGER_TYPES))}.",
+			exc=frappe.ValidationError,
+		)
+	return normalized
+
+
+def _require_import_permissions(preview: dict[str, Any], *, overwrite: bool) -> None:
 	for doctype, document_info in (preview.get("documents") or {}).items():
 		status = str(document_info.get("status") or "")
 		name = _clean_string(document_info.get("name"))
@@ -221,7 +233,7 @@ def get_sync_partner_table_columns(
 def run_sync_now(sync_definition_name: str, trigger: str = "manual", dry_run: bool = False):
 	_require_system_manager()
 	_require_sync_definition_permission(sync_definition_name, permtype="write", check_partner=True)
-	return service_execute_sync_definition(sync_definition_name, trigger=trigger, dry_run=_as_bool(dry_run))
+	return service_execute_sync_definition(sync_definition_name, trigger=_validate_trigger_type(trigger), dry_run=_as_bool(dry_run))
 
 
 @frappe.whitelist()
@@ -230,7 +242,7 @@ def run_sync_definition(sync_definition_name: str, trigger: str = "manual", queu
 	_require_sync_definition_permission(sync_definition_name, permtype="write", check_partner=True)
 	return service_enqueue_sync_definition(
 		sync_definition_name,
-		trigger=trigger,
+		trigger=_validate_trigger_type(trigger),
 		queue=_as_bool(queue),
 		dry_run=_as_bool(dry_run),
 	)
@@ -283,7 +295,10 @@ def preview_import_sync_definition_yaml(yaml_payload: str, overwrite: bool = Fal
 def import_sync_definition_yaml(yaml_payload: str, overwrite: bool = False) -> dict[str, Any]:
 	_require_system_manager()
 	overwrite = _as_bool(overwrite)
-	_require_import_permissions(yaml_payload, overwrite=overwrite)
+	preview = service_preview_import_sync_definition_yaml(yaml_payload=yaml_payload, overwrite=overwrite)
+	if not preview.get("can_import"):
+		frappe.throw(preview.get("error") or "YAML payload cannot be imported.", exc=frappe.ValidationError)
+	_require_import_permissions(preview, overwrite=overwrite)
 	result = service_import_sync_definition_yaml(yaml_payload=yaml_payload, overwrite=overwrite)
 	return _normalize_import_result(result, overwrite=overwrite)
 

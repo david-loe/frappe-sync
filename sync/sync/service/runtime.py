@@ -25,7 +25,8 @@ SYNC_RUN = "Sync Run"
 SYNC_RUN_ITEM = "Sync Run Item"
 
 ACTIVE_RUN_STATUSES = {"Queued", "Running"}
-DONE_RUN_STATUSES = {"Success", "Error", "Skipped"}
+DONE_RUN_STATUSES = {"Success", "Partial Error", "Needs Review", "Error", "Skipped"}
+VALID_TRIGGER_TYPES = {"manual", "scheduler", "api"}
 
 SYSTEM_KEYS = {
 	"name",
@@ -78,6 +79,7 @@ class SyncDefinitionConfig:
 	partner_create_id_scope_where: str | None = None
 	partner_time_zone: str | None = None
 	one_way_match_mode: str = "first_match"
+	capture_audit_payloads: bool = False
 
 
 @dataclass(slots=True)
@@ -202,6 +204,11 @@ def run_due_sync_definitions(limit: int = 20, queue: bool = True) -> list[dict[s
 	return results
 
 
+def run_due_sync_definitions_scheduled(limit: int = 20, queue: bool = True) -> list[dict[str, Any]]:
+	frappe.set_user("Administrator")
+	return run_due_sync_definitions(limit=limit, queue=queue)
+
+
 def enqueue_sync_definition(
 	sync_definition_name: str,
 	*,
@@ -210,6 +217,7 @@ def enqueue_sync_definition(
 	dry_run: bool = False,
 ) -> dict[str, Any]:
 	sync_definition_name = str(sync_definition_name)
+	trigger = _normalize_trigger_type(trigger)
 	lock_key = f"sync:lock:{sync_definition_name}"
 	with _definition_lock(lock_key):
 		if _has_active_run(sync_definition_name):
@@ -218,26 +226,26 @@ def enqueue_sync_definition(
 		sync_definition = frappe.get_doc(SYNC_DEFINITION, sync_definition_name)
 		run_doc = _create_run_doc(sync_definition, status="Queued", trigger=trigger, dry_run=dry_run)
 
-		if not queue:
-			return execute_sync_definition(
-				sync_definition_name,
-				trigger=trigger,
-				dry_run=dry_run,
-				run_name=run_doc.name,
-			)
-
-		job_id = f"sync:run:{sync_definition_name}:{frappe.generate_hash(length=8)}"
-		_update_doc_fields(run_doc, {"status": "Queued", "job_id": job_id})
-		frappe.enqueue(
-			"sync.sync.service.runtime.run_sync_definition_job",
-			queue="long",
-			job_id=job_id,
-			sync_definition_name=sync_definition_name,
-			run_name=run_doc.name,
+	if not queue:
+		return execute_sync_definition(
+			sync_definition_name,
 			trigger=trigger,
 			dry_run=dry_run,
+			run_name=run_doc.name,
 		)
-		return {"status": "queued", "sync_definition": sync_definition_name, "run": run_doc.name, "job_id": job_id}
+
+	job_id = f"sync:run:{sync_definition_name}:{frappe.generate_hash(length=8)}"
+	_update_doc_fields(run_doc, {"status": "Queued", "job_id": job_id})
+	frappe.enqueue(
+		"sync.sync.service.runtime.run_sync_definition_job",
+		queue="long",
+		job_id=job_id,
+		sync_definition_name=sync_definition_name,
+		run_name=run_doc.name,
+		trigger=trigger,
+		dry_run=dry_run,
+	)
+	return {"status": "queued", "sync_definition": sync_definition_name, "run": run_doc.name, "job_id": job_id}
 
 
 def run_sync_definition_job(
@@ -257,6 +265,7 @@ def execute_sync_definition(
 	run_name: str | None = None,
 ) -> dict[str, Any]:
 	sync_definition_name = str(sync_definition_name)
+	trigger = _normalize_trigger_type(trigger)
 	lock_key = f"sync:lock:{sync_definition_name}"
 	with _definition_lock(lock_key):
 		if run_name:
@@ -276,11 +285,12 @@ def execute_sync_definition(
 			context = SyncContext(config=config, dry_run=dry_run, last_successful_sync=last_successful_sync)
 			result_payload = _run_engine(sync_definition, run_doc, context=context)
 
-			sync_stamp = None if dry_run else now_datetime()
+			terminal_status = _terminal_status_for_result(result_payload)
+			sync_stamp = now_datetime() if terminal_status == "Success" and not dry_run else None
 			_update_doc_fields(
 				run_doc,
 				{
-					"status": "Success",
+					"status": terminal_status,
 					"finished_at": now_datetime(),
 					"last_sync_at": sync_stamp,
 					"summary": _format_run_summary(result_payload),
@@ -295,16 +305,18 @@ def execute_sync_definition(
 				},
 				commit=False,
 			)
-			_update_definition_runtime(
-				sync_definition,
-				last_run=run_doc.name,
-				last_sync_at=sync_stamp,
-				summary=_format_run_summary(result_payload),
-				commit=False,
-			)
+			if not dry_run:
+				_update_definition_runtime(
+					sync_definition,
+					last_run=run_doc.name,
+					status=terminal_status,
+					last_sync_at=sync_stamp,
+					summary=_format_run_summary(result_payload),
+					commit=False,
+				)
 			_set_next_run_at(sync_definition, config.cron, commit=False)
 			frappe.db.commit()
-			return {"status": "success", "run": run_doc.name, "result": result_payload}
+			return {"status": _api_status_for_run_status(terminal_status), "run": run_doc.name, "result": result_payload}
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), f"Sync execution failed for {sync_definition_name}")
 			_update_doc_fields(
@@ -316,12 +328,13 @@ def execute_sync_definition(
 				},
 				commit=False,
 			)
-			_update_definition_failure(
-				sync_definition,
-				last_run=run_doc.name,
-				error_message=frappe.get_traceback(with_context=False),
-				commit=False,
-			)
+			if not dry_run:
+				_update_definition_failure(
+					sync_definition,
+					last_run=run_doc.name,
+					error_message=frappe.get_traceback(with_context=False),
+					commit=False,
+				)
 			frappe.db.commit()
 			raise
 
@@ -534,6 +547,9 @@ def preview_import_sync_definition_yaml(yaml_payload: str, overwrite: bool = Fal
 
 
 def import_sync_definition_yaml(yaml_payload: str, overwrite: bool = False) -> dict[str, Any]:
+	preview = preview_import_sync_definition_yaml(yaml_payload, overwrite=overwrite)
+	if not preview.get("can_import"):
+		raise frappe.ValidationError(preview.get("error") or "YAML payload cannot be imported.")
 	data = yaml.safe_load(yaml_payload) or {}
 	created_or_updated: dict[str, str] = {}
 	for key, doctype in (
@@ -545,6 +561,8 @@ def import_sync_definition_yaml(yaml_payload: str, overwrite: bool = False) -> d
 			continue
 		name = _upsert_document_from_payload(doctype, data[key], overwrite=overwrite)
 		created_or_updated[doctype] = name
+	if not created_or_updated:
+		raise frappe.ValidationError("YAML payload contains no importable Sync documents.")
 	return {"ok": True, "documents": created_or_updated}
 
 
@@ -728,6 +746,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		partner_create_id_source=_clean_string(getattr(config, "partner_create_id_source", None)),
 		partner_create_id_scope_where=_clean_string(getattr(config, "partner_create_id_scope_where", None)),
 		partner_time_zone=_normalize_time_zone_name(getattr(config, "partner_time_zone", None)),
+		capture_audit_payloads=_as_bool(getattr(config, "capture_audit_payloads", 0)),
 	)
 	_validate_runtime_mapping(normalized)
 	return normalized
@@ -1881,7 +1900,10 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		partner_create_id_strategy=_clean_string(_first_value(sync_definition_doc, ["partner_create_id_strategy"])) or "payload",
 		partner_create_id_source=_clean_string(_first_value(sync_definition_doc, ["partner_create_id_source"])),
 		partner_create_id_scope_where=_clean_string(_first_value(sync_definition_doc, ["partner_create_id_scope_where"])),
+		capture_audit_payloads=_as_bool(_first_value(sync_definition_doc, ["capture_audit_payloads"], default=0)),
 	)
+	if config.delete_missing and config.read_query:
+		raise frappe.ValidationError("Delete Missing cannot be used together with Read Query.")
 	_validate_runtime_mapping(config)
 	return config
 
@@ -2301,23 +2323,81 @@ def _iter_frappe_record_batches(
 	or_filters: list | None,
 	batch_size: int,
 ):
-	start = 0
+	cursor: tuple[Any, Any] | None = None
 	while True:
-		page = frappe.get_all(
+		page = _get_frappe_keyset_page(
 			doctype,
 			fields=fields,
 			filters=filters,
 			or_filters=or_filters,
-			limit_start=start,
-			limit_page_length=batch_size,
-			order_by="modified asc",
+			batch_size=batch_size,
+			cursor=cursor,
 		)
 		if not page:
 			break
 		yield page
 		if len(page) < batch_size:
 			break
+		cursor = _frappe_cursor_tuple(page[-1])
+
+
+def _frappe_cursor_tuple(record: dict[str, Any]) -> tuple[str, str]:
+	return (str(record.get("modified") or ""), str(record.get("name") or ""))
+
+
+def _get_frappe_keyset_page(
+	doctype: str,
+	*,
+	fields: list[str],
+	filters: list | dict | None,
+	or_filters: list | None,
+	batch_size: int,
+	cursor: tuple[Any, Any] | None,
+) -> list[dict[str, Any]]:
+	if not cursor:
+		return frappe.get_all(
+			doctype,
+			fields=fields,
+			filters=filters,
+			or_filters=or_filters,
+			limit_page_length=batch_size,
+			order_by="modified asc, name asc",
+		)
+
+	page: list[dict[str, Any]] = []
+	start = 0
+	while len(page) < batch_size:
+		raw_page = frappe.get_all(
+			doctype,
+			fields=fields,
+			filters=_filters_with_frappe_cursor(filters, cursor),
+			or_filters=or_filters,
+			limit_start=start,
+			limit_page_length=batch_size,
+			order_by="modified asc, name asc",
+		)
+		if not raw_page:
+			break
+		page.extend(record for record in raw_page if _frappe_cursor_tuple(record) > cursor)
+		if len(raw_page) < batch_size:
+			break
 		start += batch_size
+	return page[:batch_size]
+
+
+def _filters_with_frappe_cursor(filters: list | dict | None, cursor: tuple[Any, Any] | None) -> list | dict | None:
+	if not cursor:
+		return filters
+	cursor_filter = ["modified", ">=", cursor[0]]
+	if filters is None:
+		return [cursor_filter]
+	if isinstance(filters, list):
+		return [*filters, cursor_filter]
+	if isinstance(filters, dict):
+		result = dict(filters)
+		result["modified"] = [">=", cursor[0]]
+		return result
+	return filters
 
 
 def _index_frappe_records(config: SyncDefinitionConfig, records: list[dict[str, Any]]) -> dict[tuple[Any, ...], dict[str, Any]]:
@@ -2777,8 +2857,9 @@ def _create_run_item(
 	_set_first_existing(payload, meta, ["target_id"], _fit_data_value(target_id))
 	_set_first_existing(payload, meta, ["change_count"], len(changes or []))
 	_set_first_existing(payload, meta, ["changed_fields"], _summarize_changed_fields(changes))
-	_set_first_existing(payload, meta, ["frappe_payload", "frappe_record_json"], json.dumps(frappe_record, default=str, ensure_ascii=True) if frappe_record else None)
-	_set_first_existing(payload, meta, ["partner_payload", "partner_record_json"], json.dumps(partner_record, default=str, ensure_ascii=True) if partner_record else None)
+	if _capture_audit_payloads(config):
+		_set_first_existing(payload, meta, ["frappe_payload", "frappe_record_json"], json.dumps(frappe_record, default=str, ensure_ascii=True) if frappe_record else None)
+		_set_first_existing(payload, meta, ["partner_payload", "partner_record_json"], json.dumps(partner_record, default=str, ensure_ascii=True) if partner_record else None)
 
 	doc = frappe.get_doc(payload)
 	doc.insert(ignore_permissions=True)
@@ -2793,6 +2874,10 @@ def _summarize_changed_fields(changes: list[tuple[str, Any, Any]] | None) -> str
 	if not normalized:
 		return None
 	return ", ".join(normalized)
+
+
+def _capture_audit_payloads(config: SyncDefinitionConfig | Any | None) -> bool:
+	return _as_bool(getattr(config, "capture_audit_payloads", 0))
 
 
 def _merge_partner_runtime_settings(config: SyncDefinitionConfig, partner_doc: Any) -> SyncDefinitionConfig:
@@ -2911,6 +2996,7 @@ def _update_definition_runtime(
 	sync_definition_doc: Any,
 	*,
 	last_run: str,
+	status: str = "Success",
 	last_sync_at: datetime | None,
 	summary: str | None = None,
 	commit: bool = True,
@@ -2918,11 +3004,12 @@ def _update_definition_runtime(
 	meta = frappe.get_meta(sync_definition_doc.doctype)
 	updates = {
 		"last_run": last_run,
-		"last_run_status": "Success",
+		"last_run_status": status,
 		"last_run_summary": summary,
 		"last_sync_at": last_sync_at,
-		"last_successful_sync": last_sync_at,
 	}
+	if status == "Success" and last_sync_at is not None:
+		updates["last_successful_sync"] = last_sync_at
 	for fieldname, value in updates.items():
 		if value is None:
 			continue
@@ -2996,6 +3083,31 @@ def _format_run_summary(result_payload: dict[str, Any]) -> str:
 		f"errors={result_payload.get('error_count', 0)}, "
 		f"delta_since={result_payload.get('delta_since') or 'none'}"
 	)
+
+
+def _normalize_trigger_type(trigger: Any) -> str:
+	normalized = _clean_string(trigger) or "manual"
+	if normalized not in VALID_TRIGGER_TYPES:
+		raise frappe.ValidationError(f"Trigger Type must be one of: {', '.join(sorted(VALID_TRIGGER_TYPES))}.")
+	return normalized
+
+
+def _terminal_status_for_result(result_payload: dict[str, Any]) -> str:
+	if cint(result_payload.get("error_count")) > 0:
+		return "Partial Error"
+	if cint(result_payload.get("conflict_count")) > 0:
+		return "Needs Review"
+	return "Success"
+
+
+def _api_status_for_run_status(run_status: str) -> str:
+	if run_status == "Success":
+		return "success"
+	if run_status == "Partial Error":
+		return "partial_error"
+	if run_status == "Needs Review":
+		return "needs_review"
+	return str(run_status or "").strip().lower().replace(" ", "_")
 
 
 def _is_enabled(doc: Any) -> bool:

@@ -9,6 +9,7 @@ from .runtime import (
 	list_due_sync_definitions,
 	preview_sync_definition,
 	run_due_sync_definitions,
+	run_due_sync_definitions_scheduled,
 	run_sync_definition_job,
 	test_sync_partner_connection,
 )
@@ -24,6 +25,7 @@ __all__ = [
 	"list_due_sync_definitions",
 	"preview_sync_definition",
 	"run_due_sync_definitions",
+	"run_due_sync_definitions_scheduled",
 	"run_sync_definition_job",
 	"test_sync_partner_connection",
 ]

@@ -303,7 +303,10 @@ class TestRuntimeManagement(unittest.TestCase):
 			}
 		)
 
-		with patch("sync.sync.service.runtime._upsert_document_from_payload", side_effect=["PARTNER-1", "SYNC-1"]) as mock_upsert:
+		with (
+			patch("sync.sync.service.runtime.preview_import_sync_definition_yaml", return_value={"can_import": True}),
+			patch("sync.sync.service.runtime._upsert_document_from_payload", side_effect=["PARTNER-1", "SYNC-1"]) as mock_upsert,
+		):
 			result = runtime.import_sync_definition_yaml(payload, overwrite=True)
 
 		self.assertEqual(result, {"ok": True, "documents": {"Sync Partner": "PARTNER-1", "Sync Definition": "SYNC-1"}})

@@ -325,10 +325,10 @@ sync.run.indicatorColor = function (value) {
 	if (["success", "created", "updated"].includes(key)) {
 		return "green";
 	}
-	if (["error", "conflict"].includes(key)) {
+	if (["error", "partial error", "conflict"].includes(key)) {
 		return "red";
 	}
-	if (["skipped"].includes(key)) {
+	if (["needs review", "skipped"].includes(key)) {
 		return "orange";
 	}
 	if (["running", "queued", "preview"].includes(key)) {

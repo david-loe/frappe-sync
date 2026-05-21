@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+import base64
 import importlib
 import json
 import re
@@ -229,18 +230,22 @@ class RelationalConnector(BasePartnerConnector):
 		if not source_name and not query_text:
 			raise RuntimeError(f"{self.dialect} fetch requires source table or query")
 
-		offset = _to_non_negative_int(cursor)
+		key_fields = self._normalize_fetch_key_fields(key_fields or [])
+		if not key_fields:
+			raise RuntimeError(f"{self.dialect} fetch requires stable key fields for pagination")
+		cursor_values = _decode_keyset_cursor(cursor)
 		batch_size = max(cint(batch_size) or 100, 1)
+		where_clause, params = self._keyset_where_clause(key_fields, cursor_values)
 		sql = self._build_fetch_sql(
 			source=source_name,
 			query=query_text,
 			batch_size=batch_size,
-			offset=offset,
 			key_fields=key_fields or [],
+			where_clause=where_clause,
 		)
 
-		rows = self._run_select(sql, [])
-		next_cursor = str(offset + batch_size) if len(rows) >= batch_size else None
+		rows = self._run_select(sql, params)
+		next_cursor = _encode_keyset_cursor(rows[-1], key_fields) if len(rows) >= batch_size else None
 		return ConnectorFetchResult(records=rows, next_cursor=next_cursor)
 
 	def upsert_record(
@@ -505,17 +510,17 @@ class RelationalConnector(BasePartnerConnector):
 		identity_field: str,
 		scope_where: str,
 	) -> int:
-		clean_scope = _validate_scope_where(scope_where)
-		if not clean_scope:
+		scope_sql, scope_params = self._build_scope_where(scope_where)
+		if not scope_sql:
 			raise RuntimeError(f"{self.dialect} max_plus_one create requires a scope predicate")
 		table = self._quote_compound_identifier(source_name)
 		field = self._quote_compound_identifier(identity_field)
 		lock_clause = " WITH (UPDLOCK, HOLDLOCK)" if self.dialect == "mssql" else ""
 		null_fn = "ISNULL" if self.dialect == "mssql" else "COALESCE"
-		sql = f"SELECT {null_fn}(MAX({field}), 0) + 1 FROM {table}{lock_clause} WHERE {clean_scope}"
+		sql = f"SELECT {null_fn}(MAX({field}), 0) + 1 FROM {table}{lock_clause} WHERE {scope_sql}"
 		db_cursor = connection.cursor()
 		try:
-			db_cursor.execute(sql, [])
+			db_cursor.execute(sql, scope_params)
 			row = db_cursor.fetchone()
 			if not row:
 				raise RuntimeError(f"{self.dialect} max_plus_one returned no value")
@@ -617,33 +622,32 @@ class RelationalConnector(BasePartnerConnector):
 		source: str | None,
 		query: str | None,
 		batch_size: int,
-		offset: int,
 		key_fields: list[str],
+		where_clause: str | None,
 	) -> str:
+		order_clause = self._order_clause(key_fields)
+		where_sql = f" WHERE {where_clause}" if where_clause else ""
 		if query:
 			if self.dialect == "mssql":
-				order_clause = self._mssql_order_clause(key_fields)
 				return (
-					f"SELECT * FROM ({query}) AS source_rows "
-					f"{order_clause} OFFSET {offset} ROWS FETCH NEXT {batch_size} ROWS ONLY"
+					f"SELECT * FROM ({query}) AS source_rows{where_sql} "
+					f"{order_clause} OFFSET 0 ROWS FETCH NEXT {batch_size} ROWS ONLY"
 				)
 			if self.dialect == "firebird":
-				start_row = offset + 1
-				end_row = offset + batch_size
-				return f"SELECT * FROM ({query}) source_rows ROWS {start_row} TO {end_row}"
-			return f"SELECT * FROM ({query}) AS source_rows LIMIT {batch_size} OFFSET {offset}"
+				return f"SELECT * FROM ({query}) source_rows{where_sql} {order_clause} ROWS 1 TO {batch_size}"
+			return f"SELECT * FROM ({query}) AS source_rows{where_sql} {order_clause} LIMIT {batch_size}"
 
 		table = self._quote_compound_identifier(source or "")
 		if self.dialect == "mssql":
-			order_clause = self._mssql_order_clause(key_fields)
-			return f"SELECT * FROM {table} {order_clause} OFFSET {offset} ROWS FETCH NEXT {batch_size} ROWS ONLY"
+			return f"SELECT * FROM {table}{where_sql} {order_clause} OFFSET 0 ROWS FETCH NEXT {batch_size} ROWS ONLY"
 		if self.dialect == "firebird":
-			start_row = offset + 1
-			end_row = offset + batch_size
-			return f"SELECT * FROM {table} ROWS {start_row} TO {end_row}"
-		return f"SELECT * FROM {table} LIMIT {batch_size} OFFSET {offset}"
+			return f"SELECT * FROM {table}{where_sql} {order_clause} ROWS 1 TO {batch_size}"
+		return f"SELECT * FROM {table}{where_sql} {order_clause} LIMIT {batch_size}"
 
 	def _mssql_order_clause(self, key_fields: list[str]) -> str:
+		return self._order_clause(key_fields)
+
+	def _order_clause(self, key_fields: list[str]) -> str:
 		quoted_fields: list[str] = []
 		for field in key_fields:
 			try:
@@ -651,8 +655,41 @@ class RelationalConnector(BasePartnerConnector):
 			except ValueError:
 				continue
 		if not quoted_fields:
-			return "ORDER BY (SELECT NULL)"
+			raise RuntimeError(f"{self.dialect} fetch requires stable key fields for pagination")
 		return f"ORDER BY {', '.join(quoted_fields)}"
+
+	def _normalize_fetch_key_fields(self, key_fields: list[str]) -> list[str]:
+		seen: set[str] = set()
+		result: list[str] = []
+		for field in key_fields:
+			cleaned = str(field or "").strip()
+			if not cleaned or cleaned in seen:
+				continue
+			self._quote_compound_identifier(cleaned)
+			seen.add(cleaned)
+			result.append(cleaned)
+		return result
+
+	def _keyset_where_clause(self, key_fields: list[str], cursor_values: list[Any] | None) -> tuple[str | None, list[Any]]:
+		if not cursor_values:
+			return None, []
+		if len(cursor_values) != len(key_fields):
+			raise RuntimeError(f"{self.dialect} fetch received an invalid pagination cursor")
+		clauses: list[str] = []
+		params: list[Any] = []
+		for idx, field in enumerate(key_fields):
+			prefix = [
+				f"{self._quote_compound_identifier(key_fields[prefix_idx])} = {self._placeholder()}"
+				for prefix_idx in range(idx)
+			]
+			params.extend(cursor_values[:idx])
+			prefix.append(f"{self._quote_compound_identifier(field)} > {self._placeholder()}")
+			params.append(cursor_values[idx])
+			clauses.append("(" + " AND ".join(prefix) + ")")
+		return "(" + " OR ".join(clauses) + ")", params
+
+	def _build_scope_where(self, scope_where: str | None) -> tuple[str | None, list[Any]]:
+		return _parse_scope_where(scope_where, quote_identifier=self._quote_compound_identifier, placeholder=self._placeholder())
 
 	def _placeholder(self) -> str:
 		return "%s" if self.paramstyle == "pyformat" else "?"
@@ -789,7 +826,7 @@ def get_connector_for_partner(partner_doc: Any) -> BasePartnerConnector:
 		return PostgresConnector(partner_doc)
 	if partner_type == "firebird":
 		return FirebirdConnector(partner_doc)
-	return RelationalConnector(partner_doc)
+	raise frappe.ValidationError(f"Unsupported Sync Partner Type: {partner_type or 'unknown'}")
 
 
 def _parse_config_text(value: Any) -> dict[str, Any]:
@@ -901,13 +938,187 @@ def _normalize_mssql_identifier_part(part: str, *, original_identifier: str) -> 
 	return value
 
 
-def _validate_scope_where(value: str | None) -> str | None:
-	if value is None:
+def _encode_keyset_cursor(record: dict[str, Any], key_fields: list[str]) -> str | None:
+	if not record:
 		return None
+	values = [record.get(field) for field in key_fields]
+	if any(value in (None, "") for value in values):
+		return None
+	payload = json.dumps(values, default=str, ensure_ascii=True, separators=(",", ":"))
+	return base64.urlsafe_b64encode(payload.encode()).decode()
+
+
+def _decode_keyset_cursor(value: str | None) -> list[Any] | None:
+	if not value:
+		return None
+	try:
+		decoded = base64.urlsafe_b64decode(str(value).encode()).decode()
+		payload = json.loads(decoded)
+	except Exception as exc:
+		raise ValueError("Invalid pagination cursor") from exc
+	if not isinstance(payload, list):
+		raise ValueError("Invalid pagination cursor")
+	return payload
+
+
+SCOPE_TOKEN_RE = re.compile(
+	r"""
+	\s*(
+		<=|>=|<>|!=|=|<|>|
+		\(|\)|,|
+		'(?:''|[^'])*'|
+		-?\d+(?:\.\d+)?|
+		[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*
+	)
+	""",
+	re.VERBOSE,
+)
+SCOPE_COMPARISON_OPERATORS = {"=", "!=", "<>", "<", "<=", ">", ">=", "LIKE"}
+
+
+def _parse_scope_where(
+	value: str | None,
+	*,
+	quote_identifier,
+	placeholder: str,
+) -> tuple[str | None, list[Any]]:
+	if value is None:
+		return None, []
 	cleaned = _strip_trailing_semicolon(str(value).strip())
 	if not cleaned:
-		return None
+		return None, []
 	for forbidden in (";", "--", "/*", "*/"):
 		if forbidden in cleaned:
 			raise ValueError("Unsafe scope predicate")
-	return cleaned
+	tokens = _tokenize_scope_where(cleaned)
+	parser = _ScopeWhereParser(tokens, quote_identifier=quote_identifier, placeholder=placeholder)
+	sql, params = parser.parse_expression()
+	if parser.has_tokens:
+		raise ValueError("Unsafe scope predicate")
+	return sql, params
+
+
+def _validate_scope_where(value: str | None) -> str | None:
+	sql, _params = _parse_scope_where(value, quote_identifier=lambda identifier: identifier, placeholder="?")
+	return sql
+
+
+def _tokenize_scope_where(value: str) -> list[str]:
+	tokens: list[str] = []
+	position = 0
+	while position < len(value):
+		match = SCOPE_TOKEN_RE.match(value, position)
+		if not match:
+			raise ValueError("Unsafe scope predicate")
+		token = match.group(1)
+		tokens.append(token)
+		position = match.end()
+	if not tokens:
+		raise ValueError("Unsafe scope predicate")
+	return tokens
+
+
+class _ScopeWhereParser:
+	def __init__(self, tokens: list[str], *, quote_identifier, placeholder: str):
+		self.tokens = tokens
+		self.index = 0
+		self.quote_identifier = quote_identifier
+		self.placeholder = placeholder
+		self.params: list[Any] = []
+
+	@property
+	def has_tokens(self) -> bool:
+		return self.index < len(self.tokens)
+
+	def parse_expression(self) -> tuple[str, list[Any]]:
+		sql = self.parse_term()
+		while self._accept_keyword("AND"):
+			sql = f"{sql} AND {self.parse_term()}"
+		return sql, self.params
+
+	def parse_term(self) -> str:
+		if self._accept("("):
+			sql, _params = self.parse_expression()
+			self._expect(")")
+			return f"({sql})"
+		return self.parse_predicate()
+
+	def parse_predicate(self) -> str:
+		identifier = self._expect_identifier()
+		field_sql = self.quote_identifier(identifier)
+		if self._accept_keyword("IS"):
+			if self._accept_keyword("NOT"):
+				self._expect_keyword("NULL")
+				return f"{field_sql} IS NOT NULL"
+			self._expect_keyword("NULL")
+			return f"{field_sql} IS NULL"
+		if self._accept_keyword("BETWEEN"):
+			first = self._expect_literal()
+			self._expect_keyword("AND")
+			second = self._expect_literal()
+			self.params.extend([first, second])
+			return f"{field_sql} BETWEEN {self.placeholder} AND {self.placeholder}"
+		if self._accept_keyword("IN"):
+			self._expect("(")
+			values = [self._expect_literal()]
+			while self._accept(","):
+				values.append(self._expect_literal())
+			self._expect(")")
+			self.params.extend(values)
+			return f"{field_sql} IN ({', '.join([self.placeholder] * len(values))})"
+		operator = self._next()
+		if operator is None or operator.upper() not in SCOPE_COMPARISON_OPERATORS:
+			raise ValueError("Unsafe scope predicate")
+		value = self._expect_literal()
+		self.params.append(value)
+		return f"{field_sql} {operator.upper()} {self.placeholder}"
+
+	def _expect_identifier(self) -> str:
+		token = self._next()
+		if not token or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$", token):
+			raise ValueError("Unsafe scope predicate")
+		if token.upper() in {"AND", "OR", "LIKE", "IN", "BETWEEN", "IS", "NOT", "NULL"}:
+			raise ValueError("Unsafe scope predicate")
+		return token
+
+	def _expect_literal(self) -> Any:
+		token = self._next()
+		if token is None:
+			raise ValueError("Unsafe scope predicate")
+		if token.startswith("'") and token.endswith("'"):
+			return token[1:-1].replace("''", "'")
+		if re.match(r"^-?\d+(?:\.\d+)?$", token):
+			return float(token) if "." in token else int(token)
+		raise ValueError("Unsafe scope predicate")
+
+	def _next(self) -> str | None:
+		if self.index >= len(self.tokens):
+			return None
+		token = self.tokens[self.index]
+		self.index += 1
+		return token
+
+	def _peek(self) -> str | None:
+		if self.index >= len(self.tokens):
+			return None
+		return self.tokens[self.index]
+
+	def _accept(self, token: str) -> bool:
+		if self._peek() == token:
+			self.index += 1
+			return True
+		return False
+
+	def _accept_keyword(self, keyword: str) -> bool:
+		if str(self._peek() or "").upper() == keyword:
+			self.index += 1
+			return True
+		return False
+
+	def _expect(self, token: str) -> None:
+		if not self._accept(token):
+			raise ValueError("Unsafe scope predicate")
+
+	def _expect_keyword(self, keyword: str) -> None:
+		if not self._accept_keyword(keyword):
+			raise ValueError("Unsafe scope predicate")

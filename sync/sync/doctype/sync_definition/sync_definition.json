@@ -46,6 +46,9 @@
   "section_break_runtime",
   "preview_limit",
   "export_mask_credentials",
+  "capture_audit_payloads",
+  "last_sync_at",
+  "last_successful_sync",
   "last_run",
   "last_run_status",
   "last_run_summary"
@@ -308,6 +311,25 @@
    "description": "When enabled, partner secrets are redacted in YAML exports."
   },
   {
+   "default": "0",
+   "description": "When enabled, Sync Run Item rows store full Frappe and partner payload JSON for debugging.",
+   "fieldname": "capture_audit_payloads",
+   "fieldtype": "Check",
+   "label": "Capture Audit Payloads"
+  },
+  {
+   "fieldname": "last_sync_at",
+   "fieldtype": "Datetime",
+   "label": "Last Sync At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_successful_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Successful Sync",
+   "read_only": 1
+  },
+  {
    "fieldname": "last_run",
    "fieldtype": "Link",
    "label": "Last Run",
@@ -318,7 +340,7 @@
    "fieldname": "last_run_status",
    "fieldtype": "Select",
    "label": "Last Run Status",
-   "options": "\nQueued\nRunning\nSuccess\nError\nPreview\nSkipped",
+   "options": "\nQueued\nRunning\nSuccess\nPartial Error\nNeeds Review\nError\nPreview\nSkipped",
    "read_only": 1
   },
   {
@@ -331,6 +353,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
+ "modified": "2026-05-21 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

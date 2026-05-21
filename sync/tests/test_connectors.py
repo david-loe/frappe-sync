@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import frappe
+
 from sync.sync.service.connectors import (
 	FirebirdConnector,
 	ConnectorCreateOptions,
@@ -14,6 +16,7 @@ from sync.sync.service.connectors import (
 	get_connector_for_partner,
 	get_partner_type,
 	_parse_config_text,
+	_encode_keyset_cursor,
 	_strip_trailing_semicolon,
 	_to_bool,
 	_to_non_negative_int,
@@ -233,40 +236,40 @@ class TestRelationalConnectorSql(unittest.TestCase):
 				source="dbo.SyncTable",
 				query=None,
 				batch_size=25,
-				offset=50,
 				key_fields=["id"],
+				where_clause=None,
 			),
-			"SELECT * FROM [dbo].[SyncTable] ORDER BY [id] OFFSET 50 ROWS FETCH NEXT 25 ROWS ONLY",
+			"SELECT * FROM [dbo].[SyncTable] ORDER BY [id] OFFSET 0 ROWS FETCH NEXT 25 ROWS ONLY",
 		)
 		self.assertEqual(
 			MssqlConnector(DummyPartner("mssql"))._build_fetch_sql(
 				source="01adr_Spender",
 				query=None,
 				batch_size=25,
-				offset=50,
 				key_fields=["Nr"],
+				where_clause="[Nr] > ?",
 			),
-			"SELECT * FROM [01adr_Spender] ORDER BY [Nr] OFFSET 50 ROWS FETCH NEXT 25 ROWS ONLY",
+			"SELECT * FROM [01adr_Spender] WHERE [Nr] > ? ORDER BY [Nr] OFFSET 0 ROWS FETCH NEXT 25 ROWS ONLY",
 		)
 		self.assertEqual(
 			PostgresConnector(DummyPartner("postgres"))._build_fetch_sql(
 				source="public.sync_table",
 				query=None,
 				batch_size=10,
-				offset=5,
 				key_fields=["id"],
+				where_clause=None,
 			),
-			'SELECT * FROM "public"."sync_table" LIMIT 10 OFFSET 5',
+			'SELECT * FROM "public"."sync_table" ORDER BY "id" LIMIT 10',
 		)
 		self.assertEqual(
 			FirebirdConnector(DummyPartner("firebird"))._build_fetch_sql(
 				source="SYNC_TABLE",
 				query=None,
 				batch_size=10,
-				offset=5,
 				key_fields=["id"],
+				where_clause=None,
 			),
-			'SELECT * FROM "SYNC_TABLE" ROWS 6 TO 15',
+			'SELECT * FROM "SYNC_TABLE" ORDER BY "ID" ROWS 1 TO 10',
 		)
 
 	def test_build_fetch_sql_for_query_sources(self):
@@ -275,36 +278,38 @@ class TestRelationalConnectorSql(unittest.TestCase):
 				source=None,
 				query="SELECT id FROM dbo.SyncTable",
 				batch_size=10,
-				offset=20,
 				key_fields=["id"],
+				where_clause=None,
 			),
-			"SELECT * FROM (SELECT id FROM dbo.SyncTable) AS source_rows ORDER BY [id] OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY",
+			"SELECT * FROM (SELECT id FROM dbo.SyncTable) AS source_rows ORDER BY [id] OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY",
 		)
 		self.assertEqual(
 			PostgresConnector(DummyPartner("postgres"))._build_fetch_sql(
 				source=None,
 				query="SELECT id FROM sync_table",
 				batch_size=10,
-				offset=20,
 				key_fields=["id"],
+				where_clause='"id" > %s',
 			),
-			"SELECT * FROM (SELECT id FROM sync_table) AS source_rows LIMIT 10 OFFSET 20",
+			'SELECT * FROM (SELECT id FROM sync_table) AS source_rows WHERE "id" > %s ORDER BY "id" LIMIT 10',
 		)
 		self.assertEqual(
 			FirebirdConnector(DummyPartner("firebird"))._build_fetch_sql(
 				source=None,
 				query="SELECT id FROM sync_table",
 				batch_size=10,
-				offset=20,
 				key_fields=["id"],
+				where_clause=None,
 			),
-			"SELECT * FROM (SELECT id FROM sync_table) source_rows ROWS 21 TO 30",
+			'SELECT * FROM (SELECT id FROM sync_table) source_rows ORDER BY "ID" ROWS 1 TO 10',
 		)
 
-	def test_mssql_order_clause_falls_back_for_unsafe_or_missing_keys(self):
+	def test_mssql_order_clause_requires_stable_keys(self):
 		connector = MssqlConnector(DummyPartner("mssql"))
-		self.assertEqual(connector._mssql_order_clause([]), "ORDER BY (SELECT NULL)")
-		self.assertEqual(connector._mssql_order_clause(["[broken"]), "ORDER BY (SELECT NULL)")
+		with self.assertRaisesRegex(RuntimeError, "stable key fields"):
+			connector._mssql_order_clause([])
+		with self.assertRaisesRegex(RuntimeError, "stable key fields"):
+			connector._mssql_order_clause(["[broken"])
 		self.assertEqual(connector._mssql_order_clause(["unsafe-key"]), "ORDER BY [unsafe-key]")
 		self.assertEqual(connector._mssql_order_clause(["Telefon mobil"]), "ORDER BY [Telefon mobil]")
 
@@ -368,12 +373,12 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 			"_run_select",
 			return_value=[{"id": "A1"}, {"id": "A2"}],
 		) as mock_select:
-			result = connector.fetch_records(source="public.sync_records", batch_size=2, cursor="3", key_fields=["id"])
+			result = connector.fetch_records(source="public.sync_records", batch_size=2, key_fields=["id"])
 
 		self.assertEqual(result.records, [{"id": "A1"}, {"id": "A2"}])
-		self.assertEqual(result.next_cursor, "5")
+		self.assertEqual(result.next_cursor, _encode_keyset_cursor({"id": "A2"}, ["id"]))
 		mock_select.assert_called_once_with(
-			'SELECT * FROM "public"."sync_records" LIMIT 2 OFFSET 3',
+			'SELECT * FROM "public"."sync_records" ORDER BY "id" LIMIT 2',
 			[],
 		)
 
@@ -634,11 +639,24 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertTrue(result.ok)
 		self.assertEqual(result.action, "created")
 		self.assertEqual(result.resolved_key_values, {"NR": 900})
-		self.assertIn("NR BETWEEN 1 AND 89999", cursor.executed[0][0])
+		self.assertIn("[NR] BETWEEN ? AND ?", cursor.executed[0][0])
+		self.assertEqual(cursor.executed[0][1], [1, 89999])
 		self.assertEqual(
 			cursor.executed[1],
 			('INSERT INTO [dbo].[Address] ([status], [NR]) VALUES (?, ?)', ["open", 900]),
 		)
+
+	def test_scope_where_rejects_unsafe_predicates(self):
+		connector = PostgresConnector(DummyPartner("postgres"))
+		for predicate in (
+			"1=1 OR id IS NOT NULL",
+			"id = nextval('seq')",
+			"id IN (SELECT id FROM other)",
+			"id = 1; DROP TABLE x",
+			"id = 1 -- comment",
+		):
+			with self.subTest(predicate=predicate), self.assertRaisesRegex(ValueError, "Unsafe scope predicate"):
+				connector._build_scope_where(predicate)
 
 	def test_upsert_record_connector_default_returns_loaded_identity_record(self):
 		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
@@ -845,7 +863,7 @@ class TestConnectorFactoryAndConnectMethods(unittest.TestCase):
 			self.assertEqual(get_partner_type(lookup_partner), "firebird")
 
 		self.assertEqual(get_partner_type(DummyPartner("", partner_type_name="custom")), "custom")
-		with self.assertRaises(TypeError):
+		with self.assertRaises(frappe.ValidationError):
 			get_connector_for_partner(DummyPartner("unknown"))
 
 	def test_parse_config_text_and_scalar_helpers(self):
@@ -937,16 +955,15 @@ class TestPostgresConnectorIntegration(unittest.TestCase):
 		self.assertTrue(update.ok)
 		self.assertIn("update succeeded", update.message)
 
-		page = self.connector.fetch_records(source=self.table_name, batch_size=1, cursor="0", key_fields=["id"])
+		page = self.connector.fetch_records(source=self.table_name, batch_size=1, key_fields=["id"])
 		self.assertEqual(len(page.records), 1)
 		self.assertEqual(page.records[0]["id"], "A1")
 		self.assertEqual(page.records[0]["status"], "closed")
-		self.assertEqual(page.next_cursor, "1")
+		self.assertEqual(page.next_cursor, _encode_keyset_cursor({"id": "A1"}, ["id"]))
 
 		query_page = self.connector.fetch_records(
 			query=f"SELECT id, status, updated_at FROM {self.table_name}",
 			batch_size=5,
-			cursor="0",
 			key_fields=["id"],
 		)
 		self.assertEqual(len(query_page.records), 1)
@@ -956,7 +973,7 @@ class TestPostgresConnectorIntegration(unittest.TestCase):
 		self.assertTrue(delete.ok)
 		self.assertIn("delete succeeded", delete.message)
 
-		final_page = self.connector.fetch_records(source=self.table_name, batch_size=5, cursor="0", key_fields=["id"])
+		final_page = self.connector.fetch_records(source=self.table_name, batch_size=5, key_fields=["id"])
 		self.assertEqual(final_page.records, [])
 
 

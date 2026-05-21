@@ -65,7 +65,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Queued\nRunning\nSuccess\nError\nPreview",
+   "options": "Queued\nRunning\nSuccess\nPartial Error\nNeeds Review\nError\nPreview",
    "reqd": 1
   },
   {
@@ -216,6 +216,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
+ "modified": "2026-05-21 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Run",
  "permissions": [

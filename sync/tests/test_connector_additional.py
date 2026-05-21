@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import frappe
+
 from sync.sync.service import connectors
 from sync.sync.service.connectors import BasePartnerConnector, ConnectorPingResult, FirebirdConnector, MssqlConnector, PostgresConnector
 
@@ -188,10 +190,8 @@ class TestConnectorAdditional(unittest.TestCase):
 		self.assertIsInstance(connectors.get_connector_for_partner(DummyPartner("postgres", host="db", database_name="sync", username="u")), PostgresConnector)
 		self.assertIsInstance(connectors.get_connector_for_partner(DummyPartner("firebird", host="db", database_name="sync", username="u")), FirebirdConnector)
 
-		with patch("sync.sync.service.connectors.RelationalConnector", DummyFallbackConnector):
-			fallback = connectors.get_connector_for_partner(DummyPartner("unknown"))
-
-		self.assertIsInstance(fallback, DummyFallbackConnector)
+		with self.assertRaises(frappe.ValidationError):
+			connectors.get_connector_for_partner(DummyPartner("unknown"))
 
 
 @unittest.skipUnless(os.environ.get("SYNC_TEST_FIREBIRD_HOST"), "Firebird integration env not configured")
@@ -266,14 +266,14 @@ class TestFirebirdConnectorIntegration(unittest.TestCase):
 		)
 		self.assertTrue(update.ok)
 
-		page = self.connector.fetch_records(source=self.table_name, batch_size=5, cursor="0", key_fields=["id"])
+		page = self.connector.fetch_records(source=self.table_name, batch_size=5, key_fields=["id"])
 		self.assertEqual(len(page.records), 1)
 		self.assertEqual(page.records[0]["ID"], "A1")
 		self.assertEqual(page.records[0]["STATUS"], "closed")
 
 		delete = self.connector.delete_record(key_values={"id": "A1"}, source=self.table_name)
 		self.assertTrue(delete.ok)
-		self.assertEqual(self.connector.fetch_records(source=self.table_name, batch_size=5, cursor="0", key_fields=["id"]).records, [])
+		self.assertEqual(self.connector.fetch_records(source=self.table_name, batch_size=5, key_fields=["id"]).records, [])
 
 
 @unittest.skipUnless(os.environ.get("SYNC_TEST_MSSQL_SERVER"), "MSSQL integration env not configured")
@@ -353,11 +353,11 @@ class TestMssqlConnectorIntegration(unittest.TestCase):
 		)
 		self.assertTrue(update.ok)
 
-		page = self.connector.fetch_records(source=self.table_name, batch_size=5, cursor="0", key_fields=["id"])
+		page = self.connector.fetch_records(source=self.table_name, batch_size=5, key_fields=["id"])
 		self.assertEqual(len(page.records), 1)
 		self.assertEqual(page.records[0]["id"], "A1")
 		self.assertEqual(page.records[0]["status"], "closed")
 
 		delete = self.connector.delete_record(key_values={"id": "A1"}, source=self.table_name)
 		self.assertTrue(delete.ok)
-		self.assertEqual(self.connector.fetch_records(source=self.table_name, batch_size=5, cursor="0", key_fields=["id"]).records, [])
+		self.assertEqual(self.connector.fetch_records(source=self.table_name, batch_size=5, key_fields=["id"]).records, [])

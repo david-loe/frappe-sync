@@ -454,6 +454,12 @@ sync.helpers.getRunSyncDefinitionMessage = function (payload, options = {}) {
 	if (status === "success") {
 		return runName ? __("{0} completed: {1}", [label, runName]) : __("{0} completed.", [label]);
 	}
+	if (status === "partial_error") {
+		return runName ? __("{0} completed with errors: {1}", [label, runName]) : __("{0} completed with errors.", [label]);
+	}
+	if (status === "needs_review") {
+		return runName ? __("{0} completed with conflicts: {1}", [label, runName]) : __("{0} completed with conflicts.", [label]);
+	}
 	if (status === "queued") {
 		return runName ? __("{0} queued: {1}", [label, runName]) : __("{0} queued.", [label]);
 	}
@@ -465,8 +471,11 @@ sync.helpers.getRunSyncDefinitionIndicator = function (payload) {
 	if (status === "already_running") {
 		return "orange";
 	}
-	if (status === "error") {
+	if (status === "error" || status === "partial_error") {
 		return "red";
+	}
+	if (status === "needs_review") {
+		return "orange";
 	}
 	return "green";
 };

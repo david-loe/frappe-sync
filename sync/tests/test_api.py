@@ -155,7 +155,7 @@ class TestSyncApi(ApiTestCase):
 		)
 
 		with (
-			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value={"documents": {}}),
+			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value={"can_import": True, "documents": {}}),
 			patch("sync.sync.service.runtime.frappe", new=runtime_frappe),
 		):
 			result = self.api.import_sync_definition_yaml(exported_yaml, overwrite=False)
@@ -177,7 +177,7 @@ class TestSyncApi(ApiTestCase):
 
 	def test_import_sync_definition_yaml_returns_normalized_response_schema(self):
 		with (
-			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value={"documents": {}}),
+			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value={"can_import": True, "documents": {}}),
 			patch.object(
 				self.api,
 				"service_import_sync_definition_yaml",
@@ -339,6 +339,7 @@ class TestSyncApi(ApiTestCase):
 
 	def test_import_sync_definition_yaml_requires_write_permission_for_overwrite_documents(self):
 		preview = {
+			"can_import": True,
 			"documents": {
 				"Sync Definition": {
 					"name": "SYNC-1",
@@ -358,6 +359,19 @@ class TestSyncApi(ApiTestCase):
 		):
 			with self.assertRaises(frappe.PermissionError):
 				self.api.import_sync_definition_yaml("payload", overwrite=True)
+
+		mock_import.assert_not_called()
+
+	def test_import_sync_definition_yaml_rejects_preview_that_cannot_import(self):
+		preview = {"can_import": False, "error": "Invalid payload", "documents": {}}
+
+		with (
+			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value=preview),
+			patch.object(self.api.frappe, "throw", side_effect=frappe.ValidationError("invalid-import")),
+			patch.object(self.api, "service_import_sync_definition_yaml") as mock_import,
+			self.assertRaises(frappe.ValidationError),
+		):
+			self.api.import_sync_definition_yaml("payload", overwrite=True)
 
 		mock_import.assert_not_called()
 
@@ -423,6 +437,20 @@ class ApiContractTests(ApiTestCase):
 
 		self.assertEqual(response["status"], "queued")
 		mock_enqueue.assert_called_once_with("SYNC-1", trigger="manual", queue=True, dry_run=False)
+
+	def test_run_sync_definition_rejects_invalid_trigger_before_service_call(self):
+		definition = _doc_stub("Sync Definition", "SYNC-1", sync_partner="PARTNER-1")
+		partner = _doc_stub("Sync Partner", "PARTNER-1")
+
+		with (
+			patch.object(self.api.frappe, "get_doc", side_effect=[definition, partner]),
+			patch.object(self.api.frappe, "throw", side_effect=frappe.ValidationError("bad-trigger")),
+			patch("sync.api.service_enqueue_sync_definition") as mock_enqueue,
+			self.assertRaises(frappe.ValidationError),
+		):
+			self.api.run_sync_definition("SYNC-1", trigger="audit_dry_run", queue=True, dry_run=False)
+
+		mock_enqueue.assert_not_called()
 
 	def test_run_due_sync_definitions_coerces_limit_and_queue(self):
 		with patch("sync.api.service_run_due_sync_definitions", return_value=[{"status": "queued"}]) as mock_run_due:

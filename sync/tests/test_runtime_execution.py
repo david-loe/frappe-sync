@@ -114,6 +114,99 @@ class TestRuntimeExecution(IntegrationTestCase):
 		self.assertIn("created=1", definition.last_run_summary)
 		self.assertIsNotNone(definition.next_run_at)
 
+	def test_execute_sync_definition_marks_item_errors_as_partial_without_advancing_success_baseline(self):
+		partner = self._make_partner()
+		definition = self._make_definition(partner.name)
+		result_payload = {
+			"sync_definition": definition.name,
+			"sync_type": "A->B",
+			"last_successful_sync_before_run": None,
+			"delta_since": None,
+			"dry_run": False,
+			"processed_count": 2,
+			"success_count": 1,
+			"created_count": 0,
+			"updated_count": 1,
+			"deleted_count": 0,
+			"skipped_count": 0,
+			"conflict_count": 0,
+			"error_count": 1,
+		}
+
+		with patch("sync.sync.service.runtime._run_engine", return_value=result_payload):
+			result = runtime.execute_sync_definition(definition.name, trigger="api")
+
+		self.assertEqual(result["status"], "partial_error")
+		run_doc = frappe.get_doc("Sync Run", result["run"])
+		definition.reload()
+		self.assertEqual(run_doc.status, "Partial Error")
+		self.assertFalse(run_doc.last_sync_at)
+		self.assertEqual(definition.last_run_status, "Partial Error")
+		self.assertFalse(definition.last_successful_sync)
+
+	def test_execute_sync_definition_marks_conflicts_as_needs_review(self):
+		partner = self._make_partner()
+		definition = self._make_definition(partner.name)
+		result_payload = {
+			"sync_definition": definition.name,
+			"sync_type": "A<->B",
+			"last_successful_sync_before_run": None,
+			"delta_since": None,
+			"dry_run": False,
+			"processed_count": 1,
+			"success_count": 0,
+			"created_count": 0,
+			"updated_count": 0,
+			"deleted_count": 0,
+			"skipped_count": 0,
+			"conflict_count": 1,
+			"error_count": 0,
+		}
+
+		with patch("sync.sync.service.runtime._run_engine", return_value=result_payload):
+			result = runtime.execute_sync_definition(definition.name, trigger="api")
+
+		self.assertEqual(result["status"], "needs_review")
+		run_doc = frappe.get_doc("Sync Run", result["run"])
+		definition.reload()
+		self.assertEqual(run_doc.status, "Needs Review")
+		self.assertEqual(definition.last_run_status, "Needs Review")
+		self.assertFalse(definition.last_successful_sync)
+
+	def test_execute_sync_definition_dry_run_does_not_overwrite_definition_runtime_fields(self):
+		partner = self._make_partner()
+		definition = self._make_definition(partner.name)
+		previous_run = self._make_run(definition)
+		definition.db_set("last_run", previous_run.name, update_modified=False)
+		definition.db_set("last_run_status", "Error", update_modified=False)
+		definition.db_set("last_run_summary", "previous failure", update_modified=False)
+		result_payload = {
+			"sync_definition": definition.name,
+			"sync_type": "A->B",
+			"last_successful_sync_before_run": None,
+			"delta_since": None,
+			"dry_run": True,
+			"processed_count": 1,
+			"success_count": 1,
+			"created_count": 0,
+			"updated_count": 1,
+			"deleted_count": 0,
+			"skipped_count": 0,
+			"conflict_count": 0,
+			"error_count": 0,
+		}
+
+		with patch("sync.sync.service.runtime._run_engine", return_value=result_payload):
+			result = runtime.execute_sync_definition(definition.name, trigger="api", dry_run=True)
+
+		run_doc = frappe.get_doc("Sync Run", result["run"])
+		definition.reload()
+		self.assertEqual(run_doc.status, "Success")
+		self.assertFalse(run_doc.last_sync_at)
+		self.assertEqual(definition.last_run, previous_run.name)
+		self.assertEqual(definition.last_run_status, "Error")
+		self.assertEqual(definition.last_run_summary, "previous failure")
+
 	def test_execute_sync_definition_persists_failure_state(self):
 		partner = self._make_partner()
 		definition = self._make_definition(partner.name)
@@ -182,6 +275,33 @@ class TestRuntimeExecution(IntegrationTestCase):
 		self.assertEqual(mock_enqueue.call_args.kwargs["sync_definition_name"], definition.name)
 		self.assertEqual(mock_enqueue.call_args.kwargs["run_name"], run_doc.name)
 		self.assertTrue(mock_enqueue.call_args.kwargs["dry_run"])
+
+	def test_enqueue_sync_definition_queue_false_executes_without_nested_lock_timeout(self):
+		partner = self._make_partner()
+		definition = self._make_definition(partner.name)
+		result_payload = {
+			"sync_definition": definition.name,
+			"sync_type": "A->B",
+			"last_successful_sync_before_run": None,
+			"delta_since": None,
+			"dry_run": True,
+			"processed_count": 0,
+			"success_count": 0,
+			"created_count": 0,
+			"updated_count": 0,
+			"deleted_count": 0,
+			"skipped_count": 0,
+			"conflict_count": 0,
+			"error_count": 0,
+		}
+
+		with patch("sync.sync.service.runtime._run_engine", return_value=result_payload):
+			result = runtime.enqueue_sync_definition(definition.name, trigger="api", queue=False, dry_run=True)
+
+		self.assertEqual(result["status"], "success")
+		run_doc = frappe.get_doc("Sync Run", result["run"])
+		self.assertEqual(run_doc.status, "Success")
+		self.assertEqual(run_doc.dry_run, 1)
 
 	def test_enqueue_sync_definition_returns_already_running_without_run_creation(self):
 		partner = self._make_partner()
