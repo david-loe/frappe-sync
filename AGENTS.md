@@ -341,3 +341,33 @@ At the time this document was written, the app-level Bench test run for `sync` p
 - The frontend should consume canonical API names and canonical preview/import payload shapes.
 - Mapping shape and direction semantics must stay aligned across doctype model, runtime, preview, and frontend.
 - Safety takes precedence over maximal batching when destructive behavior such as `delete_missing` is involved.
+
+
+## Localization
+
+After changing any translatable strings, always run these commands in this exact order:
+
+```bash
+bench generate-pot-file --app sync
+bench update-po-files --app sync
+```
+
+Important:
+
+- Never run `update-po-files` before `generate-pot-file`.
+- Immediately after `bench update-po-files --app sync`, add all missing translations to `sync/locale/de.po`.
+- No `msgstr ""` entries may remain after localization is complete, except for the standard PO header at the top of the file.
+- Translatable strings may originate from Python, JS, JSON, Web Forms, or notification templates.
+- Changes to UI labels, error messages, button text, or JSON labels without updating PO/POT files leave the repository in an inconsistent state.
+
+## JSON Updates
+
+Frappe apps are heavily JSON-driven. Many system objects are maintained via JSON files and imported by Frappe.
+Important:
+- Any change to JSON files used for Doctypes or other system imports must also update the `modified` field.
+- This applies in particular to:
+  - `doctype/-/-.json`
+  - `web_form/-/-.json`
+  - `notification/-/-.json`
+  - workspace/sidebar/desktop JSON files
+- Outdated `modified` timestamps commonly cause difficult-to-diagnose sync or import issues.

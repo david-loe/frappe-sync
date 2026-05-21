@@ -1,0 +1,2150 @@
+# German translations for Sync.
+# Copyright (C) 2026 david-loe
+# This file is distributed under the same license as the Sync project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Sync VERSION\n"
+"Report-Msgid-Bugs-To: kontak@david-loe.de\n"
+"POT-Creation-Date: 2026-05-21 07:35+0000\n"
+"PO-Revision-Date: 2026-05-21 07:35+0000\n"
+"Last-Translator: kontak@david-loe.de\n"
+"Language: de\n"
+"Language-Team: kontak@david-loe.de\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.16.0\n"
+
+#: sync/public/js/sync_helpers.js:452
+msgid "A sync run is already active for {0}."
+msgstr "Für {0} ist bereits ein Synchronisierungslauf aktiv."
+
+#. Option for the 'Sync Type' (Select) field in DocType 'Sync Definition'
+#. Option for the 'Sync Type' (Select) field in DocType 'Sync Run'
+#. Option for the 'Direction' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_run/sync_run.json
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "A->B"
+msgstr "A->B"
+
+#. Option for the 'Sync Type' (Select) field in DocType 'Sync Definition'
+#. Option for the 'Sync Type' (Select) field in DocType 'Sync Run'
+#. Option for the 'Direction' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_run/sync_run.json
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "A<->B"
+msgstr "A<->B"
+
+#. Option for the 'Sync Type' (Select) field in DocType 'Sync Definition'
+#. Option for the 'Sync Type' (Select) field in DocType 'Sync Run'
+#. Option for the 'Direction' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_run/sync_run.json
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "A<-B"
+msgstr "A<-B"
+
+#. Option for the 'Authentication Type' (Select) field in DocType 'Sync
+#. Partner'
+#. Label of the api_key (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "API Key"
+msgstr "API-Schlüssel"
+
+#. Label of the api_secret (Password) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "API Secret"
+msgstr "API-Geheimnis"
+
+#. Description of the 'API Key' (Data) field in DocType 'Sync Partner'
+#: sync/public/js/sync_partner.js:188
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "API key or access token provided by the upstream system."
+msgstr "API-Schlüssel oder Zugriffstoken, der vom vorgelagerten System bereitgestellt wird."
+
+#. Label of the action (Select) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_helpers.js:1026 sync/public/js/sync_run.js:235
+#: sync/public/js/sync_run.js:407
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Action"
+msgstr "Aktion"
+
+#: sync/public/js/sync_helpers.js:556
+msgid "Actions"
+msgstr "Aktionen"
+
+#: sync/public/js/sync_run_list.js:22
+msgid "Active"
+msgstr "Aktiv"
+
+#: sync/public/js/sync_helpers.js:279
+msgid "Additional strategy input such as a database sequence name or allocation source."
+msgstr "Zusätzliche Strategieeingabe, z. B. der Name einer Datenbanksequenz oder eine Zuweisungsquelle."
+
+#: sync/public/js/sync_helpers.js:1084
+msgid "Adjust YAML"
+msgstr "YAML anpassen"
+
+#: sync/public/js/sync_run_item.js:182
+msgid "Approx. Size"
+msgstr "Ungefähre Größe"
+
+#: sync/public/js/sync_run_item.js:201
+msgid "Array ({0})"
+msgstr "Array ({0})"
+
+#. Label of the section_break_auth (Section Break) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Authentication"
+msgstr "Authentifizierung"
+
+#. Label of the auth_type (Select) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Authentication Type"
+msgstr "Authentifizierungstyp"
+
+#: sync/public/js/sync_definition.js:225
+msgid "Autocomplete suggestions loaded from the current partner source."
+msgstr "Vorschläge zur automatischen Vervollständigung wurden aus der aktuellen Partnerquelle geladen."
+
+#: sync/public/js/sync_helpers.js:863
+msgid "Available"
+msgstr "Verfügbar"
+
+#: sync/public/js/sync_run.js:183
+msgid "Based on the latest {0} loaded run items."
+msgstr "Basierend auf den letzten {0} geladenen Lauf-Elementen."
+
+#. Label of the batch_size (Int) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Batch Size"
+msgstr "Batchgröße"
+
+#. Option for the 'Direction' (Select) field in DocType 'Sync Field Mapping'
+#: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
+msgid "Both"
+msgstr "Beide"
+
+#. Option for the 'Authentication Type' (Select) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Certificate"
+msgstr "Zertifikat"
+
+#. Label of the certificate_path (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Certificate Path"
+msgstr "Zertifikatspfad"
+
+#. Label of the change_count (Int) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run_item.js:110
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Change Count"
+msgstr "Anzahl Änderungen"
+
+#. Label of the changed_field (Data) field in DocType 'Sync Run Item Change'
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "Changed Field"
+msgstr "Geändertes Feld"
+
+#. Label of the changed_fields (Small Text) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run_item.js:111
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Changed Fields"
+msgstr "Geänderte Felder"
+
+#. Label of the charset (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Charset"
+msgstr "Zeichensatz"
+
+#. Label of the last_checked_on (Datetime) field in DocType 'Sync Partner'
+#: sync/public/js/sync_partner.js:210
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Checked On"
+msgstr "Geprüft am"
+
+#. Description of the 'Match Fields' (Table) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Choose the Frappe fields that define a logical match between Frappe and partner records."
+msgstr "Wählen Sie die Frappe-Felder aus, die eine logische Zuordnung zwischen Frappe- und Partnerdatensätzen definieren."
+
+#: sync/public/js/sync_helpers.js:846
+msgid "Close"
+msgstr "Schließen"
+
+#. Description of the 'Changed Fields' (Small Text) field in DocType 'Sync Run
+#. Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Compact list of changed field names. Detailed values remain visible through the captured payloads."
+msgstr "Kompakte Liste der geänderten Feldnamen. Detaillierte Werte bleiben über die erfassten Payloads sichtbar."
+
+#. Label of the conflict_count (Int) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Conflict Count"
+msgstr "Anzahl Konflikte"
+
+#: sync/public/js/sync_helpers.js:900
+msgid "Conflict Hints"
+msgstr "Konflikthinweise"
+
+#: sync/public/js/sync_run.js:36
+msgid "Conflict Items"
+msgstr "Konflikt-Elemente"
+
+#. Label of the conflict_policy (Select) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Conflict Policy"
+msgstr "Konfliktrichtlinie"
+
+#: sync/public/js/sync_helpers.js:961
+msgid "Conflict for {0}"
+msgstr "Konflikt für {0}"
+
+#: sync/public/js/sync_run.js:130 sync/public/js/sync_run.js:370
+#: sync/public/js/sync_run_item_list.js:9 sync/public/js/sync_run_list.js:18
+msgid "Conflicts"
+msgstr "Konflikte"
+
+#. Label of the section_break_connection (Section Break) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Connection Details"
+msgstr "Verbindungsdetails"
+
+#. Label of the section_break_status (Section Break) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Connection Health"
+msgstr "Verbindungsstatus"
+
+#. Label of the connection_notes (Small Text) field in DocType 'Sync Partner'
+#. Label of the connection_notes (Small Text) field in DocType 'Sync Partner
+#. Type'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Connection Notes"
+msgstr "Verbindungshinweise"
+
+#. Label of the connection_options (Code) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Connection Options"
+msgstr "Verbindungsoptionen"
+
+#: sync/public/js/sync_helpers.js:1169
+msgid "Connection Test"
+msgstr "Verbindungstest"
+
+#: sync/public/js/sync_helpers.js:264
+msgid "Controls how a new partner identity is produced when the partner does not generate it from the payload."
+msgstr "Steuert, wie eine neue Partneridentität erzeugt wird, wenn der Partner sie nicht aus dem Payload generiert."
+
+#. Description of the 'Preview Limit' (Int) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Controls how many records the Preview action requests."
+msgstr "Steuert, wie viele Datensätze die Vorschau-Aktion abruft."
+
+#: sync/public/js/sync_helpers.js:837
+msgid "Copy the YAML below to archive or share."
+msgstr "Kopieren Sie das folgende YAML, um es zu archivieren oder zu teilen."
+
+#. Label of the section_break_counters (Section Break) field in DocType 'Sync
+#. Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Counters"
+msgstr "Zähler"
+
+#. Label of the create_new (Check) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Create New"
+msgstr "Neu erstellen"
+
+#: sync/public/js/sync_run.js:132 sync/public/js/sync_run.js:235
+#: sync/public/js/sync_run.js:407
+msgid "Created"
+msgstr "Erstellt"
+
+#. Label of the created_count (Int) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Created Count"
+msgstr "Anzahl erstellt"
+
+#. Label of the db_api_module (Data) field in DocType 'Sync Partner Type'
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "DB API Module"
+msgstr "DB-API-Modul"
+
+#. Label of the database_name (Data) field in DocType 'Sync Partner'
+#: sync/public/js/sync_partner.js:76
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Database"
+msgstr "Datenbank"
+
+#: sync/public/js/sync_partner.js:84
+msgid "Database name used by the connector."
+msgstr "Vom Connector verwendeter Datenbankname."
+
+#. Description of the 'Database' (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Database or catalog name used by the connector."
+msgstr "Vom Connector verwendeter Datenbank- oder Katalogname."
+
+#. Description of the 'Port' (Int) field in DocType 'Sync Partner'
+#: sync/public/js/sync_partner.js:74
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Database port. Leave blank to use the connector default."
+msgstr "Datenbank-Port. Leer lassen, um den Standardwert des Connectors zu verwenden."
+
+#. Label of the default_port (Int) field in DocType 'Sync Partner Type'
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Default Port"
+msgstr "Standard-Port"
+
+#. Label of the delete_missing (Check) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Delete Missing"
+msgstr "Fehlende löschen"
+
+#: sync/public/js/sync_definition.js:403
+msgid "Delete Missing cannot be enabled when Read Query is used."
+msgstr "„Fehlende löschen“ kann nicht aktiviert werden, wenn eine Leseabfrage verwendet wird."
+
+#: sync/public/js/sync_run.js:134
+msgid "Deleted"
+msgstr "Gelöscht"
+
+#. Label of the deleted_count (Int) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Deleted Count"
+msgstr "Anzahl gelöscht"
+
+#. Label of the description (Small Text) field in DocType 'Sync Partner Type'
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Description"
+msgstr "Beschreibung"
+
+#. Label of the direction (Select) field in DocType 'Sync Field Mapping'
+#. Label of the direction (Select) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_helpers.js:717 sync/public/js/sync_helpers.js:750
+#: sync/public/js/sync_run_item.js:107
+#: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Direction"
+msgstr "Richtung"
+
+#. Label of the doctype_name (Link) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "DocType"
+msgstr "DocType"
+
+#: sync/public/js/sync_helpers.js:1010 sync/public/js/sync_helpers.js:1024
+#: sync/public/js/sync_run.js:235 sync/public/js/sync_run.js:407
+msgid "Document"
+msgstr "Dokument"
+
+#. Label of the document_name (Data) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run_item.js:169
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Document Name"
+msgstr "Dokumentname"
+
+#. Description of the 'Connection Notes' (Small Text) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Document setup constraints, special driver notes, and operator guidance."
+msgstr "Einschränkungen bei der Dokumenteinrichtung, spezielle Treiberhinweise und Bedienerhinweise."
+
+#: sync/public/js/sync_partner.js:132
+msgid "Document setup constraints, special driver notes, and what operators need to know before running sync."
+msgstr "Einschränkungen bei der Dokumenteinrichtung, spezielle Treiberhinweise und Informationen, die Bediener vor dem Start der Synchronisierung kennen müssen."
+
+#. Label of the section_break_connection_options (Section Break) field in
+#. DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Driver Options"
+msgstr "Treiberoptionen"
+
+#. Label of the dry_run (Check) field in DocType 'Sync Run'
+#: sync/public/js/sync_definition.js:61 sync/public/js/sync_run.js:143
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Dry Run"
+msgstr "Testlauf"
+
+#: sync/public/js/sync_helpers.js:449
+msgid "Dry run"
+msgstr "Testlauf"
+
+#: sync/public/js/sync_helpers.js:460
+msgid "Dry run started."
+msgstr "Testlauf gestartet."
+
+#. Description of the 'Trust Server Certificate' (Check) field in DocType 'Sync
+#. Partner'
+#: sync/public/js/sync_partner.js:117
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Enable only for trusted internal certificates or self-signed SQL Server endpoints."
+msgstr "Nur für vertrauenswürdige interne Zertifikate oder selbstsignierte SQL-Server-Endpunkte aktivieren."
+
+#. Label of the enabled (Check) field in DocType 'Sync Definition'
+#. Label of the enabled (Check) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Enabled"
+msgstr "Aktiviert"
+
+#. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
+#. Option for the 'Status' (Select) field in DocType 'Sync Partner'
+#. Option for the 'Status' (Select) field in DocType 'Sync Run'
+#: sync/public/js/sync_helpers.js:528
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_partner/sync_partner.json
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Error"
+msgstr "Fehler"
+
+#. Label of the error_count (Int) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Error Count"
+msgstr "Anzahl Fehler"
+
+#: sync/public/js/sync_run.js:30
+msgid "Error Items"
+msgstr "Fehler-Elemente"
+
+#. Label of the error_message (Long Text) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Error Message"
+msgstr "Fehlermeldung"
+
+#: sync/public/js/sync_run.js:129 sync/public/js/sync_run.js:365
+#: sync/public/js/sync_run_item_list.js:5 sync/public/js/sync_run_list.js:14
+msgid "Errors"
+msgstr "Fehler"
+
+#: sync/public/js/sync_run.js:171
+msgid "Execution Context"
+msgstr "Ausführungskontext"
+
+#. Label of the section_break_timing (Section Break) field in DocType 'Sync
+#. Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Execution Timing"
+msgstr "Ausführungszeiten"
+
+#: sync/public/js/sync_definition.js:67
+msgid "Export YAML"
+msgstr "YAML exportieren"
+
+#: sync/public/js/sync_helpers.js:863
+msgid "Fallback review only"
+msgstr "Nur Fallback-Prüfung"
+
+#. Label of the section_break_mapping (Section Break) field in DocType 'Sync
+#. Definition'
+#. Label of the field_mapping (Table) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Field Mapping"
+msgstr "Feldzuordnung"
+
+#. Label of the field_name (Select) field in DocType 'Sync Modified Field'
+#: sync/sync/doctype/sync_modified_field/sync_modified_field.json
+msgid "Field Name"
+msgstr "Feldname"
+
+#: sync/public/js/sync_definition.js:104
+msgid "Field choices loaded from {0}."
+msgstr "Feldauswahl aus {0} geladen."
+
+#. Description of the 'Secret Fields' (Small Text) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Field names to mask when exporting, one per line."
+msgstr "Feldnamen, die beim Export maskiert werden sollen, einer pro Zeile."
+
+#: sync/public/js/sync_helpers.js:541
+msgid "Fields"
+msgstr "Felder"
+
+#: sync/public/js/sync_helpers.js:1212
+msgid "Fields used to detect changes on Frappe side."
+msgstr "Felder, mit denen Änderungen auf der Frappe-Seite erkannt werden."
+
+#: sync/public/js/sync_definition.js:358
+msgid "Fields used to detect changes on the Frappe side."
+msgstr "Felder, mit denen Änderungen auf der Frappe-Seite erkannt werden."
+
+#: sync/public/js/sync_definition.js:363 sync/public/js/sync_helpers.js:1213
+msgid "Fields used to detect changes on the partner side."
+msgstr "Felder, mit denen Änderungen auf der Partnerseite erkannt werden."
+
+#: sync/public/js/sync_partner.js:198
+msgid "Filesystem path to the client certificate used for authentication."
+msgstr "Dateisystempfad zum Client-Zertifikat, das für die Authentifizierung verwendet wird."
+
+#. Description of the 'Certificate Path' (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Filesystem path to the client certificate."
+msgstr "Dateisystempfad zum Client-Zertifikat."
+
+#. Label of the filter_expression (Code) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Filter Expression"
+msgstr "Filterausdruck"
+
+#. Label of the section_break_filters (Section Break) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Filters"
+msgstr "Filter"
+
+#: sync/public/js/sync_run.js:140
+msgid "Finished"
+msgstr "Abgeschlossen"
+
+#. Label of the finished_at (Datetime) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Finished At"
+msgstr "Abgeschlossen am"
+
+#: sync/public/js/sync_partner.js:83
+msgid "Firebird database path or alias."
+msgstr "Firebird-Datenbankpfad oder Alias."
+
+#: sync/public/js/sync_partner.js:73
+msgid "Firebird port. Leave blank to use the default 3050."
+msgstr "Firebird-Port. Leer lassen, um den Standardwert 3050 zu verwenden."
+
+#: sync/public/js/sync_partner.js:108
+msgid "Firebird usually expects an explicit charset. UTF8 is a safe default."
+msgstr "Firebird erwartet normalerweise einen expliziten Zeichensatz. UTF8 ist ein sicherer Standardwert."
+
+#: sync/public/js/sync_helpers.js:1196
+msgid "For A->B and A<-B only: choose whether one source record updates only one matched target or all matched targets."
+msgstr "Nur für A->B und A<-B: Wählen Sie, ob ein Quelldatensatz nur ein übereinstimmendes Ziel oder alle übereinstimmenden Ziele aktualisiert."
+
+#. Description of the 'One-Way Match Mode' (Select) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "For A->B and A<-B only: update only one matched target or all matched targets when multiple records share the same logical match."
+msgstr "Nur für A->B und A<-B: Aktualisieren Sie nur ein übereinstimmendes Ziel oder alle übereinstimmenden Ziele, wenn mehrere Datensätze dieselbe logische Zuordnung haben."
+
+#. Label of the frappe_field (Select) field in DocType 'Sync Field Mapping'
+#. Label of the frappe_field (Select) field in DocType 'Sync Key Field'
+#. Label of the frappe_field (Select) field in DocType 'Sync Value Mapping'
+#: sync/public/js/sync_helpers.js:715
+#: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
+#: sync/sync/doctype/sync_key_field/sync_key_field.json
+#: sync/sync/doctype/sync_value_mapping/sync_value_mapping.json
+msgid "Frappe Field"
+msgstr "Frappe-Feld"
+
+#. Label of the frappe_modified_field_rows (Table) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Frappe Modified Fields"
+msgstr "Geänderte Frappe-Felder"
+
+#: sync/public/js/sync_helpers.js:228
+msgid "Frappe Partner ID Field"
+msgstr "Frappe-Partner-ID-Feld"
+
+#. Label of the frappe_partner_identity_field (Select) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Frappe Partner Identity Field"
+msgstr "Frappe-Partneridentitätsfeld"
+
+#. Label of the frappe_payload (Long Text) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run_item.js:128
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Frappe Payload"
+msgstr "Frappe-Payload"
+
+#. Label of the frappe_value (Data) field in DocType 'Sync Value Mapping'
+#: sync/sync/doctype/sync_value_mapping/sync_value_mapping.json
+msgid "Frappe Value"
+msgstr "Frappe-Wert"
+
+#. Option for the 'Direction' (Select) field in DocType 'Sync Field Mapping'
+#: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
+msgid "Frappe to Partner"
+msgstr "Frappe zu Partner"
+
+#. Label of the frequency_cron (Data) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Frequency Cron"
+msgstr "Cron-Frequenz"
+
+#: sync/public/js/sync_helpers.js:1027
+msgid "Hint"
+msgstr "Hinweis"
+
+#. Label of the host (Data) field in DocType 'Sync Partner'
+#: sync/public/js/sync_partner.js:59
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Host"
+msgstr "Host"
+
+#. Description of the 'Host' (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Hostname or IP address of the partner system. For SQL Server use the server name without the database."
+msgstr "Hostname oder IP-Adresse des Partnersystems. Verwenden Sie für SQL Server den Servernamen ohne Datenbank."
+
+#: sync/public/js/sync_partner.js:65
+msgid "Hostname or IP address of the remote database server."
+msgstr "Hostname oder IP-Adresse des entfernten Datenbankservers."
+
+#. Description of the 'Partner Create ID Strategy' (Select) field in DocType
+#. 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "How the partner identifier is produced when a new partner record must be created."
+msgstr "Wie die Partnerkennung erzeugt wird, wenn ein neuer Partnerdatensatz erstellt werden muss."
+
+#. Description of the 'Time Zone' (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "IANA time zone used when the partner stores or returns naive datetimes, for example Europe/Berlin."
+msgstr "IANA-Zeitzone, die verwendet wird, wenn der Partner naive Datums-/Zeitwerte speichert oder zurückgibt, z. B. Europe/Berlin."
+
+#. Label of the section_break_identifiers (Section Break) field in DocType
+#. 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Identifiers"
+msgstr "Kennungen"
+
+#. Label of the section_break_identity (Section Break) field in DocType 'Sync
+#. Definition'
+#. Partner'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Identity"
+msgstr "Identität"
+
+#: sync/public/js/sync_helpers.js:1073
+msgid "Import"
+msgstr "Importieren"
+
+#: sync/public/js/sync_helpers.js:1073
+msgid "Import Blocked"
+msgstr "Import blockiert"
+
+#: sync/public/js/sync_helpers.js:1071
+msgid "Import Preview"
+msgstr "Importvorschau"
+
+#: sync/public/js/sync_helpers.js:1141
+msgid "Import Sync Definition"
+msgstr "Sync-Definition importieren"
+
+#: sync/public/js/sync_definition.js:70
+msgid "Import YAML"
+msgstr "YAML importieren"
+
+#: sync/public/js/sync_helpers.js:1049
+msgid "Import complete"
+msgstr "Import abgeschlossen"
+
+#: sync/public/js/sync_helpers.js:978
+msgid "Import issue for {0}"
+msgstr "Importproblem für {0}"
+
+#: sync/public/js/sync_run_item.js:99
+msgid "Item Health"
+msgstr "Elementstatus"
+
+#. Label of the run_items_html (HTML) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Items"
+msgstr "Elemente"
+
+#. Label of the job_id (Data) field in DocType 'Sync Run'
+#: sync/public/js/sync_run.js:144 sync/sync/doctype/sync_run/sync_run.json
+msgid "Job ID"
+msgstr "Job-ID"
+
+#. Label of the label (Data) field in DocType 'Sync Partner Type'
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Label"
+msgstr "Bezeichnung"
+
+#. Label of the last_run (Link) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Last Run"
+msgstr "Letzter Lauf"
+
+#. Label of the last_run_status (Select) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Last Run Status"
+msgstr "Status des letzten Laufs"
+
+#. Label of the last_run_summary (Small Text) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Last Run Summary"
+msgstr "Zusammenfassung des letzten Laufs"
+
+#: sync/public/js/sync_run.js:141
+msgid "Last Sync"
+msgstr "Letzte Synchronisierung"
+
+#. Label of the last_sync_at (Datetime) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Last Sync At"
+msgstr "Letzte Synchronisierung am"
+
+#: sync/public/js/sync_helpers.js:415
+msgid "Last refresh: {0}"
+msgstr "Letzte Aktualisierung: {0}"
+
+#. Label of the last_connection_error (Small Text) field in DocType 'Sync
+#. Partner'
+#: sync/public/js/sync_partner.js:211
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Latest Error"
+msgstr "Letzter Fehler"
+
+#: sync/public/js/sync_run.js:150
+msgid "Latest issues are shown below."
+msgstr "Die neuesten Probleme werden unten angezeigt."
+
+#: sync/public/js/sync_run.js:196
+msgid "Latest {0} items loaded for quick inspection."
+msgstr "Die letzten {0} Elemente wurden zur schnellen Prüfung geladen."
+
+#: sync/public/js/sync_helpers.js:341
+msgid "Length {0}"
+msgstr "Länge {0}"
+
+#: sync/public/js/sync_run_item.js:117
+msgid "Links and Targets"
+msgstr "Links und Ziele"
+
+#: sync/public/js/sync_helpers.js:372
+msgid "Load Columns"
+msgstr "Spalten laden"
+
+#: sync/public/js/sync_definition.js:226
+msgid "Load partner columns from the current source to get mapping suggestions."
+msgstr "Partner-Spalten aus der aktuellen Quelle laden, um Zuordnungsvorschläge zu erhalten."
+
+#: sync/public/js/sync_definition.js:229
+msgid "Load partner columns from the current source to guide partner-side modified fields."
+msgstr "Partner-Spalten aus der aktuellen Quelle laden, um partnerseitig geänderte Felder auszuwählen."
+
+#: sync/public/js/sync_helpers.js:414
+msgid "Load partner columns from {0} to get guided partner-side field selection."
+msgstr "Partner-Spalten aus {0} laden, um eine geführte partnerseitige Feldauswahl zu erhalten."
+
+#: sync/public/js/sync_helpers.js:413
+msgid "Loaded {0} partner columns from {1}."
+msgstr "{0} Partner-Spalten aus {1} geladen."
+
+#: sync/public/js/sync_definition.js:327
+msgid "Loaded {0} partner columns."
+msgstr "{0} Partner-Spalten geladen."
+
+#: sync/public/js/sync_run.js:71
+msgid "Loading monitoring summary…"
+msgstr "Überwachungszusammenfassung wird geladen…"
+
+#: sync/public/js/sync_helpers.js:399
+msgid "Loading partner columns from the configured source..."
+msgstr "Partner-Spalten werden aus der konfigurierten Quelle geladen..."
+
+#: sync/public/js/sync_definition.js:312
+msgid "Loading partner columns…"
+msgstr "Partner-Spalten werden geladen…"
+
+#: sync/public/js/sync_run_item.js:65
+msgid "Loading run item summary…"
+msgstr "Zusammenfassung des Lauf-Elements wird geladen…"
+
+#: sync/public/js/sync_run.js:104
+msgid "Loading run items…"
+msgstr "Lauf-Elemente werden geladen…"
+
+#: sync/public/js/sync_helpers.js:200
+msgid "Logical fields used to match source and partner records. These are not the partner's technical identity field."
+msgstr "Logische Felder zur Zuordnung von Quell- und Partnerdatensätzen. Dies sind nicht die technischen Identitätsfelder des Partners."
+
+#. Description of the 'Username' (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Login name used for database or API authentication when the selected auth type requires it."
+msgstr "Anmeldename für Datenbank- oder API-Authentifizierung, wenn der ausgewählte Authentifizierungstyp ihn erfordert."
+
+#. Description of the 'Field Mapping' (Table) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Map Frappe fields to partner-side columns. Load partner columns above to get suggestions."
+msgstr "Ordnen Sie Frappe-Felder partnerseitigen Spalten zu. Laden Sie oben die Partner-Spalten, um Vorschläge zu erhalten."
+
+#: sync/public/js/sync_helpers.js:550
+msgid "Mapping"
+msgstr "Zuordnung"
+
+#. Label of the export_mask_credentials (Check) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Mask Credentials in Export"
+msgstr "Zugangsdaten beim Export maskieren"
+
+#. Label of the match_fields (Table) field in DocType 'Sync Definition'
+#: sync/public/js/sync_helpers.js:194 sync/public/js/sync_helpers.js:543
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Match Fields"
+msgstr "Abgleichfelder"
+
+#. Label of the section_break_message (Section Break) field in DocType 'Sync
+#. Run Item'
+#. Label of the message (Small Text) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run.js:235 sync/public/js/sync_run.js:407
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Message"
+msgstr "Nachricht"
+
+#: sync/public/js/sync_run_item.js:106 sync/public/js/sync_run_item.js:119
+msgid "Missing"
+msgstr "Fehlend"
+
+#: sync/public/js/sync_helpers.js:974
+msgid "Missing payload section: {0}"
+msgstr "Fehlender Payload-Abschnitt: {0}"
+
+#. Label of the section_break_health (Section Break) field in DocType 'Sync
+#. Run'
+#. Label of the section_break_monitoring (Section Break) field in DocType 'Sync
+#. Run Item'
+#: sync/sync/doctype/sync_run/sync_run.json
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Monitoring"
+msgstr "Überwachung"
+
+#. Description of the 'Latest Error' (Small Text) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Most recent failure details from the latest connection test."
+msgstr "Aktuellste Fehlerdetails aus dem letzten Verbindungstest."
+
+#: sync/public/js/sync_partner.js:233
+msgid "Most recent failure details from the latest connection test. Earlier errors are not retained here."
+msgstr "Aktuellste Fehlerdetails aus dem letzten Verbindungstest. Frühere Fehler werden hier nicht aufbewahrt."
+
+#. Label of the new_value (Long Text) field in DocType 'Sync Run Item Change'
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "New Value"
+msgstr "Neuer Wert"
+
+#. Label of the next_run_at (Datetime) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Next Run At"
+msgstr "Nächster Lauf am"
+
+#: sync/public/js/sync_helpers.js:866 sync/public/js/sync_run.js:143
+msgid "No"
+msgstr "Nein"
+
+#: sync/public/js/sync_helpers.js:829
+msgid "No YAML returned."
+msgstr "Kein YAML zurückgegeben."
+
+#: sync/public/js/sync_helpers.js:742
+msgid "No actions available."
+msgstr "Keine Aktionen verfügbar."
+
+#: sync/public/js/sync_helpers.js:901
+msgid "No conflicts reported."
+msgstr "Keine Konflikte gemeldet."
+
+#: sync/public/js/sync_partner.js:234
+msgid "No connection error has been recorded yet."
+msgstr "Es wurde noch kein Verbindungsfehler aufgezeichnet."
+
+#: sync/public/js/sync_partner.js:227
+msgid "No connection test has been recorded yet."
+msgstr "Es wurde noch kein Verbindungstest aufgezeichnet."
+
+#: sync/public/js/sync_partner.js:220
+msgid "No connection test has been recorded yet. Use Test Connection to record one."
+msgstr "Es wurde noch kein Verbindungstest aufgezeichnet. Verwenden Sie „Verbindung testen“, um einen aufzuzeichnen."
+
+#: sync/public/js/sync_helpers.js:693
+msgid "No field mapping configured."
+msgstr "Keine Feldzuordnung konfiguriert."
+
+#: sync/public/js/sync_run_item_list.js:33
+msgid "No message"
+msgstr "Keine Nachricht"
+
+#: sync/public/js/sync_run_item.js:104
+msgid "No operator message recorded."
+msgstr "Keine Bedienernachricht aufgezeichnet."
+
+#: sync/public/js/sync_run_item.js:179
+msgid "No payload captured."
+msgstr "Kein Payload erfasst."
+
+#: sync/public/js/sync_helpers.js:1002
+msgid "No planned changes returned."
+msgstr "Keine geplanten Änderungen zurückgegeben."
+
+#: sync/public/js/sync_run.js:379
+msgid "No recent error, conflict or skipped items were found."
+msgstr "Keine aktuellen Fehler, Konflikte oder übersprungenen Elemente gefunden."
+
+#: sync/public/js/sync_run.js:151
+msgid "No recent issue items in the latest loaded slice."
+msgstr "Keine aktuellen Problem-Elemente im zuletzt geladenen Ausschnitt."
+
+#: sync/public/js/sync_run_item_list.js:39
+msgid "No record key"
+msgstr "Kein Datensatzschlüssel"
+
+#: sync/public/js/sync_run_item.js:166
+msgid "No related document linked."
+msgstr "Kein zugehöriges Dokument verknüpft."
+
+#: sync/public/js/sync_run.js:205
+msgid "No run items found yet."
+msgstr "Noch keine Lauf-Elemente gefunden."
+
+#: sync/public/js/sync_helpers.js:1238
+msgid "No runs found yet."
+msgstr "Noch keine Läufe gefunden."
+
+#: sync/public/js/sync_helpers.js:762
+msgid "No sample records returned."
+msgstr "Keine Beispieldatensätze zurückgegeben."
+
+#: sync/public/js/sync_helpers.js:591
+msgid "No summary available."
+msgstr "Keine Zusammenfassung verfügbar."
+
+#: sync/public/js/sync_run_list.js:38
+msgid "No summary yet"
+msgstr "Noch keine Zusammenfassung"
+
+#: sync/public/js/sync_run.js:146
+msgid "No summary yet."
+msgstr "Noch keine Zusammenfassung."
+
+#: sync/public/js/sync_run_item_list.js:61
+msgid "No target DocType configured on the Sync Definition."
+msgstr "In der Sync-Definition ist kein Ziel-DocType konfiguriert."
+
+#: sync/public/js/sync_helpers.js:907
+msgid "No warnings reported."
+msgstr "Keine Warnungen gemeldet."
+
+#. Option for the 'Authentication Type' (Select) field in DocType 'Sync
+#. Partner'
+#: sync/public/js/sync_helpers.js:353 sync/public/js/sync_helpers.js:606
+#: sync/public/js/sync_helpers.js:816 sync/public/js/sync_helpers.js:1012
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "None"
+msgstr "Keine"
+
+#: sync/public/js/sync_helpers.js:340
+msgid "Not Null"
+msgstr "Nicht Null"
+
+#: sync/public/js/sync_run.js:214 sync/public/js/sync_run.js:390
+#: sync/public/js/sync_run_item_list.js:27
+msgid "Not linked"
+msgstr "Nicht verknüpft"
+
+#: sync/public/js/sync_run.js:141 sync/public/js/sync_run_item.js:108
+#: sync/public/js/sync_run_item.js:109
+msgid "Not recorded"
+msgstr "Nicht aufgezeichnet"
+
+#: sync/public/js/sync_run.js:139
+msgid "Not started"
+msgstr "Nicht gestartet"
+
+#. Description of the 'Change Count' (Int) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Number of field-level differences captured on this run item."
+msgstr "Anzahl der auf Feldebene erfassten Unterschiede für dieses Lauf-Element."
+
+#: sync/public/js/sync_helpers.js:528
+msgid "OK"
+msgstr "OK"
+
+#: sync/public/js/sync_run_item.js:210
+msgid "Object ({0} keys)"
+msgstr "Objekt ({0} Schlüssel)"
+
+#. Label of the old_value (Long Text) field in DocType 'Sync Run Item Change'
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "Old Value"
+msgstr "Alter Wert"
+
+#. Description of the 'Secret Fields' (Small Text) field in DocType 'Sync
+#. Partner Type'
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "One field name per line that should be treated as secret when exporting."
+msgstr "Ein Feldname pro Zeile, der beim Export als geheim behandelt werden soll."
+
+#: sync/public/js/sync_partner.js:127
+msgid "One field name per line. These fields are masked in exports and redaction helpers."
+msgstr "Ein Feldname pro Zeile. Diese Felder werden in Exporten und Schwärzungshilfen maskiert."
+
+#. Label of the one_way_match_mode (Select) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "One-Way Match Mode"
+msgstr "Einweg-Abgleichmodus"
+
+#: sync/public/js/sync_run_item_list.js:50
+msgid "Open Document"
+msgstr "Dokument öffnen"
+
+#: sync/public/js/sync_run_list.js:49
+msgid "Open Items"
+msgstr "Elemente öffnen"
+
+#: sync/public/js/sync_definition.js:73
+msgid "Open Latest Run"
+msgstr "Letzten Lauf öffnen"
+
+#: sync/public/js/sync_run_item.js:25
+msgid "Open Parent Run"
+msgstr "Übergeordneten Lauf öffnen"
+
+#: sync/public/js/sync_run_item.js:42
+msgid "Open Related Document"
+msgstr "Zugehöriges Dokument öffnen"
+
+#: sync/public/js/sync_run_item.js:171
+msgid "Open related document {0}"
+msgstr "Zugehöriges Dokument {0} öffnen"
+
+#: sync/public/js/sync_run_list.js:52
+msgid "Open run items for {0}"
+msgstr "Lauf-Elemente für {0} öffnen"
+
+#: sync/public/js/sync_run_item.js:101
+msgid "Open run {0}"
+msgstr "Lauf {0} öffnen"
+
+#. Label of the monitoring_html (HTML) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Operator Summary"
+msgstr "Bedienerzusammenfassung"
+
+#: sync/public/js/sync_partner.js:94
+msgid "Optional Firebird driver options, one per line or JSON."
+msgstr "Optionale Firebird-Treiberoptionen, eine pro Zeile oder als JSON."
+
+#: sync/public/js/sync_helpers.js:234
+msgid "Optional Frappe field that stores the partner-generated identity after create."
+msgstr "Optionales Frappe-Feld, das nach der Erstellung die vom Partner generierte Identität speichert."
+
+#. Description of the 'Frappe Partner Identity Field' (Select) field in DocType
+#. 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Optional Frappe field that stores the resolved partner identifier after a successful partner write."
+msgstr "Optionales Frappe-Feld, das nach einem erfolgreichen Schreibvorgang beim Partner die aufgelöste Partnerkennung speichert."
+
+#: sync/public/js/sync_partner.js:100
+msgid "Optional IANA time zone used when the partner sends naive datetimes. Leave blank only when partner timestamps already carry offsets or already match the site time zone."
+msgstr "Optionale IANA-Zeitzone, die verwendet wird, wenn der Partner naive Datums-/Zeitwerte sendet. Nur leer lassen, wenn Partner-Zeitstempel bereits Offsets enthalten oder bereits der Site-Zeitzone entsprechen."
+
+#: sync/public/js/sync_partner.js:92
+msgid "Optional PostgreSQL / libpq connection options, one per line or JSON."
+msgstr "Optionale PostgreSQL-/libpq-Verbindungsoptionen, eine pro Zeile oder als JSON."
+
+#. Description of the 'Read Query' (Code) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Optional SELECT query used only for reading partner records. Writes always target Table Name."
+msgstr "Optionale SELECT-Abfrage, die nur zum Lesen von Partnerdatensätzen verwendet wird. Schreibvorgänge zielen immer auf den Tabellennamen."
+
+#: sync/public/js/sync_partner.js:90
+msgid "Optional SQL Server / ODBC connection options, one per line or JSON."
+msgstr "Optionale SQL-Server-/ODBC-Verbindungsoptionen, eine pro Zeile oder als JSON."
+
+#. Description of the 'Partner Create ID Scope Where' (Code) field in DocType
+#. 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Optional SQL predicate that limits ID allocation, for example NR BETWEEN 1 AND 89999."
+msgstr "Optionales SQL-Prädikat, das die ID-Zuweisung begrenzt, z. B. NR BETWEEN 1 AND 89999."
+
+#: sync/public/js/sync_partner.js:95
+msgid "Optional connector-specific options, one per line or JSON."
+msgstr "Optionale connector-spezifische Optionen, eine pro Zeile oder als JSON."
+
+#. Description of the 'Connection Options' (Code) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Optional driver-specific connection options, one per line or JSON."
+msgstr "Optionale treiberspezifische Verbindungsoptionen, eine pro Zeile oder als JSON."
+
+#: sync/public/js/sync_helpers.js:249
+msgid "Optional partner field that stores the Frappe document name for traceability."
+msgstr "Optionales Partnerfeld, das den Namen des Frappe-Dokuments zur Nachverfolgbarkeit speichert."
+
+#. Description of the 'Partner Frappe Identity Field' (Data) field in DocType
+#. 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Optional partner-side column that receives the Frappe document name for a symmetric cross-link."
+msgstr "Optionale partnerseitige Spalte, die den Namen des Frappe-Dokuments für eine symmetrische Querverknüpfung erhält."
+
+#: sync/public/js/sync_helpers.js:188
+msgid "Optional read-only query used to load partner rows. Leave blank to read the full table. Writes still target Table Name."
+msgstr "Optionale schreibgeschützte Abfrage zum Laden von Partnerzeilen. Leer lassen, um die vollständige Tabelle zu lesen. Schreibvorgänge zielen weiterhin auf den Tabellennamen."
+
+#: sync/public/js/sync_helpers.js:1133
+msgid "Overwrite existing"
+msgstr "Vorhandenes überschreiben"
+
+#. Label of the partner (Link) field in DocType 'Sync Definition'
+#: sync/public/js/sync_definition.js:262
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Partner"
+msgstr "Partner"
+
+#. Label of the partner_columns_status (HTML) field in DocType 'Sync
+#. Definition'
+#: sync/public/js/sync_helpers.js:385 sync/public/js/sync_helpers.js:398
+#: sync/public/js/sync_helpers.js:428
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Partner Columns"
+msgstr "Partner-Spalten"
+
+#: sync/public/js/sync_helpers.js:288
+msgid "Partner Create ID Scope"
+msgstr "Bereich für Partner-Erstellungs-ID"
+
+#. Label of the partner_create_id_scope_where (Code) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Partner Create ID Scope Where"
+msgstr "WHERE-Bedingung für Partner-Erstellungs-ID-Bereich"
+
+#. Label of the partner_create_id_source (Data) field in DocType 'Sync
+#. Definition'
+#: sync/public/js/sync_helpers.js:273
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Partner Create ID Source"
+msgstr "Quelle für Partner-Erstellungs-ID"
+
+#. Label of the partner_create_id_strategy (Select) field in DocType 'Sync
+#. Definition'
+#: sync/public/js/sync_helpers.js:258
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Partner Create ID Strategy"
+msgstr "Strategie für Partner-Erstellungs-ID"
+
+#. Label of the partner_field (Data) field in DocType 'Sync Field Mapping'
+#: sync/public/js/sync_helpers.js:716
+#: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
+msgid "Partner Field"
+msgstr "Partnerfeld"
+
+#: sync/public/js/sync_helpers.js:243
+msgid "Partner Frappe ID Field"
+msgstr "Partner-Frappe-ID-Feld"
+
+#. Label of the partner_frappe_identity_field (Data) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Partner Frappe Identity Field"
+msgstr "Partner-Frappe-Identitätsfeld"
+
+#. Label of the section_break_partner_identity (Section Break) field in DocType
+#. 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Partner Identity"
+msgstr "Partneridentität"
+
+#. Label of the partner_identity_field (Data) field in DocType 'Sync
+#. Definition'
+#: sync/public/js/sync_helpers.js:213
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Partner Identity Field"
+msgstr "Partneridentitätsfeld"
+
+#. Label of the partner_modified_field_rows (Table) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Partner Modified Fields"
+msgstr "Geänderte Partnerfelder"
+
+#. Label of the partner_name (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Partner Name"
+msgstr "Partnername"
+
+#. Label of the partner_payload (Long Text) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run_item.js:131
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Partner Payload"
+msgstr "Partner-Payload"
+
+#. Label of the partner_type (Link) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Partner Type"
+msgstr "Partnertyp"
+
+#. Label of the partner_type_code (Data) field in DocType 'Sync Partner Type'
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Partner Type Code"
+msgstr "Partnertyp-Code"
+
+#. Label of the partner_value (Data) field in DocType 'Sync Value Mapping'
+#: sync/sync/doctype/sync_value_mapping/sync_value_mapping.json
+msgid "Partner Value"
+msgstr "Partnerwert"
+
+#: sync/public/js/sync_helpers.js:380
+msgid "Partner column loading is only available after a partner and table name are set."
+msgstr "Das Laden von Partner-Spalten ist erst verfügbar, nachdem Partner und Tabellenname festgelegt wurden."
+
+#: sync/public/js/sync_definition.js:215 sync/public/js/sync_definition.js:275
+msgid "Partner rows are loaded directly from Table Name."
+msgstr "Partnerzeilen werden direkt aus dem Tabellennamen geladen."
+
+#: sync/public/js/sync_definition.js:214 sync/public/js/sync_definition.js:274
+msgid "Partner rows are loaded from the Read Query, while writes still target Table Name."
+msgstr "Partnerzeilen werden aus der Leseabfrage geladen, während Schreibvorgänge weiterhin auf den Tabellennamen zielen."
+
+#. Option for the 'Direction' (Select) field in DocType 'Sync Field Mapping'
+#: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
+msgid "Partner to Frappe"
+msgstr "Partner zu Frappe"
+
+#: sync/public/js/sync_definition.js:337
+msgid "Partner-column loading is not available yet. You can continue with manual partner field names."
+msgstr "Das Laden von Partner-Spalten ist noch nicht verfügbar. Sie können mit manuellen Partnerfeldnamen fortfahren."
+
+#. Option for the 'Authentication Type' (Select) field in DocType 'Sync
+#. Partner'
+#. Label of the password (Password) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Password"
+msgstr "Passwort"
+
+#: sync/public/js/sync_partner.js:181
+msgid "Password paired with the SQL login used for password-based authentication."
+msgstr "Passwort für die SQL-Anmeldung, die für passwortbasierte Authentifizierung verwendet wird."
+
+#: sync/public/js/sync_partner.js:182
+msgid "Password used by the connector for password-based authentication."
+msgstr "Vom Connector für passwortbasierte Authentifizierung verwendetes Passwort."
+
+#: sync/public/js/sync_helpers.js:1123
+msgid "Paste a YAML export of a sync definition to import."
+msgstr "Fügen Sie einen YAML-Export einer Sync-Definition zum Importieren ein."
+
+#. Label of the section_break_payloads (Section Break) field in DocType 'Sync
+#. Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Payloads"
+msgstr "Payloads"
+
+#: sync/public/js/sync_helpers.js:912
+msgid "Planned Changes"
+msgstr "Geplante Änderungen"
+
+#. Label of the port (Int) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Port"
+msgstr "Port"
+
+#. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
+#. Option for the 'Status' (Select) field in DocType 'Sync Run'
+#: sync/public/js/sync_definition.js:64 sync/public/js/sync_helpers.js:1142
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Preview"
+msgstr "Vorschau"
+
+#. Label of the preview_limit (Int) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Preview Limit"
+msgstr "Vorschaulimit"
+
+#: sync/public/js/sync_run.js:127
+msgid "Processed"
+msgstr "Verarbeitet"
+
+#. Label of the processed_count (Int) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Processed Count"
+msgstr "Anzahl verarbeitet"
+
+#. Description of the 'Connection Notes' (Small Text) field in DocType 'Sync
+#. Partner Type'
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Put partner-specific connection hints here."
+msgstr "Tragen Sie hier partnerspezifische Verbindungshinweise ein."
+
+#. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
+#. Option for the 'Status' (Select) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Queued"
+msgstr "In Warteschlange"
+
+#: sync/public/js/sync_helpers.js:483
+msgid "Queueing dry run…"
+msgstr "Testlauf wird eingereiht…"
+
+#: sync/public/js/sync_helpers.js:483
+msgid "Queueing sync run…"
+msgstr "Synchronisierungslauf wird eingereiht…"
+
+#: sync/public/js/sync_helpers.js:568
+msgid "Raw JSON"
+msgstr "Rohes JSON"
+
+#: sync/public/js/sync_helpers.js:918
+msgid "Raw Preview Data"
+msgstr "Rohe Vorschaudaten"
+
+#. Label of the read_query (Code) field in DocType 'Sync Definition'
+#: sync/public/js/sync_definition.js:212 sync/public/js/sync_definition.js:272
+#: sync/public/js/sync_helpers.js:182
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Read Query"
+msgstr "Leseabfrage"
+
+#: sync/public/js/sync_definition.js:412
+msgid "Read Query is active. Partner rows are loaded from the query, while inserts and updates still target Table Name."
+msgstr "Die Leseabfrage ist aktiv. Partnerzeilen werden aus der Abfrage geladen, während Einfügungen und Aktualisierungen weiterhin auf den Tabellennamen zielen."
+
+#: sync/public/js/sync_run.js:183
+msgid "Recent Errors and Conflicts"
+msgstr "Aktuelle Fehler und Konflikte"
+
+#: sync/public/js/sync_run.js:235 sync/public/js/sync_run.js:407
+msgid "Record"
+msgstr "Datensatz"
+
+#. Label of the record_key (Data) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run_item.js:106
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Record Key"
+msgstr "Datensatzschlüssel"
+
+#: sync/public/js/sync_helpers.js:372
+msgid "Refresh Columns"
+msgstr "Spalten aktualisieren"
+
+#: sync/public/js/sync_run.js:24
+msgid "Refresh Monitoring"
+msgstr "Überwachung aktualisieren"
+
+#: sync/public/js/sync_run.js:195
+msgid "Related Run Items"
+msgstr "Zugehörige Lauf-Elemente"
+
+#: sync/public/js/sync_helpers.js:1134
+msgid "Replace the existing definition if the name already exists."
+msgstr "Ersetzt die vorhandene Definition, wenn der Name bereits existiert."
+
+#: sync/public/js/sync_helpers.js:88 sync/public/js/sync_helpers.js:116
+msgid "Request failed."
+msgstr "Anfrage fehlgeschlagen."
+
+#: sync/public/js/sync_run_item_list.js:53
+msgid "Resolve the Sync Definition target DocType and open {0}"
+msgstr "Ziel-DocType der Sync-Definition auflösen und {0} öffnen"
+
+#: sync/public/js/sync_helpers.js:751
+msgid "Result"
+msgstr "Ergebnis"
+
+#: sync/public/js/sync_helpers.js:449
+msgid "Run"
+msgstr "Lauf"
+
+#. Label of the section_break_links (Section Break) field in DocType 'Sync Run
+#. Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Run Context"
+msgstr "Laufkontext"
+
+#: sync/public/js/sync_run.js:176
+msgid "Run Error"
+msgstr "Lauffehler"
+
+#. Label of the run_health_html (HTML) field in DocType 'Sync Run'
+#: sync/public/js/sync_run.js:158 sync/sync/doctype/sync_run/sync_run.json
+msgid "Run Health"
+msgstr "Laufstatus"
+
+#. Label of the section_break_items (Section Break) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Run Items"
+msgstr "Lauf-Elemente"
+
+#. Label of the section_break_details (Section Break) field in DocType 'Sync
+#. Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Run Notes"
+msgstr "Laufhinweise"
+
+#: sync/public/js/sync_definition.js:58
+msgid "Run Now"
+msgstr "Jetzt ausführen"
+
+#. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
+#. Option for the 'Status' (Select) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Running"
+msgstr "Wird ausgeführt"
+
+#. Label of the section_break_runtime (Section Break) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Runtime"
+msgstr "Laufzeit"
+
+#: sync/public/js/sync_partner.js:81
+msgid "SQL Server database name."
+msgstr "SQL-Server-Datenbankname."
+
+#: sync/public/js/sync_partner.js:64
+msgid "SQL Server host name or instance address."
+msgstr "SQL-Server-Hostname oder Instanzadresse."
+
+#: sync/public/js/sync_partner.js:71
+msgid "SQL Server port. Leave blank to use the connector default."
+msgstr "SQL-Server-Port. Leer lassen, um den Standardwert des Connectors zu verwenden."
+
+#: sync/public/js/sync_helpers.js:294
+msgid "SQL WHERE condition that limits the rows considered when generating the next partner ID, for example `NR BETWEEN 1 AND 89999`."
+msgstr "SQL-WHERE-Bedingung, die die bei der Generierung der nächsten Partner-ID berücksichtigten Zeilen begrenzt, z. B. `NR BETWEEN 1 AND 89999`."
+
+#: sync/public/js/sync_partner.js:172
+msgid "SQL login or database user used for password-based authentication."
+msgstr "SQL-Anmeldung oder Datenbankbenutzer für passwortbasierte Authentifizierung."
+
+#: sync/public/js/sync_helpers.js:562
+msgid "Sample Records"
+msgstr "Beispieldatensätze"
+
+#: sync/public/js/sync_run_item.js:59
+msgid "Save the run item to load monitoring details."
+msgstr "Speichern Sie das Lauf-Element, um Überwachungsdetails zu laden."
+
+#: sync/public/js/sync_run.js:65
+msgid "Save the run to load monitoring details."
+msgstr "Speichern Sie den Lauf, um Überwachungsdetails zu laden."
+
+#: sync/public/js/sync_run.js:98
+msgid "Save the run to load related items."
+msgstr "Speichern Sie den Lauf, um zugehörige Elemente zu laden."
+
+#. Label of the secret_fields (Small Text) field in DocType 'Sync Partner'
+#. Label of the secret_fields (Small Text) field in DocType 'Sync Partner Type'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Secret Fields"
+msgstr "Geheime Felder"
+
+#. Description of the 'API Secret' (Password) field in DocType 'Sync Partner'
+#: sync/public/js/sync_partner.js:193
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Secret value paired with the API key."
+msgstr "Geheimer Wert, der zum API-Schlüssel gehört."
+
+#. Label of the section_break_security (Section Break) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Security Notes"
+msgstr "Sicherheitshinweise"
+
+#: sync/public/js/sync_definition.js:105
+msgid "Select a DocType to load guided field choices."
+msgstr "Wählen Sie einen DocType aus, um eine geführte Feldauswahl zu laden."
+
+#. Description of the 'Frappe Field' (Select) field in DocType 'Sync Field
+#. Mapping'
+#. Description of the 'Frappe Field' (Select) field in DocType 'Sync Key Field'
+#. Description of the 'Field Name' (Select) field in DocType 'Sync Modified
+#. Field'
+#. Description of the 'Frappe Field' (Select) field in DocType 'Sync Value
+#: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
+#: sync/sync/doctype/sync_key_field/sync_key_field.json
+#: sync/sync/doctype/sync_modified_field/sync_modified_field.json
+#: sync/sync/doctype/sync_value_mapping/sync_value_mapping.json
+msgid "Select a field from the chosen DocType."
+msgstr "Wählen Sie ein Feld aus dem ausgewählten DocType aus."
+
+#. Description of the 'Frappe Modified Fields' (Table) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Select one or more DocType fields used to detect Frappe-side changes."
+msgstr "Wählen Sie ein oder mehrere DocType-Felder aus, mit denen Frappe-seitige Änderungen erkannt werden."
+
+#. Description of the 'Partner Modified Fields' (Table) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Select one or more partner-side modified fields aligned with the chosen DocType fields."
+msgstr "Wählen Sie ein oder mehrere partnerseitig geänderte Felder aus, die zu den ausgewählten DocType-Feldern passen."
+
+#: sync/public/js/sync_definition.js:228
+msgid "Select partner-side modified fields from the loaded partner source columns."
+msgstr "Wählen Sie partnerseitig geänderte Felder aus den geladenen Spalten der Partnerquelle aus."
+
+#. Description of the 'Partner Type' (Link) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Select the connector family that drives the connection hints below."
+msgstr "Wählen Sie die Connector-Familie aus, die die folgenden Verbindungshinweise steuert."
+
+#: sync/public/js/sync_partner.js:56
+msgid "Selects the Firebird connector family and its charset-specific hints."
+msgstr "Wählt die Firebird-Connector-Familie und ihre zeichensatzspezifischen Hinweise aus."
+
+#: sync/public/js/sync_partner.js:54
+msgid "Selects the PostgreSQL connector family and its libpq-specific hints."
+msgstr "Wählt die PostgreSQL-Connector-Familie und ihre libpq-spezifischen Hinweise aus."
+
+#: sync/public/js/sync_partner.js:52
+msgid "Selects the SQL Server connector family and its ODBC-specific hints."
+msgstr "Wählt die SQL-Server-Connector-Familie und ihre ODBC-spezifischen Hinweise aus."
+
+#: sync/public/js/sync_partner.js:57
+msgid "Selects the connector family and drives the visible connection hints below."
+msgstr "Wählt die Connector-Familie aus und steuert die unten sichtbaren Verbindungshinweise."
+
+#: sync/public/js/sync_partner.js:59
+msgid "Server"
+msgstr "Server"
+
+#: sync/public/js/sync_helpers.js:894
+msgid "Server-side import preview is not available yet. You can still import, but conflict hints are limited to this client-side review step."
+msgstr "Die serverseitige Importvorschau ist noch nicht verfügbar. Sie können trotzdem importieren, aber Konflikthinweise sind auf diesen clientseitigen Prüfschritt beschränkt."
+
+#: sync/public/js/sync_definition.js:298
+msgid "Set Partner and Table Name first."
+msgstr "Legen Sie zuerst Partner und Tabellennamen fest."
+
+#: sync/public/js/sync_helpers.js:379
+msgid "Set {0} first."
+msgstr "Legen Sie zuerst {0} fest."
+
+#: sync/public/js/sync_run_item.js:181
+msgid "Shape"
+msgstr "Struktur"
+
+#. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
+#: sync/public/js/sync_run.js:131 sync/public/js/sync_run_item_list.js:13
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Skipped"
+msgstr "Übersprungen"
+
+#. Label of the skipped_count (Int) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Skipped Count"
+msgstr "Anzahl übersprungen"
+
+#. Label of the section_break_source (Section Break) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Source"
+msgstr "Quelle"
+
+#. Label of the source_id (Data) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run_item.js:108
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Source ID"
+msgstr "Quell-ID"
+
+#. Label of the source_side (Select) field in DocType 'Sync Run Item Change'
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "Source Side"
+msgstr "Quellseite"
+
+#. Label of the source_value (Long Text) field in DocType 'Sync Run Item
+#. Change'
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "Source Value"
+msgstr "Quellwert"
+
+#: sync/public/js/sync_helpers.js:411
+msgid "Source settings changed. Refresh the column list before editing partner-side mappings."
+msgstr "Quelleinstellungen wurden geändert. Aktualisieren Sie die Spaltenliste, bevor Sie partnerseitige Zuordnungen bearbeiten."
+
+#: sync/public/js/sync_run.js:139
+msgid "Started"
+msgstr "Gestartet"
+
+#. Label of the started_at (Datetime) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Started At"
+msgstr "Gestartet am"
+
+#. Label of the last_connection_status (Select) field in DocType 'Sync Partner'
+#. Label of the status (Select) field in DocType 'Sync Run'
+#. Label of the status (Select) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_helpers.js:1025 sync/public/js/sync_partner.js:209
+#: sync/public/js/sync_run.js:235 sync/public/js/sync_run.js:407
+#: sync/sync/doctype/sync_partner/sync_partner.json
+#: sync/sync/doctype/sync_run/sync_run.json
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Status"
+msgstr "Status"
+
+#: sync/public/js/sync_run.js:140
+msgid "Still running"
+msgstr "Wird noch ausgeführt"
+
+#. Description of the 'Partner Create ID Source' (Data) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Strategy-specific source value, for example a database sequence name."
+msgstr "Strategiespezifischer Quellwert, z. B. der Name einer Datenbanksequenz."
+
+#. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
+#. Option for the 'Status' (Select) field in DocType 'Sync Partner'
+#. Option for the 'Status' (Select) field in DocType 'Sync Run'
+#: sync/public/js/sync_run.js:128
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_partner/sync_partner.json
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Success"
+msgstr "Erfolg"
+
+#. Label of the success_count (Int) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Success Count"
+msgstr "Anzahl erfolgreich"
+
+#. Label of the summary (Small Text) field in DocType 'Sync Run'
+#: sync/public/js/sync_helpers.js:535 sync/public/js/sync_helpers.js:887
+#: sync/public/js/sync_run.js:173 sync/sync/doctype/sync_run/sync_run.json
+msgid "Summary"
+msgstr "Zusammenfassung"
+
+#. Label of the supports_query (Check) field in DocType 'Sync Partner Type'
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Supports Query"
+msgstr "Unterstützt Abfragen"
+
+#. Label of the supports_table (Check) field in DocType 'Sync Partner Type'
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Supports Table"
+msgstr "Unterstützt Tabellen"
+
+#. Label of a Desktop Icon
+#. Title of a Workspace Sidebar
+#: sync/desktop_icon/sync.json sync/workspace_sidebar/sync.json
+msgid "Sync"
+msgstr "Sync"
+
+#. Label of the section_break_behavior (Section Break) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Sync Behavior"
+msgstr "Sync-Verhalten"
+
+#. Name of a DocType
+#. Label of the sync_definition (Link) field in DocType 'Sync Run'
+#. Label of the sync_definition (Link) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run_item.js:119
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_run/sync_run.json
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Sync Definition"
+msgstr "Sync-Definition"
+
+#. Name of a DocType
+#: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
+msgid "Sync Field Mapping"
+msgstr "Sync-Feldzuordnung"
+
+#. Name of a DocType
+#: sync/sync/doctype/sync_key_field/sync_key_field.json
+msgid "Sync Key Field"
+msgstr "Sync-Schlüsselfeld"
+
+#. Name of a DocType
+#: sync/sync/doctype/sync_modified_field/sync_modified_field.json
+msgid "Sync Modified Field"
+msgstr "Sync-Änderungsfeld"
+
+#. Name of a DocType
+#. Label of the sync_partner (Link) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Sync Partner"
+msgstr "Sync-Partner"
+
+#. Name of a DocType
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+msgid "Sync Partner Type"
+msgstr "Sync-Partnertyp"
+
+#: sync/public/js/sync_helpers.js:505
+msgid "Sync Preview"
+msgstr "Sync-Vorschau"
+
+#. Name of a DocType
+#. Label of the sync_run (Link) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run/sync_run.json
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Sync Run"
+msgstr "Sync-Lauf"
+
+#. Name of a DocType
+#. Label of the sync_run_item (Link) field in DocType 'Sync Run Item Change'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "Sync Run Item"
+msgstr "Sync-Lauf-Element"
+
+#. Name of a DocType
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "Sync Run Item Change"
+msgstr "Sync-Lauf-Element-Änderung"
+
+#. Label of the sync_type (Select) field in DocType 'Sync Definition'
+#. Label of the sync_type (Select) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Sync Type"
+msgstr "Sync-Typ"
+
+#. Name of a DocType
+#: sync/sync/doctype/sync_value_mapping/sync_value_mapping.json
+msgid "Sync Value Mapping"
+msgstr "Sync-Wertzuordnung"
+
+#: sync/public/js/sync_helpers.js:1052
+msgid "Sync definition imported as {0}."
+msgstr "Sync-Definition als {0} importiert."
+
+#: sync/public/js/sync_helpers.js:1053
+msgid "Sync definition imported."
+msgstr "Sync-Definition importiert."
+
+#: sync/public/js/sync_helpers.js:460
+msgid "Sync started."
+msgstr "Synchronisierung gestartet."
+
+#. Name of a role
+#: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_partner/sync_partner.json
+#: sync/sync/doctype/sync_partner_type/sync_partner_type.json
+#: sync/sync/doctype/sync_run/sync_run.json
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "System Manager"
+msgstr "Systemmanager"
+
+#. Label of the table_name (Data) field in DocType 'Sync Definition'
+#: sync/public/js/sync_definition.js:212 sync/public/js/sync_definition.js:265
+#: sync/public/js/sync_definition.js:272 sync/public/js/sync_helpers.js:167
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Table Name"
+msgstr "Tabellenname"
+
+#: sync/public/js/sync_definition.js:400
+msgid "Table Name is required."
+msgstr "Tabellenname ist erforderlich."
+
+#: sync/public/js/sync_run_item.js:121
+msgid "Target DocType"
+msgstr "Ziel-DocType"
+
+#: sync/public/js/sync_run.js:200 sync/public/js/sync_run_item.js:122
+msgid "Target DocType could not be resolved from the Sync Definition."
+msgstr "Der Ziel-DocType konnte nicht aus der Sync-Definition aufgelöst werden."
+
+#: sync/public/js/sync_run.js:161
+msgid "Target DocType unresolved"
+msgstr "Ziel-DocType nicht aufgelöst"
+
+#: sync/public/js/sync_run.js:160 sync/public/js/sync_run.js:199
+msgid "Target DocType: {0}"
+msgstr "Ziel-DocType: {0}"
+
+#. Label of the target_id (Data) field in DocType 'Sync Run Item'
+#: sync/public/js/sync_run_item.js:109
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Target ID"
+msgstr "Ziel-ID"
+
+#. Label of the target_side (Select) field in DocType 'Sync Run Item Change'
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "Target Side"
+msgstr "Zielseite"
+
+#. Label of the target_value (Long Text) field in DocType 'Sync Run Item
+#. Change'
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "Target Value"
+msgstr "Zielwert"
+
+#: sync/public/js/sync_helpers.js:219
+msgid "Technical partner key column used when a new partner row is created."
+msgstr "Technische Partnerschlüsselspalte, die beim Erstellen einer neuen Partnerzeile verwendet wird."
+
+#. Description of the 'Partner Identity Field' (Data) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Technical partner-side identifier, for example NR or id. Used for scoped ID generation and stable link-back into Frappe."
+msgstr "Technische partnerseitige Kennung, z. B. NR oder id. Wird für bereichsbezogene ID-Generierung und stabile Rückverknüpfung nach Frappe verwendet."
+
+#: sync/public/js/sync_partner.js:25
+msgid "Test Connection"
+msgstr "Verbindung testen"
+
+#: sync/public/js/sync_run_item.js:224
+msgid "Text"
+msgstr "Text"
+
+#: sync/public/js/sync_partner.js:219
+msgid "The latest recorded connection test failed. Use Test Connection to refresh it."
+msgstr "Der zuletzt aufgezeichnete Verbindungstest ist fehlgeschlagen. Verwenden Sie „Verbindung testen“, um ihn zu aktualisieren."
+
+#. Description of the 'Status' (Select) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "The latest recorded connection test result."
+msgstr "Das zuletzt aufgezeichnete Ergebnis des Verbindungstests."
+
+#: sync/public/js/sync_partner.js:217
+msgid "The latest recorded connection test succeeded. Use Test Connection to refresh it."
+msgstr "Der zuletzt aufgezeichnete Verbindungstest war erfolgreich. Verwenden Sie „Verbindung testen“, um ihn zu aktualisieren."
+
+#. Label of the time_zone (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Time Zone"
+msgstr "Zeitzone"
+
+#. Label of the timestamp_buffer_seconds (Int) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Timestamp Buffer Seconds"
+msgstr "Zeitstempel-Puffer in Sekunden"
+
+#. Description of the 'Checked On' (Datetime) field in DocType 'Sync Partner'
+#: sync/public/js/sync_partner.js:226
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Timestamp of the latest recorded connection test."
+msgstr "Zeitstempel des zuletzt aufgezeichneten Verbindungstests."
+
+#. Label of the title (Data) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Title"
+msgstr "Titel"
+
+#: sync/public/js/sync_run_item.js:183
+msgid "Top-level Keys"
+msgstr "Schlüssel auf oberster Ebene"
+
+#: sync/public/js/sync_run.js:142
+msgid "Trigger"
+msgstr "Auslöser"
+
+#. Label of the trigger_type (Select) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Trigger Type"
+msgstr "Auslösertyp"
+
+#. Label of the trust_server_certificate (Check) field in DocType 'Sync
+#. Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Trust Server Certificate"
+msgstr "Serverzertifikat vertrauen"
+
+#: sync/public/js/sync_definition.js:389
+msgid "Unable to load field choices."
+msgstr "Feldauswahl konnte nicht geladen werden."
+
+#: sync/public/js/sync_run.js:86
+msgid "Unable to load monitoring details."
+msgstr "Überwachungsdetails konnten nicht geladen werden."
+
+#: sync/public/js/sync_run_item.js:81
+msgid "Unable to load run item summary."
+msgstr "Zusammenfassung des Lauf-Elements konnte nicht geladen werden."
+
+#: sync/public/js/sync_run.js:119
+msgid "Unable to load run items."
+msgstr "Lauf-Elemente konnten nicht geladen werden."
+
+#: sync/public/js/sync_run_item_list.js:68
+msgid "Unable to resolve target DocType."
+msgstr "Ziel-DocType konnte nicht aufgelöst werden."
+
+#: sync/public/js/sync_helpers.js:496
+msgid "Unable to run sync definition"
+msgstr "Sync-Definition kann nicht ausgeführt werden"
+
+#. Option for the 'Status' (Select) field in DocType 'Sync Partner'
+#: sync/public/js/sync_helpers.js:1011 sync/public/js/sync_run.js:142
+#: sync/public/js/sync_run.js:158 sync/public/js/sync_run.js:318
+#: sync/public/js/sync_run.js:425 sync/public/js/sync_run_item.js:107
+#: sync/public/js/sync_run_item.js:240 sync/public/js/sync_run_item_list.js:20
+#: sync/public/js/sync_run_list.js:29
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Unknown"
+msgstr "Unbekannt"
+
+#: sync/public/js/sync_run.js:133
+msgid "Updated"
+msgstr "Aktualisiert"
+
+#. Label of the updated_count (Int) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "Updated Count"
+msgstr "Anzahl aktualisiert"
+
+#: sync/public/js/sync_partner.js:156
+msgid "Use API credentials when the target system exposes key-based access."
+msgstr "API-Zugangsdaten verwenden, wenn das Zielsystem schlüsselbasierten Zugriff bereitstellt."
+
+#. Label of the use_last_sync_date (Check) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Use Last Sync Date"
+msgstr "Letztes Synchronisierungsdatum verwenden"
+
+#: sync/public/js/sync_partner.js:164
+msgid "Use SQL login credentials when the SQL Server connection expects them."
+msgstr "SQL-Anmeldedaten verwenden, wenn die SQL-Server-Verbindung diese erwartet."
+
+#: sync/public/js/sync_partner.js:158
+msgid "Use a certificate path when the connector authenticates through client certificates."
+msgstr "Einen Zertifikatspfad verwenden, wenn der Connector über Client-Zertifikate authentifiziert."
+
+#: sync/public/js/sync_partner.js:165
+msgid "Use standard username/password authentication."
+msgstr "Standardauthentifizierung mit Benutzername und Passwort verwenden."
+
+#: sync/public/js/sync_partner.js:161
+msgid "Use this when SQL Server authentication is handled externally or through the connection string."
+msgstr "Verwenden Sie dies, wenn die SQL-Server-Authentifizierung extern oder über die Verbindungszeichenfolge erfolgt."
+
+#: sync/public/js/sync_partner.js:162
+msgid "Use this when credentials are injected externally or no authentication is needed."
+msgstr "Verwenden Sie dies, wenn Zugangsdaten extern injiziert werden oder keine Authentifizierung erforderlich ist."
+
+#. Description of the 'Charset' (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Used by Firebird connections when an explicit charset is needed."
+msgstr "Wird von Firebird-Verbindungen verwendet, wenn ein expliziter Zeichensatz erforderlich ist."
+
+#. Description of the 'Password' (Password) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Used for password-based authentication."
+msgstr "Wird für passwortbasierte Authentifizierung verwendet."
+
+#. Label of the username (Data) field in DocType 'Sync Partner'
+#: sync/sync/doctype/sync_partner/sync_partner.json
+msgid "Username"
+msgstr "Benutzername"
+
+#: sync/public/js/sync_partner.js:173
+msgid "Username used by the connector for password-based authentication."
+msgstr "Vom Connector für passwortbasierte Authentifizierung verwendeter Benutzername."
+
+#. Label of the value_mapping (Table) field in DocType 'Sync Definition'
+#: sync/public/js/sync_helpers.js:544
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Value Mapping"
+msgstr "Wertzuordnung"
+
+#: sync/public/js/sync_helpers.js:906
+msgid "Warnings"
+msgstr "Warnungen"
+
+#. Description of the 'Mask Credentials in Export' (Check) field in DocType
+#. 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "When enabled, partner secrets are redacted in YAML exports."
+msgstr "Wenn aktiviert, werden Partner-Geheimnisse in YAML-Exporten geschwärzt."
+
+#: sync/public/js/sync_helpers.js:401
+msgid "Working"
+msgstr "In Bearbeitung"
+
+#. Description of the 'Table Name' (Data) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Writable partner table used for inserts, updates, deletes, and as the default read source when Read Query is blank."
+msgstr "Beschreibbare Partnertabelle, die für Einfügungen, Aktualisierungen, Löschungen und als Standard-Lesequelle verwendet wird, wenn die Leseabfrage leer ist."
+
+#: sync/public/js/sync_helpers.js:175 sync/public/js/sync_helpers.js:1190
+msgid "Writable partner table. Required for inserts, updates, deletes, and column introspection. Leave Read Query blank to read the full table."
+msgstr "Beschreibbare Partnertabelle. Erforderlich für Einfügungen, Aktualisierungen, Löschungen und Spalteninspektion. Lassen Sie die Leseabfrage leer, um die vollständige Tabelle zu lesen."
+
+#: sync/public/js/sync_helpers.js:174 sync/public/js/sync_helpers.js:1189
+msgid "Writable partner table. Required for inserts, updates, deletes, and column introspection. Read Query is active, so reads are limited by the query while writes still target Table Name."
+msgstr "Beschreibbare Partnertabelle. Erforderlich für Einfügungen, Aktualisierungen, Löschungen und Spalteninspektion. Die Leseabfrage ist aktiv, daher werden Lesevorgänge durch die Abfrage begrenzt, während Schreibvorgänge weiterhin auf den Tabellennamen zielen."
+
+#: sync/public/js/sync_helpers.js:1122
+msgid "YAML Definition"
+msgstr "YAML-Definition"
+
+#: sync/public/js/sync_helpers.js:836 sync/public/js/sync_helpers.js:845
+msgid "YAML Export"
+msgstr "YAML-Export"
+
+#: sync/public/js/sync_helpers.js:866 sync/public/js/sync_run.js:143
+msgid "Yes"
+msgstr "Ja"
+
+#. Option for the 'One-Way Match Mode' (Select) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "all_matches"
+msgstr "all_matches"
+
+#. Option for the 'Trigger Type' (Select) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "api"
+msgstr "api"
+
+#. Option for the 'Action' (Select) field in DocType 'Sync Run Item'
+#. Option for the 'Status' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "conflict"
+msgstr "conflict"
+
+#. Option for the 'Partner Create ID Strategy' (Select) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "connector_default"
+msgstr "connector_default"
+
+#. Option for the 'Action' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "created"
+msgstr "created"
+
+#: sync/public/js/sync_helpers.js:369
+msgid "current source"
+msgstr "aktuelle Quelle"
+
+#. Option for the 'Action' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "deleted"
+msgstr "deleted"
+
+#. Option for the 'Action' (Select) field in DocType 'Sync Run Item'
+#. Option for the 'Status' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "error"
+msgstr "error"
+
+#. Option for the 'One-Way Match Mode' (Select) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "first_match"
+msgstr "first_match"
+
+#. Option for the 'Source Side' (Select) field in DocType 'Sync Run Item
+#. Change'
+#. Option for the 'Target Side' (Select) field in DocType 'Sync Run Item
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "frappe"
+msgstr "frappe"
+
+#. Option for the 'Trigger Type' (Select) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "manual"
+msgstr "manual"
+
+#. Option for the 'Partner Create ID Strategy' (Select) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "max_plus_one"
+msgstr "max_plus_one"
+
+#: sync/public/js/sync_helpers.js:422
+msgid "more"
+msgstr "mehr"
+
+#. Option for the 'Conflict Policy' (Select) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "newest_wins"
+msgstr "newest_wins"
+
+#. Option for the 'Source Side' (Select) field in DocType 'Sync Run Item
+#. Change'
+#. Option for the 'Target Side' (Select) field in DocType 'Sync Run Item
+#: sync/sync/doctype/sync_run_item_change/sync_run_item_change.json
+msgid "partner"
+msgstr "partner"
+
+#. Option for the 'Partner Create ID Strategy' (Select) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "payload"
+msgstr "payload"
+
+#. Option for the 'Trigger Type' (Select) field in DocType 'Sync Run'
+#: sync/sync/doctype/sync_run/sync_run.json
+msgid "scheduler"
+msgstr "scheduler"
+
+#. Option for the 'Partner Create ID Strategy' (Select) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "sequence"
+msgstr "sequence"
+
+#. Option for the 'Action' (Select) field in DocType 'Sync Run Item'
+#. Option for the 'Status' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "skipped"
+msgstr "skipped"
+
+#. Option for the 'Status' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "success"
+msgstr "success"
+
+#. Option for the 'Action' (Select) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "updated"
+msgstr "updated"
+
+#: sync/public/js/sync_run_item.js:195
+msgid "{0} chars"
+msgstr "{0} Zeichen"
+
+#: sync/public/js/sync_helpers.js:455
+msgid "{0} completed."
+msgstr "{0} abgeschlossen."
+
+#: sync/public/js/sync_helpers.js:455
+msgid "{0} completed: {1}"
+msgstr "{0} abgeschlossen: {1}"
+
+#: sync/public/js/sync_run.js:419 sync/public/js/sync_run_list.js:80
+msgid "{0} conflicts"
+msgstr "{0} Konflikte"
+
+#: sync/public/js/sync_run.js:418 sync/public/js/sync_run_list.js:77
+msgid "{0} errors"
+msgstr "{0} Fehler"
+
+#: sync/public/js/sync_run_list.js:74
+msgid "{0} ok"
+msgstr "{0} OK"
+
+#: sync/public/js/sync_run.js:416 sync/public/js/sync_run_list.js:71
+msgid "{0} processed"
+msgstr "{0} verarbeitet"
+
+#: sync/public/js/sync_helpers.js:458
+msgid "{0} queued."
+msgstr "{0} eingereiht."
+
+#: sync/public/js/sync_helpers.js:458
+msgid "{0} queued: {1}"
+msgstr "{0} eingereiht: {1}"
+
+#: sync/public/js/sync_run.js:417
+msgid "{0} successful"
+msgstr "{0} erfolgreich"
+

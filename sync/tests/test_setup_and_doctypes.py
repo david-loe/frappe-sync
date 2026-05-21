@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 import frappe
 from frappe.model.document import Document
@@ -13,6 +13,9 @@ from sync.sync.doctype.sync_definition import sync_definition as sync_definition
 from sync.sync.doctype.sync_partner import sync_partner as sync_partner_module
 from sync.sync.doctype.sync_partner.sync_partner import SyncPartner
 from sync.sync.doctype.sync_partner_type.sync_partner_type import SyncPartnerType
+from sync.sync.doctype.sync_run import sync_run as sync_run_module
+from sync.sync.doctype.sync_run.sync_run import SyncRun
+from sync.sync.doctype.sync_run_item import sync_run_item as sync_run_item_module
 from sync.sync.doctype.sync_run_item.sync_run_item import SyncRunItem
 
 
@@ -161,7 +164,91 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 	def test_document_classes_are_document_subclasses(self):
 		self.assertTrue(issubclass(SyncPartner, Document))
 		self.assertTrue(issubclass(SyncPartnerType, Document))
+		self.assertTrue(issubclass(SyncRun, Document))
 		self.assertTrue(issubclass(SyncRunItem, Document))
+
+	def test_sync_run_on_trash_deletes_items_and_clears_last_run_links(self):
+		def fake_get_all(doctype, filters=None, fields=None, order_by=None):
+			if doctype == "Sync Run Item":
+				self.assertEqual(filters, {"sync_run": "RUN-1"})
+				return [{"name": "ITEM-1"}, SimpleNamespace(name="ITEM-2")]
+			if doctype == "Sync Definition":
+				self.assertEqual(filters, {"last_run": "RUN-1"})
+				return [{"name": "SYNC-1"}]
+			return []
+
+		delete_doc = Mock()
+		set_value = Mock()
+
+		with patch.object(
+			sync_run_module,
+			"frappe",
+			SimpleNamespace(get_all=fake_get_all, delete_doc=delete_doc, db=SimpleNamespace(set_value=set_value)),
+		):
+			sync_run_module.SyncRun.on_trash(SimpleNamespace(name="RUN-1"))
+
+		delete_doc.assert_has_calls(
+			[
+				call("Sync Run Item", "ITEM-1", ignore_permissions=True),
+				call("Sync Run Item", "ITEM-2", ignore_permissions=True),
+			]
+		)
+		set_value.assert_called_once_with(
+			"Sync Definition",
+			"SYNC-1",
+			"last_run",
+			None,
+			update_modified=False,
+		)
+
+	def test_sync_run_item_on_trash_deletes_item_change_rows(self):
+		def fake_get_all(doctype, filters=None, fields=None, order_by=None):
+			self.assertEqual(doctype, "Sync Run Item Change")
+			self.assertEqual(filters, {"sync_run_item": "ITEM-1"})
+			return [{"name": "CHANGE-1"}, SimpleNamespace(name="CHANGE-2")]
+
+		delete_doc = Mock()
+
+		with patch.object(
+			sync_run_item_module,
+			"frappe",
+			SimpleNamespace(get_all=fake_get_all, delete_doc=delete_doc),
+		):
+			sync_run_item_module.SyncRunItem.on_trash(SimpleNamespace(name="ITEM-1"))
+
+		delete_doc.assert_has_calls(
+			[
+				call("Sync Run Item Change", "CHANGE-1", ignore_permissions=True),
+				call("Sync Run Item Change", "CHANGE-2", ignore_permissions=True),
+			]
+		)
+
+	def test_sync_definition_on_trash_deletes_runs_and_leftover_items(self):
+		def fake_get_all(doctype, filters=None, fields=None, order_by=None):
+			if doctype == "Sync Run":
+				self.assertEqual(filters, {"sync_definition": "SYNC-1"})
+				return [{"name": "RUN-1"}, SimpleNamespace(name="RUN-2")]
+			if doctype == "Sync Run Item":
+				self.assertEqual(filters, {"sync_definition": "SYNC-1"})
+				return [{"name": "ITEM-LEFT"}]
+			return []
+
+		delete_doc = Mock()
+
+		with patch.object(
+			sync_definition_module,
+			"frappe",
+			SimpleNamespace(get_all=fake_get_all, delete_doc=delete_doc),
+		):
+			sync_definition_module.SyncDefinition.on_trash(SimpleNamespace(name="SYNC-1"))
+
+		delete_doc.assert_has_calls(
+			[
+				call("Sync Run", "RUN-1", ignore_permissions=True),
+				call("Sync Run", "RUN-2", ignore_permissions=True),
+				call("Sync Run Item", "ITEM-LEFT", ignore_permissions=True),
+			]
+		)
 
 	def test_sync_partner_validate_normalizes_and_rejects_invalid_time_zone(self):
 		doc = SimpleNamespace(time_zone=" Europe/Berlin ")

@@ -49,6 +49,30 @@ class TestRuntimeExecution(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 
+	def _make_run(self, definition: Any, *, status: str = "Success") -> Any:
+		return frappe.get_doc(
+			{
+				"doctype": "Sync Run",
+				"sync_definition": definition.name,
+				"sync_partner": definition.partner,
+				"sync_type": definition.sync_type,
+				"status": status,
+				"trigger_type": "manual",
+			}
+		).insert(ignore_permissions=True)
+
+	def _make_run_item(self, run: Any, definition: Any, *, record_key: str = "record-1") -> Any:
+		return frappe.get_doc(
+			{
+				"doctype": "Sync Run Item",
+				"sync_run": run.name,
+				"sync_definition": definition.name,
+				"record_key": record_key,
+				"action": "updated",
+				"status": "success",
+			}
+		).insert(ignore_permissions=True)
+
 	def test_execute_sync_definition_persists_success_state(self):
 		partner = self._make_partner()
 		definition = self._make_definition(partner.name)
@@ -115,6 +139,32 @@ class TestRuntimeExecution(IntegrationTestCase):
 		self.assertEqual(definition.last_run, run_doc.name)
 		self.assertEqual(definition.last_run_status, "Error")
 		self.assertIn("boom", definition.last_run_summary)
+
+	def test_delete_sync_run_cascades_items_and_clears_definition_last_run(self):
+		partner = self._make_partner()
+		definition = self._make_definition(partner.name)
+		run = self._make_run(definition)
+		item = self._make_run_item(run, definition)
+		definition.db_set("last_run", run.name, update_modified=False)
+
+		frappe.delete_doc("Sync Run", run.name, ignore_permissions=True)
+
+		self.assertFalse(frappe.db.exists("Sync Run Item", item.name))
+		definition.reload()
+		self.assertFalse(definition.last_run)
+
+	def test_delete_sync_definition_cascades_runs_and_items(self):
+		partner = self._make_partner()
+		definition = self._make_definition(partner.name)
+		run = self._make_run(definition)
+		item = self._make_run_item(run, definition)
+		definition.db_set("last_run", run.name, update_modified=False)
+
+		frappe.delete_doc("Sync Definition", definition.name, ignore_permissions=True)
+
+		self.assertFalse(frappe.db.exists("Sync Definition", definition.name))
+		self.assertFalse(frappe.db.exists("Sync Run", run.name))
+		self.assertFalse(frappe.db.exists("Sync Run Item", item.name))
 
 	def test_enqueue_sync_definition_creates_queued_run(self):
 		partner = self._make_partner()

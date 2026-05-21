@@ -20,6 +20,13 @@ class SyncDefinition(Document):
 		SyncDefinition.validate_one_way_match_mode(self)
 		SyncDefinition.validate_preview_limit(self)
 
+	def on_trash(self):
+		for run_name in _linked_names("Sync Run", {"sync_definition": self.name}):
+			frappe.delete_doc("Sync Run", run_name, ignore_permissions=True)
+
+		for item_name in _linked_names("Sync Run Item", {"sync_definition": self.name}):
+			frappe.delete_doc("Sync Run Item", item_name, ignore_permissions=True)
+
 	def validate_field_mapping(self):
 		seen: set[str] = set()
 		duplicates: list[str] = []
@@ -194,6 +201,11 @@ def _split_lines(value: str | None) -> list[str]:
 	if not value:
 		return []
 	return [line.strip() for line in value.splitlines() if line.strip()]
+
+
+def _linked_names(doctype: str, filters: dict) -> list[str]:
+	rows = frappe.get_all(doctype, filters=filters, fields=["name"], order_by=None)
+	return [row.name if hasattr(row, "name") else row.get("name") for row in rows]
 
 
 def _clean_value(value: str | None) -> str | None:

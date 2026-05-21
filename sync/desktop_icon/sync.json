@@ -1,0 +1,21 @@
+{
+ "app": "sync",
+ "bg_color": "gray",
+ "creation": "2026-05-21 13:01:43.029442",
+ "docstatus": 0,
+ "doctype": "Desktop Icon",
+ "hidden": 0,
+ "icon_type": "Link",
+ "idx": 0,
+ "label": "Sync",
+ "link_to": "Sync",
+ "link_type": "Workspace Sidebar",
+ "modified": "2026-05-21 13:01:43.029442",
+ "modified_by": "Administrator",
+ "name": "Sync",
+ "owner": "Administrator",
+ "restrict_removal": 0,
+ "roles": [],
+ "sidebar": "Sync",
+ "standard": 1
+}

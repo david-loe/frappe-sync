@@ -1,0 +1,58 @@
+{
+ "app": "sync",
+ "creation": "2026-05-21 12:56:36.554326",
+ "docstatus": 0,
+ "doctype": "Workspace Sidebar",
+ "header_icon": "repeat",
+ "idx": 0,
+ "items": [
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "folder-sync",
+   "indent": 0,
+   "keep_closed": 0,
+   "link_to": "Sync Run",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "indent": 0,
+   "keep_closed": 0,
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Spacer"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "file-cog",
+   "indent": 0,
+   "keep_closed": 0,
+   "link_to": "Sync Definition",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "database-backup",
+   "indent": 0,
+   "keep_closed": 0,
+   "link_to": "Sync Partner",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-05-21 12:56:36.554326",
+ "modified_by": "Administrator",
+ "name": "Sync",
+ "owner": "Administrator",
+ "standard": 1,
+ "title": "Sync"
+}
