@@ -13,7 +13,7 @@ import frappe
 from frappe.utils import cint
 from frappe.utils.password import get_decrypted_password
 
-IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+IDENTIFIER_RE = re.compile(r"^[^\W\d]\w*$", re.UNICODE)
 JSON_CONFIG_FIELDS = {
 	"connection_options",
 }

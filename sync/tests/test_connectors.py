@@ -322,6 +322,18 @@ class TestRelationalConnectorSql(unittest.TestCase):
 		with self.assertRaisesRegex(ValueError, "Identifier is empty"):
 			connector._quote_compound_identifier("  ")
 
+	def test_quote_compound_identifier_accepts_postgres_unicode_parts(self):
+		connector = PostgresConnector(DummyPartner("postgres"))
+
+		self.assertEqual(connector._quote_compound_identifier("änderung"), '"änderung"')
+		self.assertEqual(connector._quote_compound_identifier("public.änderung"), '"public"."änderung"')
+
+	def test_quote_compound_identifier_accepts_firebird_unicode_parts_as_uppercase(self):
+		connector = FirebirdConnector(DummyPartner("firebird"))
+
+		self.assertEqual(connector._quote_compound_identifier("änderung"), '"ÄNDERUNG"')
+		self.assertEqual(connector._quote_compound_identifier("personen.änderung"), '"PERSONEN"."ÄNDERUNG"')
+
 	def test_quote_compound_identifier_accepts_mssql_numeric_bracketed_and_unicode_parts(self):
 		connector = MssqlConnector(DummyPartner("mssql"))
 
@@ -518,6 +530,26 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 			('UPDATE "public"."sync_records" SET "status" = %s WHERE "id" = %s', ["closed", "A1"]),
 		)
 		self.assertEqual(connection.commit_count, 1)
+
+	def test_upsert_record_accepts_postgres_unicode_columns(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
+		cursor = _FakeCursor(rowcount=1)
+		connection = _FakeConnection(cursor)
+
+		with patch.object(connector, "_connect", return_value=connection):
+			result = connector.upsert_record(
+				record={"id": "A1", "änderung": "2026-05-21 16:54:02"},
+				key_fields=["name"],
+				mapping={"name": "id", "modified": "änderung"},
+				source="public.personen",
+			)
+
+		self.assertTrue(result.ok)
+		self.assertEqual(result.message, "postgres update succeeded")
+		self.assertEqual(
+			cursor.executed[0],
+			('UPDATE "public"."personen" SET "änderung" = %s WHERE "id" = %s', ["2026-05-21 16:54:02", "A1"]),
+		)
 
 	def test_upsert_record_uses_insert_path_when_update_touches_no_rows(self):
 		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
