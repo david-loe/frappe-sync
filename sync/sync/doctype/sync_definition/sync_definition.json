@@ -26,6 +26,9 @@
   "table_name",
   "read_query",
   "partner_columns_status",
+  "partner_columns",
+  "partner_columns_signature",
+  "partner_columns_loaded_at",
   "section_break_filters",
   "filter_expression",
   "column_break_modified_fields",
@@ -190,6 +193,24 @@
    "label": "Partner Columns"
   },
   {
+   "fieldname": "partner_columns",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "partner_columns_signature",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "partner_columns_loaded_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "section_break_filters",
    "fieldtype": "Section Break",
    "label": "Filters"
@@ -251,7 +272,7 @@
   },
   {
    "fieldname": "partner_identity_field",
-   "fieldtype": "Data",
+   "fieldtype": "Select",
    "label": "Partner Identity Field",
    "description": "Technical partner-side identifier, for example NR or id. Used for scoped ID generation and stable link-back into Frappe."
   },
@@ -263,7 +284,7 @@
   },
   {
    "fieldname": "partner_frappe_identity_field",
-   "fieldtype": "Data",
+   "fieldtype": "Select",
    "label": "Partner Frappe Identity Field",
    "description": "Optional partner-side column that receives the Frappe document name for a symmetric cross-link."
   },
@@ -353,7 +374,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-21 00:00:00.000000",
+ "modified": "2026-05-21 12:00:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

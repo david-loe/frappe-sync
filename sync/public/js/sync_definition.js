@@ -44,6 +44,11 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.setupDefinitionPartnerColumnPanel(frm);
 		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
 	},
+	partner_columns(frm) {
+		sync.helpers.refreshDefinitionPartnerColumnState(frm);
+		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
+		sync.helpers.renderDefinitionPartnerColumnPanel(frm);
+	},
 	delete_missing(frm) {
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 	},
@@ -89,6 +94,9 @@ sync.helpers.collectDefinitionFieldChoiceValues = function (frm) {
 			values.push(row.field_name);
 		}
 	});
+	if (frm.doc.frappe_partner_identity_field) {
+		values.push(frm.doc.frappe_partner_identity_field);
+	}
 	return values;
 };
 
@@ -114,37 +122,65 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields) {
 		frm.refresh_field(tableField);
 	});
 
+	frm.set_df_property("frappe_partner_identity_field", "options", options);
+	frm.set_df_property("frappe_partner_identity_field", "description", description);
+	frm.refresh_field("frappe_partner_identity_field");
+
 	const modifiedFieldsGrid = frm.fields_dict.frappe_modified_field_rows?.grid;
-	if (!modifiedFieldsGrid) {
-		return;
+	if (modifiedFieldsGrid) {
+		modifiedFieldsGrid.update_docfield_property("field_name", "options", options);
+		modifiedFieldsGrid.update_docfield_property("field_name", "description", description);
+		frm.refresh_field("frappe_modified_field_rows");
 	}
-	modifiedFieldsGrid.update_docfield_property("field_name", "options", options);
-	modifiedFieldsGrid.update_docfield_property("field_name", "description", description);
-	frm.refresh_field("frappe_modified_field_rows");
 };
 
-sync.helpers.collectDefinitionPartnerFieldValues = function (frm) {
-	const values = [];
-	(frm.doc.field_mapping || []).forEach((row) => {
-		if (row?.partner_field) {
-			values.push(row.partner_field);
-		}
-	});
-	(frm.doc.partner_modified_field_rows || []).forEach((row) => {
-		if (row?.field_name) {
-			values.push(row.field_name);
-		}
-	});
-	return [...new Set(values.filter(Boolean))];
+sync.helpers.parseDefinitionPartnerColumns = function (rawColumns) {
+	if (!rawColumns) {
+		return [];
+	}
+	if (Array.isArray(rawColumns)) {
+		return sync.helpers.normalizePartnerColumnChoices(rawColumns);
+	}
+	if (typeof rawColumns === "object") {
+		return sync.helpers.normalizePartnerColumnChoices(rawColumns);
+	}
+
+	const raw = String(rawColumns || "").trim();
+	if (!raw) {
+		return [];
+	}
+
+	try {
+		return sync.helpers.normalizePartnerColumnChoices(JSON.parse(raw));
+	} catch (error) {
+		return sync.helpers.normalizePartnerColumnChoices(
+			raw
+				.split(/\r?\n|,/)
+				.map((value) => value.trim())
+				.filter(Boolean)
+		);
+	}
+};
+
+sync.helpers.serializeDefinitionPartnerColumns = function (columns) {
+	const values = [
+		...new Set(
+			(Array.isArray(columns) ? columns : [])
+				.map((column) => column?.value || column?.label || column)
+				.map((value) => String(value || "").trim())
+				.filter(Boolean)
+		),
+	];
+	return JSON.stringify(values, null, 2);
 };
 
 sync.helpers.getDefinitionPartnerColumnState = function (frm) {
 	if (!frm.__sync_partner_columns) {
 		frm.__sync_partner_columns = {
-			columns: [],
-			loaded_signature: null,
+			columns: sync.helpers.parseDefinitionPartnerColumns(frm.doc.partner_columns),
+			loaded_signature: String(frm.doc.partner_columns_signature || "").trim() || null,
 			current_signature: null,
-			loaded_at: null,
+			loaded_at: frm.doc.partner_columns_loaded_at || null,
 			loading: false,
 			stale: false,
 			error: "",
@@ -180,19 +216,18 @@ sync.helpers.refreshDefinitionPartnerColumnState = function (frm) {
 	const ready = sync.helpers.isDefinitionPartnerColumnReady(frm);
 	const signature = ready ? sync.helpers.getDefinitionPartnerColumnSignature(frm) : null;
 
+	state.columns = sync.helpers.parseDefinitionPartnerColumns(frm.doc.partner_columns);
+	state.loaded_signature = String(frm.doc.partner_columns_signature || "").trim() || null;
+	state.loaded_at = frm.doc.partner_columns_loaded_at || null;
 	state.current_signature = signature;
 	if (!ready) {
-		state.columns = [];
-		state.loaded_signature = null;
-		state.loaded_at = null;
 		state.loading = false;
-		state.stale = false;
+		state.stale = Boolean(state.loaded_signature);
 		state.error = "";
 		return state;
 	}
 
 	if (state.loaded_signature && state.loaded_signature !== signature) {
-		state.columns = [];
 		state.loading = false;
 		state.stale = true;
 		state.error = "";
@@ -208,41 +243,36 @@ sync.helpers.refreshDefinitionPartnerColumnState = function (frm) {
 sync.helpers.applyDefinitionPartnerColumnChoices = function (frm) {
 	const state = sync.helpers.getDefinitionPartnerColumnState(frm);
 	const columns = Array.isArray(state.columns) ? state.columns : [];
-	const currentValues = sync.helpers.collectDefinitionPartnerFieldValues(frm);
-	const sourceLabel = sync.helpers.getDefinitionSourceReadQuery(frm) ? __("Read Query") : __("Table Name");
-	const sourceDetails = sync.helpers.getDefinitionSourceReadQuery(frm)
-		? __("Partner rows are loaded from the Read Query, while writes still target Table Name.")
-		: __("Partner rows are loaded directly from Table Name.");
-	const augmentedColumns = [
-		...columns,
-		...currentValues
-			.filter((value) => !columns.some((column) => column?.value === value))
-			.map((value) => ({ label: value, value })),
-	];
-	const autocompleteOptions = JSON.stringify(augmentedColumns);
-	const modifiedFieldOptions = ["", ...new Set(augmentedColumns.map((column) => column?.value).filter(Boolean))].join("\n");
+	const partnerFieldOptions = ["", ...new Set(columns.map((column) => column?.value).filter(Boolean))].join("\n");
 	const partnerFieldDescription = columns.length
-		? __("Autocomplete suggestions loaded from the current partner source.")
-		: __("Load partner columns from the current source to get mapping suggestions.");
+		? __("Partner field choices loaded from the stored partner columns.")
+		: __("Load partner columns from {0} to get guided partner-side field selection.", [
+				sync.helpers.getDefinitionSourceReadQuery(frm) ? __("Read Query") : __("Table Name"),
+		  ]);
 	const partnerModifiedDescription = columns.length
 		? __("Select partner-side modified fields from the loaded partner source columns.")
-		: __("Load partner columns from the current source to guide partner-side modified fields.");
+		: partnerFieldDescription;
 
 	const fieldMappingGrid = frm.fields_dict.field_mapping?.grid;
 	if (fieldMappingGrid) {
-		fieldMappingGrid.update_docfield_property("partner_field", "fieldtype", columns.length ? "Autocomplete" : "Data");
-		fieldMappingGrid.update_docfield_property("partner_field", "options", columns.length ? autocompleteOptions : "");
-		fieldMappingGrid.update_docfield_property("partner_field", "ignore_validation", 1);
+		fieldMappingGrid.update_docfield_property("partner_field", "fieldtype", "Select");
+		fieldMappingGrid.update_docfield_property("partner_field", "options", partnerFieldOptions);
+		fieldMappingGrid.update_docfield_property("partner_field", "ignore_validation", 0);
 		fieldMappingGrid.update_docfield_property("partner_field", "description", partnerFieldDescription);
 		frm.refresh_field("field_mapping");
 	}
 
 	const modifiedFieldsGrid = frm.fields_dict.partner_modified_field_rows?.grid;
 	if (modifiedFieldsGrid) {
-		modifiedFieldsGrid.update_docfield_property("field_name", "options", modifiedFieldOptions);
+		modifiedFieldsGrid.update_docfield_property("field_name", "options", partnerFieldOptions);
 		modifiedFieldsGrid.update_docfield_property("field_name", "description", partnerModifiedDescription);
 		frm.refresh_field("partner_modified_field_rows");
 	}
+
+	["partner_identity_field", "partner_frappe_identity_field"].forEach((fieldname) => {
+		frm.set_df_property(fieldname, "options", partnerFieldOptions);
+		frm.refresh_field(fieldname);
+	});
 };
 
 sync.helpers.refreshDefinitionPartnerColumnChoices = function (frm) {
@@ -314,13 +344,18 @@ sync.helpers.loadDefinitionPartnerColumns = function (frm) {
 		.then((response) => {
 			const payload = response?.message || {};
 			const columns = sync.helpers.normalizePartnerColumnChoices(payload);
+			const signature = sync.helpers.getDefinitionPartnerColumnSignature(frm);
+			const loadedAt = payload.loaded_at || payload.refreshed_at || frappe.datetime.now_datetime();
 			state.columns = columns;
-			state.loaded_signature = sync.helpers.getDefinitionPartnerColumnSignature(frm);
+			state.loaded_signature = signature;
 			state.current_signature = state.loaded_signature;
-			state.loaded_at = payload.loaded_at || payload.refreshed_at || frappe.datetime.now_datetime();
+			state.loaded_at = loadedAt;
 			state.loading = false;
 			state.stale = false;
 			state.error = "";
+			frm.set_value("partner_columns", sync.helpers.serializeDefinitionPartnerColumns(columns));
+			frm.set_value("partner_columns_signature", signature);
+			frm.set_value("partner_columns_loaded_at", loadedAt);
 			sync.helpers.applyDefinitionPartnerColumnChoices(frm);
 			sync.helpers.renderDefinitionPartnerColumnPanel(frm);
 			frappe.show_alert({
@@ -330,11 +365,10 @@ sync.helpers.loadDefinitionPartnerColumns = function (frm) {
 			return columns;
 		})
 		.catch((error) => {
-			state.columns = [];
 			state.loading = false;
 			state.stale = true;
 			state.error = sync.helpers.isMissingApiMethodError(error)
-				? __("Partner-column loading is not available yet. You can continue with manual partner field names.")
+				? __("Partner-column loading is not available yet. Partner field selections require stored partner columns.")
 				: sync.helpers.extractApiErrorMessage(error);
 			sync.helpers.applyDefinitionPartnerColumnChoices(frm);
 			sync.helpers.renderDefinitionPartnerColumnPanel(frm);

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, call, patch
@@ -161,11 +163,35 @@ class TestSetupModule(unittest.TestCase):
 
 
 class TestSyncDefinitionDoctype(unittest.TestCase):
+	def _load_doctype_json(self, relative_path):
+		path = Path(sync.__file__).resolve().parent / relative_path
+		return json.loads(path.read_text())
+
+	def _field_by_name(self, doctype_json, fieldname):
+		return next(field for field in doctype_json["fields"] if field["fieldname"] == fieldname)
+
 	def test_document_classes_are_document_subclasses(self):
 		self.assertTrue(issubclass(SyncPartner, Document))
 		self.assertTrue(issubclass(SyncPartnerType, Document))
 		self.assertTrue(issubclass(SyncRun, Document))
 		self.assertTrue(issubclass(SyncRunItem, Document))
+
+	def test_sync_definition_partner_column_metadata_uses_stored_select_options(self):
+		sync_definition_json = self._load_doctype_json("sync/doctype/sync_definition/sync_definition.json")
+		field_mapping_json = self._load_doctype_json("sync/doctype/sync_field_mapping/sync_field_mapping.json")
+		modified_field_json = self._load_doctype_json("sync/doctype/sync_modified_field/sync_modified_field.json")
+
+		for fieldname in ("partner_columns", "partner_columns_signature", "partner_columns_loaded_at"):
+			field = self._field_by_name(sync_definition_json, fieldname)
+			self.assertEqual(field.get("hidden"), 1)
+			self.assertEqual(field.get("read_only"), 1)
+
+		self.assertEqual(self._field_by_name(sync_definition_json, "partner_columns")["fieldtype"], "JSON")
+		self.assertEqual(self._field_by_name(sync_definition_json, "partner_identity_field")["fieldtype"], "Select")
+		self.assertEqual(self._field_by_name(sync_definition_json, "partner_frappe_identity_field")["fieldtype"], "Select")
+		self.assertEqual(self._field_by_name(sync_definition_json, "frappe_partner_identity_field")["fieldtype"], "Select")
+		self.assertEqual(self._field_by_name(field_mapping_json, "partner_field")["fieldtype"], "Select")
+		self.assertEqual(self._field_by_name(modified_field_json, "field_name")["fieldtype"], "Select")
 
 	def test_sync_run_on_trash_deletes_items_and_clears_last_run_links(self):
 		def fake_get_all(doctype, filters=None, fields=None, order_by=None):

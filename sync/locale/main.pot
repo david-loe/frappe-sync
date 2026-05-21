@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sync VERSION\n"
 "Report-Msgid-Bugs-To: kontak@david-loe.de\n"
-"POT-Creation-Date: 2026-05-21 10:30+0000\n"
-"PO-Revision-Date: 2026-05-21 10:30+0000\n"
+"POT-Creation-Date: 2026-05-21 12:13+0000\n"
+"PO-Revision-Date: 2026-05-21 12:13+0000\n"
 "Last-Translator: kontak@david-loe.de\n"
 "Language-Team: kontak@david-loe.de\n"
 "MIME-Version: 1.0\n"
@@ -105,10 +105,6 @@ msgstr ""
 #. Label of the auth_type (Select) field in DocType 'Sync Partner'
 #: sync/sync/doctype/sync_partner/sync_partner.json
 msgid "Authentication Type"
-msgstr ""
-
-#: sync/public/js/sync_definition.js:225
-msgid "Autocomplete suggestions loaded from the current partner source."
 msgstr ""
 
 #: sync/public/js/sync_helpers.js:877
@@ -315,7 +311,7 @@ msgstr ""
 msgid "Delete Missing"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:403
+#: sync/public/js/sync_definition.js:437
 msgid "Delete Missing cannot be enabled when Read Query is used."
 msgstr ""
 
@@ -375,7 +371,7 @@ msgid "Driver Options"
 msgstr ""
 
 #. Label of the dry_run (Check) field in DocType 'Sync Run'
-#: sync/public/js/sync_definition.js:61 sync/public/js/sync_run.js:143
+#: sync/public/js/sync_definition.js:66 sync/public/js/sync_run.js:143
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Dry Run"
 msgstr ""
@@ -441,7 +437,7 @@ msgstr ""
 msgid "Execution Timing"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:67
+#: sync/public/js/sync_definition.js:72
 msgid "Export YAML"
 msgstr ""
 
@@ -461,7 +457,7 @@ msgstr ""
 msgid "Field Name"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:104
+#: sync/public/js/sync_definition.js:112
 msgid "Field choices loaded from {0}."
 msgstr ""
 
@@ -479,11 +475,11 @@ msgstr ""
 msgid "Fields used to detect changes on Frappe side."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:358
+#: sync/public/js/sync_definition.js:392
 msgid "Fields used to detect changes on the Frappe side."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:363 sync/public/js/sync_helpers.js:1241
+#: sync/public/js/sync_definition.js:397 sync/public/js/sync_helpers.js:1241
 msgid "Fields used to detect changes on the partner side."
 msgstr ""
 
@@ -646,7 +642,7 @@ msgstr ""
 msgid "Import Sync Definition"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:70
+#: sync/public/js/sync_definition.js:75
 msgid "Import YAML"
 msgstr ""
 
@@ -741,15 +737,7 @@ msgstr ""
 msgid "Load Columns"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:226
-msgid "Load partner columns from the current source to get mapping suggestions."
-msgstr ""
-
-#: sync/public/js/sync_definition.js:229
-msgid "Load partner columns from the current source to guide partner-side modified fields."
-msgstr ""
-
-#: sync/public/js/sync_helpers.js:414
+#: sync/public/js/sync_definition.js:250 sync/public/js/sync_helpers.js:414
 msgid "Load partner columns from {0} to get guided partner-side field selection."
 msgstr ""
 
@@ -757,7 +745,7 @@ msgstr ""
 msgid "Loaded {0} partner columns from {1}."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:327
+#: sync/public/js/sync_definition.js:362
 msgid "Loaded {0} partner columns."
 msgstr ""
 
@@ -769,7 +757,7 @@ msgstr ""
 msgid "Loading partner columns from the configured source..."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:312
+#: sync/public/js/sync_definition.js:342
 msgid "Loading partner columns…"
 msgstr ""
 
@@ -1027,7 +1015,7 @@ msgstr ""
 msgid "Open Items"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:73
+#: sync/public/js/sync_definition.js:78
 msgid "Open Latest Run"
 msgstr ""
 
@@ -1107,7 +1095,7 @@ msgstr ""
 msgid "Optional partner field that stores the Frappe document name for traceability."
 msgstr ""
 
-#. Description of the 'Partner Frappe Identity Field' (Data) field in DocType
+#. Description of the 'Partner Frappe Identity Field' (Select) field in DocType
 #. 'Sync Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Optional partner-side column that receives the Frappe document name for a symmetric cross-link."
@@ -1129,7 +1117,7 @@ msgid "Partial Error"
 msgstr ""
 
 #. Label of the partner (Link) field in DocType 'Sync Definition'
-#: sync/public/js/sync_definition.js:262
+#: sync/public/js/sync_definition.js:292
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Partner"
 msgstr ""
@@ -1166,7 +1154,7 @@ msgstr ""
 msgid "Partner Create ID Strategy"
 msgstr ""
 
-#. Label of the partner_field (Data) field in DocType 'Sync Field Mapping'
+#. Label of the partner_field (Select) field in DocType 'Sync Field Mapping'
 #: sync/public/js/sync_helpers.js:725
 #: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
 msgid "Partner Field"
@@ -1176,7 +1164,7 @@ msgstr ""
 msgid "Partner Frappe ID Field"
 msgstr ""
 
-#. Label of the partner_frappe_identity_field (Data) field in DocType 'Sync
+#. Label of the partner_frappe_identity_field (Select) field in DocType 'Sync
 #. Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Partner Frappe Identity Field"
@@ -1188,7 +1176,7 @@ msgstr ""
 msgid "Partner Identity"
 msgstr ""
 
-#. Label of the partner_identity_field (Data) field in DocType 'Sync
+#. Label of the partner_identity_field (Select) field in DocType 'Sync
 #. Definition'
 #: sync/public/js/sync_helpers.js:213
 #: sync/sync/doctype/sync_definition/sync_definition.json
@@ -1231,11 +1219,15 @@ msgstr ""
 msgid "Partner column loading is only available after a partner and table name are set."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:215 sync/public/js/sync_definition.js:275
+#: sync/public/js/sync_definition.js:248
+msgid "Partner field choices loaded from the stored partner columns."
+msgstr ""
+
+#: sync/public/js/sync_definition.js:305
 msgid "Partner rows are loaded directly from Table Name."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:214 sync/public/js/sync_definition.js:274
+#: sync/public/js/sync_definition.js:304
 msgid "Partner rows are loaded from the Read Query, while writes still target Table Name."
 msgstr ""
 
@@ -1244,8 +1236,8 @@ msgstr ""
 msgid "Partner to Frappe"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:337
-msgid "Partner-column loading is not available yet. You can continue with manual partner field names."
+#: sync/public/js/sync_definition.js:371
+msgid "Partner-column loading is not available yet. Partner field selections require stored partner columns."
 msgstr ""
 
 #. Option for the 'Authentication Type' (Select) field in DocType 'Sync
@@ -1284,7 +1276,7 @@ msgstr ""
 
 #. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
 #. Option for the 'Status' (Select) field in DocType 'Sync Run'
-#: sync/public/js/sync_definition.js:64 sync/public/js/sync_helpers.js:1170
+#: sync/public/js/sync_definition.js:69 sync/public/js/sync_helpers.js:1170
 #: sync/sync/doctype/sync_definition/sync_definition.json
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Preview"
@@ -1334,13 +1326,12 @@ msgid "Raw Preview Data"
 msgstr ""
 
 #. Label of the read_query (Code) field in DocType 'Sync Definition'
-#: sync/public/js/sync_definition.js:212 sync/public/js/sync_definition.js:272
-#: sync/public/js/sync_helpers.js:182
+#: sync/public/js/sync_definition.js:302 sync/public/js/sync_helpers.js:182
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Read Query"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:412
+#: sync/public/js/sync_definition.js:446
 msgid "Read Query is active. Partner rows are loaded from the query, while inserts and updates still target Table Name."
 msgstr ""
 
@@ -1416,7 +1407,7 @@ msgstr ""
 msgid "Run Notes"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:58
+#: sync/public/js/sync_definition.js:63
 msgid "Run Now"
 msgstr ""
 
@@ -1488,7 +1479,7 @@ msgstr ""
 msgid "Security Notes"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:105
+#: sync/public/js/sync_definition.js:113
 msgid "Select a DocType to load guided field choices."
 msgstr ""
 
@@ -1518,7 +1509,7 @@ msgstr ""
 msgid "Select one or more partner-side modified fields aligned with the chosen DocType fields."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:228
+#: sync/public/js/sync_definition.js:253
 msgid "Select partner-side modified fields from the loaded partner source columns."
 msgstr ""
 
@@ -1551,7 +1542,7 @@ msgstr ""
 msgid "Server-side import preview is not available yet. You can still import, but conflict hints are limited to this client-side review step."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:298
+#: sync/public/js/sync_definition.js:328
 msgid "Set Partner and Table Name first."
 msgstr ""
 
@@ -1773,13 +1764,13 @@ msgid "System Manager"
 msgstr ""
 
 #. Label of the table_name (Data) field in DocType 'Sync Definition'
-#: sync/public/js/sync_definition.js:212 sync/public/js/sync_definition.js:265
-#: sync/public/js/sync_definition.js:272 sync/public/js/sync_helpers.js:167
+#: sync/public/js/sync_definition.js:295 sync/public/js/sync_definition.js:302
+#: sync/public/js/sync_helpers.js:167
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Table Name"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:400
+#: sync/public/js/sync_definition.js:434
 msgid "Table Name is required."
 msgstr ""
 
@@ -1820,7 +1811,7 @@ msgstr ""
 msgid "Technical partner key column used when a new partner row is created."
 msgstr ""
 
-#. Description of the 'Partner Identity Field' (Data) field in DocType 'Sync
+#. Description of the 'Partner Identity Field' (Select) field in DocType 'Sync
 #. Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Technical partner-side identifier, for example NR or id. Used for scoped ID generation and stable link-back into Frappe."
@@ -1888,7 +1879,7 @@ msgstr ""
 msgid "Trust Server Certificate"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:389
+#: sync/public/js/sync_definition.js:423
 msgid "Unable to load field choices."
 msgstr ""
 
