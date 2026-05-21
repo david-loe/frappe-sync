@@ -111,8 +111,8 @@ class TestRuntimeAdditional(unittest.TestCase):
 			"2026-03-17T10:00:00.000000+00:00",
 		)
 		self.assertIsNone(runtime._normalize_datetime_string_pairing_key("2026/03/17"))
-		self.assertEqual(runtime._normalize_pairing_key_value(True), ("bool", True))
-		self.assertEqual(runtime._normalize_pairing_key_value(1.2300), "1.23")
+		self.assertEqual(runtime._normalize_pairing_key_value(True), ("number", "1"))
+		self.assertEqual(runtime._normalize_pairing_key_value(1.2300), ("number", "1.23"))
 		self.assertEqual(
 			runtime._normalize_pairing_key_value(datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)),
 			("datetime", "2026-03-17T12:00:00.000000+00:00"),

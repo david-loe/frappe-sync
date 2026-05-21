@@ -1847,6 +1847,7 @@ def _upsert_frappe_record(
 ) -> str | None:
 	if dry_run:
 		return existing_name
+	mapped_modified = payload["modified"] if "modified" in payload else AUDIT_RECORD_UNSET
 	if existing_name:
 		doc = frappe.get_doc(doctype, existing_name)
 		for key, value in payload.items():
@@ -1855,6 +1856,7 @@ def _upsert_frappe_record(
 			if _doctype_has_field(doctype, key):
 				doc.set(key, value)
 		doc.save(ignore_permissions=True)
+		_set_mapped_frappe_modified(doctype, doc.name, mapped_modified)
 		return doc.name
 
 	doc = frappe.new_doc(doctype)
@@ -1864,7 +1866,20 @@ def _upsert_frappe_record(
 		if _doctype_has_field(doctype, key):
 			doc.set(key, value)
 	doc.insert(ignore_permissions=True)
+	_set_mapped_frappe_modified(doctype, doc.name, mapped_modified)
 	return doc.name
+
+
+def _set_mapped_frappe_modified(doctype: str, name: str | None, value: Any) -> None:
+	if value is AUDIT_RECORD_UNSET or not name:
+		return
+	modified = _normalize_mapped_frappe_modified(value)
+	frappe.db.set_value(doctype, name, "modified", modified, update_modified=False)
+
+
+def _normalize_mapped_frappe_modified(value: Any) -> Any:
+	parsed = _parse_datetime(value, target_time_zone=_site_time_zone())
+	return parsed if parsed is not None else value
 
 
 def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
@@ -2243,7 +2258,36 @@ def _normalize_field_value(
 			return value.replace(tzinfo=None)
 	if isinstance(value, list | dict):
 		return json.dumps(value, sort_keys=True, default=str, ensure_ascii=True)
+	return _normalize_comparable_scalar_value(value)
+
+
+def _normalize_comparable_scalar_value(value: Any) -> Any:
+	decimal_value = _finite_decimal_from_scalar(value)
+	if decimal_value is not None:
+		return ("number", _normalize_decimal_pairing_key(decimal_value))
 	return value
+
+
+def _finite_decimal_from_scalar(value: Any) -> Decimal | None:
+	if isinstance(value, bool):
+		return Decimal(1 if value else 0)
+	if isinstance(value, Decimal):
+		return value if value.is_finite() else None
+	if isinstance(value, int | float):
+		return _finite_decimal_from_string(str(value))
+	if isinstance(value, str):
+		return _finite_decimal_from_string(value.strip())
+	return None
+
+
+def _finite_decimal_from_string(value: str) -> Decimal | None:
+	if not value:
+		return None
+	try:
+		decimal_value = Decimal(value)
+	except (InvalidOperation, ValueError):
+		return None
+	return decimal_value if decimal_value.is_finite() else None
 
 
 def _record_changed_since(
@@ -2467,16 +2511,8 @@ def _normalize_pairing_key_tuple(values: Any) -> tuple[Any, ...]:
 def _normalize_pairing_key_value(value: Any) -> Any:
 	if value is None:
 		return None
-	if isinstance(value, bool):
-		return ("bool", value)
 	if isinstance(value, datetime):
 		return ("datetime", _normalize_datetime_pairing_key(value))
-	if isinstance(value, Decimal):
-		return _normalize_decimal_pairing_key(value)
-	if isinstance(value, int):
-		return str(value)
-	if isinstance(value, float):
-		return _normalize_number_pairing_key(str(value))
 	if isinstance(value, str):
 		value = value.strip()
 		if not value:
@@ -2484,16 +2520,15 @@ def _normalize_pairing_key_value(value: Any) -> Any:
 		datetime_key = _normalize_datetime_string_pairing_key(value)
 		if datetime_key is not None:
 			return ("datetime", datetime_key)
-		return value
+		return _normalize_comparable_scalar_value(value)
+	if _finite_decimal_from_scalar(value) is not None:
+		return _normalize_comparable_scalar_value(value)
 	return str(value)
 
 
 def _normalize_number_pairing_key(value: str) -> str:
-	try:
-		decimal_value = Decimal(value)
-	except (InvalidOperation, ValueError):
-		return value
-	if not decimal_value.is_finite():
+	decimal_value = _finite_decimal_from_string(value)
+	if decimal_value is None:
 		return value
 	return _normalize_decimal_pairing_key(decimal_value)
 
