@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -55,7 +56,277 @@ def _runtime_frappe_stub(**overrides):
 	return SimpleNamespace(**values)
 
 
+def _identity_match_config(one_way_match_mode="first_match"):
+	return runtime.SyncDefinitionConfig(
+		name="SYNC-IDENTITY",
+		doctype="Task",
+		partner="PARTNER-1",
+		sync_type="A<->B",
+		cron=None,
+		filters=None,
+		batch_size=10,
+		create_new=True,
+		delete_missing=False,
+		use_last_sync_date=False,
+		conflict_policy="newest_wins",
+		timestamp_buffer_seconds=0,
+		table_name="tabTask",
+		read_query=None,
+		match_fields=["name"],
+		mapping={"name": {"partner_field": "id", "direction": "Both"}},
+		value_mapping={},
+		frappe_modified_fields=["modified"],
+		partner_modified_fields=["updated_at"],
+		partner_identity_field="external_id",
+		frappe_partner_identity_field="partner_id",
+		one_way_match_mode=one_way_match_mode,
+	)
+
+
 class TestRuntimeAdditional(unittest.TestCase):
+	def test_run_due_sync_definitions_scheduled_sets_admin_and_delegates(self):
+		delegated = [{"status": "queued", "sync_definition": "SYNC-1"}]
+
+		with (
+			patch("sync.sync.service.runtime.frappe.set_user") as mock_set_user,
+			patch("sync.sync.service.runtime.run_due_sync_definitions", return_value=delegated) as mock_run_due,
+		):
+			result = runtime.run_due_sync_definitions_scheduled(limit=7, queue=False)
+
+		self.assertIs(result, delegated)
+		mock_set_user.assert_called_once_with("Administrator")
+		mock_run_due.assert_called_once_with(limit=7, queue=False)
+
+	def test_pairing_key_and_identity_index_helpers_cover_mapping_branches(self):
+		config = _identity_match_config()
+
+		self.assertEqual(runtime._normalize_number_pairing_key("001.2300"), "1.23")
+		self.assertEqual(runtime._normalize_number_pairing_key("NaN"), "NaN")
+		self.assertEqual(runtime._normalize_number_pairing_key("not-a-number"), "not-a-number")
+		self.assertEqual(runtime._normalize_decimal_pairing_key(Decimal("0.000")), "0")
+		self.assertEqual(runtime._normalize_decimal_pairing_key(Decimal("123.4500")), "123.45")
+		self.assertEqual(runtime._normalize_decimal_pairing_key(Decimal("NaN")), "NaN")
+		self.assertEqual(
+			runtime._normalize_datetime_string_pairing_key("2026-03-17T12:00:00+02:00"),
+			"2026-03-17T10:00:00.000000+00:00",
+		)
+		self.assertIsNone(runtime._normalize_datetime_string_pairing_key("2026/03/17"))
+		self.assertEqual(runtime._normalize_pairing_key_value(True), ("bool", True))
+		self.assertEqual(runtime._normalize_pairing_key_value(1.2300), "1.23")
+		self.assertEqual(
+			runtime._normalize_pairing_key_value(datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)),
+			("datetime", "2026-03-17T12:00:00.000000+00:00"),
+		)
+		self.assertEqual(
+			runtime._normalize_pairing_key_value("2026-03-17T12:00:00+02:00"),
+			("datetime", "2026-03-17T10:00:00.000000+00:00"),
+		)
+		self.assertTrue(runtime._normalize_pairing_key_value(object()).startswith("<object object at "))
+		self.assertTrue(runtime._valid_key(("TASK-1", 1)))
+		self.assertFalse(runtime._valid_key(()))
+		self.assertFalse(runtime._valid_key(("TASK-1", "")))
+		self.assertFalse(runtime._valid_key((None,)))
+
+		frappe_record = {"name": "TASK-1", "partner_id": "EXT-1"}
+		partner_record = {"id": "TASK-1", "external_id": "EXT-1"}
+		self.assertEqual(runtime._partner_key_values_from_frappe_record(config, frappe_record), {"id": "TASK-1"})
+		self.assertEqual(runtime._partner_key_values_from_partner_record(config, partner_record), {"id": "TASK-1"})
+		self.assertEqual(runtime._partner_fetch_key_fields(config), ["id", "external_id"])
+
+		list_index = runtime._build_partner_identity_index(
+			config,
+			[
+				{"id": "TASK-1", "external_id": "EXT-1"},
+				{"id": "TASK-BLANK", "external_id": ""},
+				{"id": "TASK-MISSING"},
+			],
+		)
+		self.assertEqual(list_index, {"EXT-1": {"id": "TASK-1", "external_id": "EXT-1"}})
+
+		dict_index = runtime._build_partner_identity_index(
+			config,
+			{
+				("TASK-2",): {"id": "TASK-2", "external_id": "EXT-2"},
+				("TASK-BLANK",): {"id": "TASK-BLANK", "external_id": ""},
+			},
+		)
+		self.assertEqual(dict_index, {"EXT-2": {"id": "TASK-2", "external_id": "EXT-2"}})
+
+		frappe_list_index = runtime._build_frappe_partner_identity_index(
+			config,
+			[
+				{"name": "TASK-1", "partner_id": "EXT-1"},
+				{"name": "TASK-BLANK", "partner_id": ""},
+				{"name": "TASK-MISSING"},
+			],
+		)
+		self.assertEqual(frappe_list_index, {"EXT-1": {"name": "TASK-1", "partner_id": "EXT-1"}})
+
+		frappe_dict_index = runtime._build_frappe_partner_identity_index(
+			config,
+			{
+				("TASK-2",): {"name": "TASK-2", "partner_id": "EXT-2"},
+				("TASK-BLANK",): {"name": "TASK-BLANK", "partner_id": ""},
+			},
+		)
+		self.assertEqual(frappe_dict_index, {"EXT-2": {"name": "TASK-2", "partner_id": "EXT-2"}})
+		self.assertEqual(runtime._build_frappe_partner_identity_index(SimpleNamespace(), [{"name": "TASK-1"}]), {})
+
+	def test_identity_matching_prefers_stored_ids_and_pair_tokens_fall_back_to_keys(self):
+		first_match_config = _identity_match_config()
+		all_matches_config = _identity_match_config(one_way_match_mode="all_matches")
+
+		identity_partner = {"id": "TASK-BY-IDENTITY", "external_id": "EXT-2"}
+		matching_partner_old = {"id": "TASK-1", "external_id": "EXT-OLD"}
+		matching_partner_new = {"id": "TASK-1", "external_id": "EXT-NEW"}
+		partner_groups = {("TASK-1",): [matching_partner_old, matching_partner_new]}
+		partner_identity_index = {"EXT-2": identity_partner}
+
+		self.assertEqual(
+			runtime._find_existing_partner_records(
+				first_match_config,
+				{"name": "TASK-1", "partner_id": "EXT-2"},
+				partner_groups,
+				partner_identity_index,
+			),
+			[identity_partner],
+		)
+		self.assertEqual(
+			runtime._find_existing_partner_record(
+				first_match_config,
+				{"name": "TASK-1"},
+				{("TASK-1",): matching_partner_new},
+				{},
+			),
+			matching_partner_new,
+		)
+		self.assertEqual(
+			runtime._find_existing_partner_records(
+				first_match_config,
+				{"name": "TASK-1"},
+				partner_groups,
+				partner_identity_index,
+			),
+			[matching_partner_new],
+		)
+		self.assertEqual(
+			runtime._find_existing_partner_records(
+				all_matches_config,
+				{"name": "TASK-1"},
+				partner_groups,
+				partner_identity_index,
+			),
+			[matching_partner_old, matching_partner_new],
+		)
+
+		identity_frappe = {"name": "TASK-BY-IDENTITY", "partner_id": "EXT-2"}
+		matching_frappe_old = {"name": "TASK-1", "partner_id": "EXT-OLD"}
+		matching_frappe_new = {"name": "TASK-1", "partner_id": "EXT-NEW"}
+		frappe_groups = {("TASK-1",): [matching_frappe_old, matching_frappe_new]}
+		frappe_partner_identity_index = {"EXT-2": identity_frappe}
+
+		self.assertEqual(
+			runtime._find_existing_frappe_records(
+				first_match_config,
+				{"id": "TASK-1", "external_id": "EXT-2"},
+				frappe_groups,
+				frappe_partner_identity_index,
+			),
+			[identity_frappe],
+		)
+		self.assertEqual(
+			runtime._find_existing_frappe_record(
+				first_match_config,
+				{"id": "TASK-1"},
+				{("TASK-1",): matching_frappe_new},
+				{},
+			),
+			matching_frappe_new,
+		)
+		self.assertEqual(
+			runtime._find_existing_frappe_records(
+				first_match_config,
+				{"id": "TASK-1"},
+				frappe_groups,
+				frappe_partner_identity_index,
+			),
+			[matching_frappe_new],
+		)
+		self.assertEqual(
+			runtime._find_existing_frappe_records(
+				all_matches_config,
+				{"id": "TASK-1"},
+				frappe_groups,
+				frappe_partner_identity_index,
+			),
+			[matching_frappe_old, matching_frappe_new],
+		)
+
+		self.assertEqual(
+			runtime._pair_token_from_frappe(first_match_config, {"name": "TASK-1", "partner_id": "EXT-1"}),
+			("partner_identity", "EXT-1"),
+		)
+		self.assertEqual(
+			runtime._pair_token_from_partner(first_match_config, {"id": "TASK-1", "external_id": "EXT-1"}),
+			("partner_identity", "EXT-1"),
+		)
+		self.assertEqual(
+			runtime._pair_token_from_frappe(first_match_config, {"name": "TASK-1"}),
+			("match", "TASK-1"),
+		)
+		self.assertEqual(
+			runtime._pair_token_from_partner(first_match_config, {"id": "TASK-1"}),
+			("match", "TASK-1"),
+		)
+		self.assertIsNone(runtime._pair_token_from_frappe(first_match_config, {"name": ""}))
+		self.assertIsNone(runtime._pair_token_from_partner(first_match_config, {"id": None}))
+
+		self.assertEqual(
+			runtime._normalize_partner_match_records(first_match_config, [{"id": "TASK-1"}]),
+			{("TASK-1",): {"id": "TASK-1"}},
+		)
+		partner_records = [{"id": "TASK-1"}]
+		self.assertIs(runtime._normalize_partner_match_records(all_matches_config, partner_records), partner_records)
+		self.assertEqual(
+			runtime._normalize_frappe_match_records(first_match_config, [{"name": "TASK-1"}]),
+			{("TASK-1",): {"name": "TASK-1"}},
+		)
+		frappe_records = [{"name": "TASK-1"}]
+		self.assertIs(runtime._normalize_frappe_match_records(all_matches_config, frappe_records), frappe_records)
+		self.assertEqual(
+			runtime._partner_key_values_for_write(
+				first_match_config,
+				{"name": "TASK-1", "partner_id": "EXT-1"},
+				("TASK-1",),
+			),
+			{"external_id": "EXT-1"},
+		)
+		self.assertEqual(
+			runtime._partner_key_values_for_existing_match(
+				first_match_config,
+				{"name": "TASK-1", "partner_id": "EXT-1"},
+				("TASK-1",),
+				{"id": "TASK-1", "external_id": "EXT-MATCH"},
+			),
+			{"external_id": "EXT-MATCH"},
+		)
+		self.assertTrue(runtime._can_write_partner_matches_individually(first_match_config, [matching_partner_old]))
+		self.assertFalse(runtime._can_write_partner_matches_individually(SimpleNamespace(), [matching_partner_old, matching_partner_new]))
+		self.assertTrue(
+			runtime._can_write_partner_matches_individually(
+				first_match_config,
+				[matching_partner_old, matching_partner_new],
+			)
+		)
+		self.assertEqual(
+			runtime._apply_partner_link_fields(
+				SimpleNamespace(partner_frappe_identity_field="frappe_name"),
+				{"name": "TASK-1"},
+				{"id": "TASK-1"},
+			),
+			{"id": "TASK-1", "frappe_name": "TASK-1"},
+		)
+
 	def test_preview_service_predict_and_run_engine_guard_paths(self):
 		with patch("sync.sync.service.runtime._build_preview", return_value={"ok": True}) as mock_preview:
 			self.assertEqual(runtime.SyncPreviewService.predict(SimpleNamespace(name="SYNC-1"), limit=7), {"ok": True})
