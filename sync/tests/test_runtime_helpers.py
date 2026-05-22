@@ -213,6 +213,28 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		self.assertEqual(len(logger.messages), 1)
 
+	def test_filters_with_frappe_cursor_preserves_existing_modified_filters(self):
+		cursor = ("2026-03-17 10:00:00", "TASK-1")
+		self.assertEqual(
+			runtime._filters_with_frappe_cursor(
+				{"status": "Open", "modified": ["<", "2026-03-18 00:00:00"]},
+				cursor,
+			),
+			[
+				["status", "=", "Open"],
+				["modified", "<", "2026-03-18 00:00:00"],
+				["modified", ">=", "2026-03-17 10:00:00"],
+			],
+		)
+		self.assertEqual(
+			runtime._filters_with_frappe_cursor([["status", "=", "Open"]], cursor),
+			[["status", "=", "Open"], ["modified", ">=", "2026-03-17 10:00:00"]],
+		)
+		self.assertEqual(
+			runtime._filters_with_frappe_cursor(None, cursor),
+			[["modified", ">=", "2026-03-17 10:00:00"]],
+		)
+
 	def test_build_record_key_consistent(self):
 		key1 = runtime._build_record_key({"name": "AAA", "status": "open"})
 		key2 = runtime._build_record_key({"status": "open", "name": "AAA"})
@@ -786,6 +808,45 @@ class TestRuntimeHelpers(unittest.TestCase):
 			],
 		)
 		self.assertEqual(upsert_calls[0]["mapping"], {"name": "id", "subject": "title"})
+
+	def test_sync_frappe_to_partner_uses_partner_raw_keys_for_normalized_match(self):
+		config = SimpleNamespace(
+			name="SYNC-F2P-RAW-KEY",
+			match_fields=["custom_f_key"],
+			mapping={
+				"custom_f_key": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe -> Partner"},
+			},
+			value_mapping={},
+			create_new=True,
+			delete_missing=False,
+			table_name="dbo.SyncTable",
+			read_query=None,
+			batch_size=20,
+		)
+		upsert_calls = []
+
+		def upsert_record(**kwargs):
+			upsert_calls.append(kwargs)
+			return ConnectorWriteResult(ok=True, message="ok", record={"id": "001", "state": "Open"})
+
+		with (
+			patch("sync.sync.service.runtime._create_run_item", return_value=SimpleNamespace(name="ITEM-1")),
+			patch("sync.sync.service.runtime.frappe", SimpleNamespace(db=SimpleNamespace(commit=lambda: None))),
+		):
+			runtime._sync_frappe_to_partner(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=SimpleNamespace(upsert_record=upsert_record),
+				frappe_records=[{"name": "TASK-1", "custom_f_key": 1, "status": "Open"}],
+				partner_records=[{"id": "001", "state": "Closed"}],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="Frappe -> Partner",
+				full_sync=False,
+			)
+
+		self.assertEqual(upsert_calls[0]["key_values"], {"id": "001"})
 
 	def test_sync_frappe_to_partner_persists_partner_identity_and_partner_link_field(self):
 		config = SimpleNamespace(

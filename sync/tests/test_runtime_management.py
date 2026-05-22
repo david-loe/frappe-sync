@@ -752,10 +752,24 @@ class TestRuntimeManagement(unittest.TestCase):
 
 		self.assertEqual(doc.payload["next_run_at"], next_run)
 
+		runs = [
+			{"sync_definition": "SYNC-1", "status": "Success", "dry_run": 1, "finished_at": "2026-03-17 12:00:00"},
+			{"sync_definition": "SYNC-1", "status": "Success", "dry_run": 0, "finished_at": "2026-03-17 11:55:00"},
+		]
+
+		def get_all(_doctype, *, filters, **_kwargs):
+			return [
+				{"finished_at": run["finished_at"]}
+				for run in runs
+				if all(run.get(fieldname) == value for fieldname, value in filters.items())
+			][:1]
+
 		with (
-			patch("sync.sync.service.runtime.frappe.get_meta", return_value=DummyMeta([_field("sync_definition"), _field("status"), _field("finished_at")])),
-			patch("sync.sync.service.runtime.frappe.get_all", return_value=[{"finished_at": "2026-03-17 11:55:00"}]),
+			patch("sync.sync.service.runtime.frappe.get_meta", return_value=DummyMeta([_field("sync_definition"), _field("status"), _field("dry_run"), _field("finished_at")])),
+			patch("sync.sync.service.runtime.frappe.get_all", side_effect=get_all) as mock_get_all,
 		):
 			self.assertEqual(runtime._get_last_successful_sync("SYNC-1"), datetime(2026, 3, 17, 11, 55, 0))
+
+		self.assertEqual(mock_get_all.call_args.kwargs["filters"]["dry_run"], 0)
 
 		self.assertIn("processed=5", runtime._format_run_summary({"processed_count": 5, "error_count": 1}))

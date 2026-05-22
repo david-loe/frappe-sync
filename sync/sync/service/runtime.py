@@ -2462,10 +2462,18 @@ def _filters_with_frappe_cursor(filters: list | dict | None, cursor: tuple[Any, 
 	if isinstance(filters, list):
 		return [*filters, cursor_filter]
 	if isinstance(filters, dict):
-		result = dict(filters)
-		result["modified"] = [">=", cursor[0]]
-		return result
+		return [*_dict_filters_as_list(filters), cursor_filter]
 	return filters
+
+
+def _dict_filters_as_list(filters: dict[str, Any]) -> list[list[Any]]:
+	result = []
+	for fieldname, value in filters.items():
+		if isinstance(value, (list, tuple)) and len(value) >= 2:
+			result.append([fieldname, *value])
+		else:
+			result.append([fieldname, "=", value])
+	return result
 
 
 def _index_frappe_records(config: SyncDefinitionConfig, records: list[dict[str, Any]]) -> dict[tuple[Any, ...], dict[str, Any]]:
@@ -2825,6 +2833,8 @@ def _partner_key_values_for_existing_match(
 	partner_identity_field = _config_partner_identity_field(config)
 	if partner_identity_field and partner_record and partner_record.get(partner_identity_field) not in (None, ""):
 		return {partner_identity_field: partner_record.get(partner_identity_field)}
+	if partner_record:
+		return _partner_key_values_from_partner_record(config, partner_record)
 	return _partner_key_values_for_write(config, frappe_record, key)
 
 
@@ -3255,7 +3265,7 @@ def _get_last_successful_sync(sync_definition_name: str) -> datetime | None:
 		fields = ["modified"]
 	runs = frappe.get_all(
 		SYNC_RUN,
-		filters={"sync_definition": sync_definition_name, "status": "Success"},
+		filters={"sync_definition": sync_definition_name, "status": "Success", "dry_run": 0},
 		fields=fields,
 		order_by="creation desc",
 		limit=1,
