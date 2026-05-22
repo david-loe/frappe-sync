@@ -600,7 +600,7 @@ def _run_engine(
 
 	stats = SyncStats()
 	if config.sync_type == "Frappe -> Partner":
-		partner_batches = _iter_partner_source_batches(config, connector, context)
+		partner_batches = _iter_partner_source_batches(config, connector, context, apply_delta_filter=False)
 		if config.delete_missing and context.is_full_sync:
 			partner_records = [
 				record
@@ -649,7 +649,7 @@ def _run_engine(
 				)
 			_flush_pending_run_writes(run_doc, force=True)
 	elif config.sync_type == "Frappe <- Partner":
-		frappe_records = _get_frappe_source_records(config, context)
+		frappe_records = _get_frappe_source_records(config, context, apply_delta_filter=False)
 		if config.delete_missing and context.is_full_sync:
 			partner_source = [
 				record
@@ -688,9 +688,25 @@ def _run_engine(
 			config,
 			_iter_frappe_source_batches(config, context),
 		)
+		frappe_lookup_index = (
+			_build_frappe_index_from_batches(
+				config,
+				_iter_frappe_source_batches(config, context, apply_delta_filter=False),
+			)
+			if context.is_delta_sync
+			else frappe_index
+		)
 		partner_index = _build_partner_index_from_batches(
 			config,
 			_iter_partner_source_batches(config, connector, context),
+		)
+		partner_lookup_index = (
+			_build_partner_index_from_batches(
+				config,
+				_iter_partner_source_batches(config, connector, context, apply_delta_filter=False),
+			)
+			if context.is_delta_sync
+			else partner_index
 		)
 		_sync_bidirectional(
 			run_doc=run_doc,
@@ -701,6 +717,8 @@ def _run_engine(
 			dry_run=context.dry_run,
 			stats=stats,
 			last_successful_sync=context.last_successful_sync,
+			frappe_lookup_records=frappe_lookup_index,
+			partner_lookup_records=partner_lookup_index,
 		)
 	return {
 		"sync_definition": config.name,
@@ -1377,9 +1395,13 @@ def _sync_bidirectional(
 	dry_run: bool,
 	stats: SyncStats,
 	last_successful_sync: datetime | None,
+	frappe_lookup_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None = None,
+	partner_lookup_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None = None,
 ):
 	frappe_index = _index_paired_frappe_records(config, frappe_records)
 	partner_index = _index_paired_partner_records(config, partner_records)
+	frappe_target_lookup_records = frappe_lookup_records if frappe_lookup_records is not None else []
+	partner_target_lookup_records = partner_lookup_records if partner_lookup_records is not None else []
 	all_keys = set(frappe_index.keys()) | set(partner_index.keys())
 
 	for key in sorted(all_keys, key=lambda item: json.dumps(item, default=str, ensure_ascii=True)):
@@ -1392,7 +1414,7 @@ def _sync_bidirectional(
 				config=config,
 				connector=connector,
 				frappe_records=[frappe_record],
-				partner_records=[],
+				partner_records=partner_target_lookup_records,
 				dry_run=dry_run,
 				stats=stats,
 				label_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
@@ -1406,7 +1428,7 @@ def _sync_bidirectional(
 				config=config,
 				connector=connector,
 				partner_records=[partner_record],
-				frappe_records=[],
+				frappe_records=frappe_target_lookup_records,
 				dry_run=dry_run,
 				stats=stats,
 				label_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
@@ -1696,15 +1718,25 @@ def _apply_frappe_update(
 		)
 
 
-def _get_frappe_source_records(config: SyncDefinitionConfig, context: SyncContext) -> list[dict[str, Any]]:
+def _get_frappe_source_records(
+	config: SyncDefinitionConfig,
+	context: SyncContext,
+	*,
+	apply_delta_filter: bool = True,
+) -> list[dict[str, Any]]:
 	return [
 		record
-		for batch in _iter_frappe_source_batches(config, context)
+		for batch in _iter_frappe_source_batches(config, context, apply_delta_filter=apply_delta_filter)
 		for record in batch
 	]
 
 
-def _iter_frappe_source_batches(config: SyncDefinitionConfig, context: SyncContext):
+def _iter_frappe_source_batches(
+	config: SyncDefinitionConfig,
+	context: SyncContext,
+	*,
+	apply_delta_filter: bool = True,
+):
 	fields = sorted(
 		_mapping_fields_for_sync_type(config.mapping, config.sync_type)
 		| set(_config_match_fields(config))
@@ -1714,7 +1746,7 @@ def _iter_frappe_source_batches(config: SyncDefinitionConfig, context: SyncConte
 	)
 	valid_fields = [field for field in fields if _doctype_has_field(config.doctype, field)]
 	or_filters = None
-	if context.is_delta_sync:
+	if apply_delta_filter and context.is_delta_sync:
 		since = context.delta_since
 		or_filters = []
 		for modified_field in config.frappe_modified_fields:
@@ -1731,15 +1763,27 @@ def _iter_frappe_source_batches(config: SyncDefinitionConfig, context: SyncConte
 	)
 
 
-def _get_partner_source_records(config: SyncDefinitionConfig, connector: Any, context: SyncContext) -> list[dict[str, Any]]:
+def _get_partner_source_records(
+	config: SyncDefinitionConfig,
+	connector: Any,
+	context: SyncContext,
+	*,
+	apply_delta_filter: bool = True,
+) -> list[dict[str, Any]]:
 	return [
 		record
-		for batch in _iter_partner_source_batches(config, connector, context)
+		for batch in _iter_partner_source_batches(config, connector, context, apply_delta_filter=apply_delta_filter)
 		for record in batch
 	]
 
 
-def _iter_partner_source_batches(config: SyncDefinitionConfig, connector: Any, context: SyncContext):
+def _iter_partner_source_batches(
+	config: SyncDefinitionConfig,
+	connector: Any,
+	context: SyncContext,
+	*,
+	apply_delta_filter: bool = True,
+):
 	record_batches = _iter_partner_record_batches(
 		connector=connector,
 		source=config.table_name,
@@ -1747,7 +1791,7 @@ def _iter_partner_source_batches(config: SyncDefinitionConfig, connector: Any, c
 		batch_size=config.batch_size,
 		key_fields=_partner_fetch_key_fields(config),
 	)
-	if not context.is_delta_sync:
+	if not apply_delta_filter or not context.is_delta_sync:
 		return record_batches
 	since = context.delta_since
 	def _filtered_batches():

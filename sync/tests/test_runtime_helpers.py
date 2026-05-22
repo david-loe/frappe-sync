@@ -396,6 +396,31 @@ class TestRuntimeHelpers(unittest.TestCase):
 			[["modified", ">=", context.delta_since], ["changed_on", ">=", context.delta_since]],
 		)
 
+	def test_get_frappe_source_records_can_skip_delta_filters_for_target_lookup(self):
+		config = SimpleNamespace(
+			doctype="Task",
+			sync_type="Frappe <- Partner",
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
+			},
+			match_fields=["name"],
+			frappe_modified_fields=["modified"],
+			filters=[["status", "!=", "Cancelled"]],
+			batch_size=20,
+		)
+		context = SimpleNamespace(is_delta_sync=True, delta_since=datetime(2026, 3, 17, 10, 0))
+
+		with (
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+			patch("sync.sync.service.runtime._iter_frappe_record_batches", return_value=iter([[{"name": "TASK-1"}]])) as mock_records,
+		):
+			out = runtime._get_frappe_source_records(config, context, apply_delta_filter=False)
+
+		self.assertEqual(out, [{"name": "TASK-1"}])
+		self.assertEqual(mock_records.call_args.kwargs["filters"], [["status", "!=", "Cancelled"]])
+		self.assertIsNone(mock_records.call_args.kwargs["or_filters"])
+
 	def test_get_partner_source_records_filters_records_in_delta_mode(self):
 		config = SimpleNamespace(
 			table_name="tabTask",
@@ -414,6 +439,30 @@ class TestRuntimeHelpers(unittest.TestCase):
 			out = runtime._get_partner_source_records(config, object(), context)
 
 		self.assertEqual(out, [records[0]])
+
+	def test_get_partner_source_records_can_skip_delta_filters_for_target_lookup(self):
+		config = SimpleNamespace(
+			table_name="tabTask",
+			read_query=None,
+			batch_size=50,
+			match_fields=["name"],
+			partner_modified_fields=["updated_at"],
+		)
+		context = SimpleNamespace(is_delta_sync=True, delta_since=datetime(2026, 3, 17, 9, 0))
+		records = [
+			{"name": "TASK-1", "updated_at": datetime(2026, 3, 16, 8, 0)},
+			{"name": "TASK-2", "updated_at": datetime(2026, 3, 17, 9, 5)},
+		]
+
+		with patch("sync.sync.service.runtime._iter_partner_record_batches", return_value=iter([records])):
+			out = runtime._get_partner_source_records(
+				config,
+				object(),
+				context,
+				apply_delta_filter=False,
+			)
+
+		self.assertEqual(out, records)
 
 	def test_record_changed_since_and_latest_modified_handle_multiple_fields(self):
 		record = {
@@ -676,6 +725,79 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(result["success_count"], 1)
 		self.assertEqual(result["created_count"], 1)
 		self.assertEqual(result["error_count"], 0)
+
+	@patch("sync.sync.service.runtime._update_doc_fields")
+	@patch("sync.sync.service.runtime._register_and_log")
+	@patch("sync.sync.service.runtime._iter_frappe_source_batches")
+	@patch("sync.sync.service.runtime._iter_partner_source_batches")
+	@patch("sync.sync.service.runtime.get_connector_for_partner")
+	@patch("sync.sync.service.runtime.frappe.get_doc")
+	def test_run_engine_frappe_delta_uses_unchanged_partner_target_lookup(
+		self, mock_get_doc, mock_get_connector, mock_partner_batches, mock_frappe_batches, _mock_log, _mock_update
+	):
+		mock_get_doc.return_value = SimpleNamespace(partner_type="mssql")
+
+		class DummyConnector:
+			def __init__(self):
+				self.upsert_calls = []
+
+			def ping(self):
+				return ConnectorPingResult(ok=True, message="ok", details={})
+
+			def upsert_record(self, **kwargs):
+				self.upsert_calls.append(kwargs)
+				return ConnectorWriteResult(ok=True, message="updated", action="updated")
+
+		connector = DummyConnector()
+		mock_get_connector.return_value = connector
+		changed_frappe = {"name": "TASK-1", "status": "Open", "modified": "2026-03-17 10:00:00"}
+		existing_partner = {"id": "TASK-1", "state": "Closed", "updated_at": "2026-03-17 09:00:00"}
+		partner_delta_flags = []
+
+		def partner_batches(*_args, **kwargs):
+			partner_delta_flags.append(kwargs.get("apply_delta_filter", True))
+			return iter([[existing_partner]] if kwargs.get("apply_delta_filter", True) is False else [[]])
+
+		mock_partner_batches.side_effect = partner_batches
+		mock_frappe_batches.return_value = iter([[changed_frappe]])
+
+		config = SimpleNamespace(
+			name="SYNC-F2P-DELTA",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe -> Partner",
+			cron="* * * * *",
+			filters=None,
+			batch_size=10,
+			create_new=True,
+			delete_missing=False,
+			use_last_sync_date=True,
+			timestamp_buffer_seconds=0,
+			conflict_policy="newest_wins",
+			table_name="tabTask",
+			read_query=None,
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe -> Partner"},
+			},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+
+		runtime._run_engine(
+			SimpleNamespace(name="SYNC-F2P-DELTA"),
+			SimpleNamespace(name="RUN-1"),
+			context=runtime.SyncContext(
+				config=config,
+				dry_run=False,
+				last_successful_sync=datetime(2026, 3, 17, 9, 30),
+			),
+		)
+
+		self.assertEqual(partner_delta_flags, [False])
+		self.assertEqual(connector.upsert_calls[0]["key_values"], {"id": "TASK-1"})
 
 	@patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[]]))
 	@patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[]]))
@@ -976,6 +1098,61 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual([entry["action"] for entry in logged], ["created"])
 		self.assertEqual(logged[0]["frappe_record"], {"name": "TASK-NEW", "status": "Open"})
 		self.assertEqual(logged[0]["partner_record"], {"id": "TASK-NEW", "state": "Open"})
+
+	def test_run_engine_partner_delta_uses_unchanged_frappe_target_lookup(self):
+		config = SimpleNamespace(
+			name="SYNC-P2F-DELTA",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe <- Partner",
+			filters=[["status", "!=", "Cancelled"]],
+			batch_size=20,
+			create_new=True,
+			delete_missing=False,
+			use_last_sync_date=True,
+			timestamp_buffer_seconds=0,
+			conflict_policy="newest_wins",
+			table_name="tabTask",
+			read_query=None,
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
+			},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+		existing_frappe = {"name": "TASK-1", "status": "Closed", "modified": "2026-03-17 09:00:00"}
+		changed_partner = {"id": "TASK-1", "state": "Open", "updated_at": "2026-03-17 10:00:00"}
+		frappe_batch_filters = []
+
+		def frappe_batches(**kwargs):
+			frappe_batch_filters.append(kwargs["or_filters"])
+			return iter([[existing_frappe]] if kwargs["or_filters"] is None else [[]])
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(partner_type="mssql")),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+			patch("sync.sync.service.runtime._iter_frappe_record_batches", side_effect=frappe_batches),
+			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[changed_partner]])),
+			patch("sync.sync.service.runtime._register_and_log"),
+			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-1") as mock_upsert,
+		):
+			runtime._run_engine(
+				SimpleNamespace(name="SYNC-P2F-DELTA"),
+				SimpleNamespace(name="RUN-1"),
+				context=runtime.SyncContext(
+					config=config,
+					dry_run=False,
+					last_successful_sync=datetime(2026, 3, 17, 9, 30),
+				),
+			)
+
+		self.assertEqual(frappe_batch_filters, [None])
+		mock_upsert.assert_called_once()
+		self.assertEqual(mock_upsert.call_args.kwargs["existing_name"], "TASK-1")
 
 	def test_sync_partner_to_frappe_prefers_partner_identity_link_over_match_fields(self):
 		config = SimpleNamespace(
@@ -1324,6 +1501,116 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(run_item_kwargs["write_direction"], "Frappe <- Partner")
 		self.assertEqual(runtime._summarize_changed_fields(run_item_kwargs["changes"]), "modified")
 		self.assertEqual(run_item_kwargs["written_after_record"]["modified"], mapped_modified)
+
+	def test_run_engine_bidirectional_partner_delta_uses_unchanged_frappe_target_lookup(self):
+		config = SimpleNamespace(
+			name="SYNC-BI-DELTA",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe <-> Partner",
+			filters=[["status", "!=", "Cancelled"]],
+			batch_size=20,
+			create_new=True,
+			delete_missing=False,
+			use_last_sync_date=True,
+			timestamp_buffer_seconds=0,
+			conflict_policy="newest_wins",
+			table_name="tabTask",
+			read_query=None,
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
+			},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+		existing_frappe = {"name": "TASK-1", "status": "Closed", "modified": "2026-03-17 09:00:00"}
+		changed_partner = {"id": "TASK-1", "state": "Open", "updated_at": "2026-03-17 10:00:00"}
+		frappe_batch_filters = []
+
+		def frappe_batches(**kwargs):
+			frappe_batch_filters.append(kwargs["or_filters"])
+			return iter([[existing_frappe]] if kwargs["or_filters"] is None else [[]])
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(partner_type="mssql")),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+			patch("sync.sync.service.runtime._iter_frappe_record_batches", side_effect=frappe_batches),
+			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[changed_partner]])),
+			patch("sync.sync.service.runtime._register_and_log"),
+			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-1") as mock_upsert,
+		):
+			runtime._run_engine(
+				SimpleNamespace(name="SYNC-BI-DELTA"),
+				SimpleNamespace(name="RUN-1"),
+				context=runtime.SyncContext(
+					config=config,
+					dry_run=False,
+					last_successful_sync=datetime(2026, 3, 17, 9, 30),
+				),
+			)
+
+		self.assertEqual(frappe_batch_filters, [[["modified", ">=", datetime(2026, 3, 17, 9, 30)]], None])
+		mock_upsert.assert_called_once()
+		self.assertEqual(mock_upsert.call_args.kwargs["existing_name"], "TASK-1")
+
+	def test_run_engine_bidirectional_frappe_delta_uses_unchanged_partner_target_lookup(self):
+		config = SimpleNamespace(
+			name="SYNC-BI-FRAPPE-DELTA",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe <-> Partner",
+			filters=[["status", "!=", "Cancelled"]],
+			batch_size=20,
+			create_new=True,
+			delete_missing=False,
+			use_last_sync_date=True,
+			timestamp_buffer_seconds=0,
+			conflict_policy="newest_wins",
+			table_name="tabTask",
+			read_query=None,
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe -> Partner"},
+			},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+		changed_frappe = {"name": "TASK-1", "status": "Open", "modified": "2026-03-17 10:00:00"}
+		existing_partner = {"id": "TASK-1", "state": "Closed", "updated_at": "2026-03-17 09:00:00"}
+		upsert_calls = []
+
+		def upsert_record(**kwargs):
+			upsert_calls.append(kwargs)
+			return ConnectorWriteResult(ok=True, message="updated", action="updated")
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(partner_type="mssql")),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(
+				ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}),
+				upsert_record=upsert_record,
+			)),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+			patch("sync.sync.service.runtime._iter_frappe_record_batches", side_effect=lambda **_kwargs: iter([[changed_frappe]])),
+			patch("sync.sync.service.runtime._iter_partner_record_batches", side_effect=lambda **_kwargs: iter([[existing_partner]])),
+			patch("sync.sync.service.runtime._register_and_log"),
+		):
+			runtime._run_engine(
+				SimpleNamespace(name="SYNC-BI-FRAPPE-DELTA"),
+				SimpleNamespace(name="RUN-1"),
+				context=runtime.SyncContext(
+					config=config,
+					dry_run=False,
+					last_successful_sync=datetime(2026, 3, 17, 9, 30),
+				),
+			)
+
+		self.assertEqual(upsert_calls[0]["key_values"], {"id": "TASK-1"})
 
 	def test_sync_bidirectional_resolves_conflicts_and_unsupported_policy(self):
 		config = SimpleNamespace(
