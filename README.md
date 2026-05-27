@@ -10,7 +10,7 @@ Sync anything from and to Frappe, allowing a single `Sync Definition` to describ
 ### Database driver requirements
 - **MSSQL:** install `pyodbc` plus the Microsoft ODBC driver for SQL Server. On Debian/Ubuntu this is typically `sudo apt install msodbcsql18 unixodbc-dev` and `pip install pyodbc`.
 - **PostgreSQL:** use `psycopg[binary]`; the wheel bundles libpq, so no system package is strictly required, but libssl and libc6 must be modern.
-- **Firebird:** install the Firebird client (`sudo apt install firebird3.0-dev` or equivalent) and the Python `fdb` package.
+- **Firebird:** install the Firebird client (`sudo apt install firebird3.0-dev` or equivalent). The app uses `fdb>=2.0.4`, which supports Firebird 2.5 and limited Firebird 3.0 compatibility.
 - **Auxiliary:** `croniter` is required for cron parsing when computing due sync definitions.
 
 Those packages are declared in the app dependencies so `bench setup requirements` pulls them once the app is added to your bench.

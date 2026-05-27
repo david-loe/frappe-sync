@@ -313,11 +313,12 @@ class TestRelationalConnectorSql(unittest.TestCase):
 		self.assertEqual(connector._mssql_order_clause(["unsafe-key"]), "ORDER BY [unsafe-key]")
 		self.assertEqual(connector._mssql_order_clause(["Telefon mobil"]), "ORDER BY [Telefon mobil]")
 
-	def test_quote_compound_identifier_rejects_unsafe_values(self):
+	def test_quote_compound_identifier_rejects_postgres_unsafe_values(self):
 		connector = PostgresConnector(DummyPartner("postgres"))
 
-		with self.assertRaisesRegex(ValueError, "Unsafe SQL identifier"):
-			connector._quote_compound_identifier("public.sync-table")
+		for identifier in ('bad"name', "bad\x00name", "public..table"):
+			with self.subTest(identifier=identifier), self.assertRaisesRegex(ValueError, "Unsafe SQL identifier"):
+				connector._quote_compound_identifier(identifier)
 
 		with self.assertRaisesRegex(ValueError, "Identifier is empty"):
 			connector._quote_compound_identifier("  ")
@@ -325,14 +326,34 @@ class TestRelationalConnectorSql(unittest.TestCase):
 	def test_quote_compound_identifier_accepts_postgres_unicode_parts(self):
 		connector = PostgresConnector(DummyPartner("postgres"))
 
+		self.assertEqual(connector._quote_compound_identifier("01adr_Spender"), '"01adr_Spender"')
+		self.assertEqual(connector._quote_compound_identifier("Telefon mobil"), '"Telefon mobil"')
 		self.assertEqual(connector._quote_compound_identifier("änderung"), '"änderung"')
 		self.assertEqual(connector._quote_compound_identifier("public.änderung"), '"public"."änderung"')
 
-	def test_quote_compound_identifier_accepts_firebird_unicode_parts_as_uppercase(self):
+	def test_quote_compound_identifier_accepts_firebird_regular_parts_as_uppercase(self):
 		connector = FirebirdConnector(DummyPartner("firebird"))
 
-		self.assertEqual(connector._quote_compound_identifier("änderung"), '"ÄNDERUNG"')
-		self.assertEqual(connector._quote_compound_identifier("personen.änderung"), '"PERSONEN"."ÄNDERUNG"')
+		self.assertEqual(connector._quote_compound_identifier("sync_table"), '"SYNC_TABLE"')
+		self.assertEqual(connector._quote_compound_identifier("SyncTable"), '"SYNCTABLE"')
+		self.assertEqual(connector._quote_compound_identifier("personen.sync_table"), '"PERSONEN"."SYNC_TABLE"')
+
+	def test_quote_compound_identifier_accepts_firebird_delimited_parts(self):
+		connector = FirebirdConnector(DummyPartner("firebird"))
+
+		self.assertEqual(connector._quote_compound_identifier("01adr_Spender"), '"01adr_Spender"')
+		self.assertEqual(connector._quote_compound_identifier("Telefon mobil"), '"Telefon mobil"')
+		self.assertEqual(connector._quote_compound_identifier("änderung"), '"änderung"')
+
+	def test_quote_compound_identifier_rejects_firebird_unsafe_values(self):
+		connector = FirebirdConnector(DummyPartner("firebird"))
+
+		for identifier in ('bad"name', "bad\x00name", "public..table", "a" * 32, "änderung" * 6):
+			with self.subTest(identifier=identifier), self.assertRaisesRegex(ValueError, "Unsafe SQL identifier"):
+				connector._quote_compound_identifier(identifier)
+
+		with self.assertRaisesRegex(ValueError, "Identifier is empty"):
+			connector._quote_compound_identifier("  ")
 
 	def test_quote_compound_identifier_accepts_mssql_numeric_bracketed_and_unicode_parts(self):
 		connector = MssqlConnector(DummyPartner("mssql"))

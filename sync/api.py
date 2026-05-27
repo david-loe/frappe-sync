@@ -170,15 +170,13 @@ def _build_doctype_field_choices(doctype_name: str) -> list[dict[str, str]]:
 	choices: list[dict[str, str]] = []
 	seen: set[str] = set()
 
-	for fieldname, label in (("name", "Name"), ("modified", "Modified")):
+	for fieldname, label in (("name", "Name"), ("creation", "Created On"), ("modified", "Modified")):
 		choices.append({"fieldname": fieldname, "label": label, "fieldtype": "Data"})
 		seen.add(fieldname)
 
 	for field in getattr(meta, "fields", []) or []:
 		fieldname = str(getattr(field, "fieldname", "") or "").strip()
 		if not fieldname or fieldname in seen:
-			continue
-		if _as_bool(getattr(field, "hidden", 0)):
 			continue
 		fieldtype = str(getattr(field, "fieldtype", "") or "").strip()
 		if fieldtype in _NON_SELECTABLE_FIELD_TYPES:

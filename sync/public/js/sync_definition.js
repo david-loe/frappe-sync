@@ -100,6 +100,99 @@ sync.helpers.collectDefinitionFieldChoiceValues = function (frm) {
 	return values;
 };
 
+sync.helpers.isolateDefinitionGridDocfields = function (grid) {
+	if (!grid || !Array.isArray(grid.docfields)) {
+		return;
+	}
+
+	grid.docfields = grid.docfields.map((df) => ({ ...df }));
+	grid.fields_map = {};
+	grid.docfields.forEach((df) => {
+		if (df?.fieldname) {
+			grid.fields_map[df.fieldname] = df;
+		}
+	});
+	grid.__sync_isolated_docfields = true;
+
+	(grid.grid_rows || []).forEach((row) => {
+		if (!row) {
+			return;
+		}
+		row.docfields = grid.docfields.map((df) => ({ ...df }));
+		row.__sync_isolated_docfields = true;
+	});
+};
+
+sync.helpers.applyDefinitionGridSelectOverrides = function (grid) {
+	if (!grid?.__sync_select_overrides) {
+		return;
+	}
+
+	sync.helpers.isolateDefinitionGridDocfields(grid);
+	Object.entries(grid.__sync_select_overrides).forEach(([fieldname, properties]) => {
+		const gridDocfield = grid.docfields.find((df) => df.fieldname === fieldname);
+		if (gridDocfield) {
+			Object.assign(gridDocfield, properties);
+			grid.fields_map[fieldname] = gridDocfield;
+		}
+		(grid.grid_rows || []).forEach((row) => {
+			const rowDocfield = row?.docfields?.find((df) => df.fieldname === fieldname);
+			if (rowDocfield) {
+				Object.assign(rowDocfield, properties);
+			}
+			const column = row?.columns?.[fieldname];
+			if (column?.df) {
+				Object.assign(column.df, properties);
+			}
+			if (column?.field?.df) {
+				Object.assign(column.field.df, properties);
+				column.field.refresh();
+			}
+		});
+	});
+};
+
+sync.helpers.setupDefinitionGridSelectOverrides = function (grid) {
+	if (!grid || grid.__sync_select_override_setup) {
+		return;
+	}
+
+	const originalRefresh = grid.refresh;
+	grid.refresh = function (...args) {
+		const result = originalRefresh.apply(this, args);
+		sync.helpers.applyDefinitionGridSelectOverrides(this);
+		setTimeout(() => sync.helpers.applyDefinitionGridSelectOverrides(this), 0);
+		return result;
+	};
+
+	const originalAddNewRow = grid.add_new_row;
+	grid.add_new_row = function (...args) {
+		const result = originalAddNewRow.apply(this, args);
+		sync.helpers.applyDefinitionGridSelectOverrides(this);
+		setTimeout(() => sync.helpers.applyDefinitionGridSelectOverrides(this), 0);
+		return result;
+	};
+
+	grid.__sync_select_override_setup = true;
+};
+
+sync.helpers.updateDefinitionGridSelect = function (frm, tableField, fieldname, properties) {
+	const grid = frm.fields_dict[tableField]?.grid;
+	if (!grid) {
+		return;
+	}
+
+	sync.helpers.setupDefinitionGridSelectOverrides(grid);
+	grid.__sync_select_overrides = {
+		...(grid.__sync_select_overrides || {}),
+		[fieldname]: properties,
+	};
+	sync.helpers.applyDefinitionGridSelectOverrides(grid);
+	frm.refresh_field(tableField);
+	sync.helpers.applyDefinitionGridSelectOverrides(grid);
+	setTimeout(() => sync.helpers.applyDefinitionGridSelectOverrides(grid), 0);
+};
+
 sync.helpers.applyDefinitionFieldChoices = function (frm, fields) {
 	const fieldnames = [
 		...new Set([
@@ -126,12 +219,10 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields) {
 	frm.set_df_property("frappe_partner_identity_field", "description", description);
 	frm.refresh_field("frappe_partner_identity_field");
 
-	const modifiedFieldsGrid = frm.fields_dict.frappe_modified_field_rows?.grid;
-	if (modifiedFieldsGrid) {
-		modifiedFieldsGrid.update_docfield_property("field_name", "options", options);
-		modifiedFieldsGrid.update_docfield_property("field_name", "description", description);
-		frm.refresh_field("frappe_modified_field_rows");
-	}
+	sync.helpers.updateDefinitionGridSelect(frm, "frappe_modified_field_rows", "field_name", {
+		options,
+		description,
+	});
 };
 
 sync.helpers.parseDefinitionPartnerColumns = function (rawColumns) {
@@ -262,12 +353,10 @@ sync.helpers.applyDefinitionPartnerColumnChoices = function (frm) {
 		frm.refresh_field("field_mapping");
 	}
 
-	const modifiedFieldsGrid = frm.fields_dict.partner_modified_field_rows?.grid;
-	if (modifiedFieldsGrid) {
-		modifiedFieldsGrid.update_docfield_property("field_name", "options", partnerFieldOptions);
-		modifiedFieldsGrid.update_docfield_property("field_name", "description", partnerModifiedDescription);
-		frm.refresh_field("partner_modified_field_rows");
-	}
+	sync.helpers.updateDefinitionGridSelect(frm, "partner_modified_field_rows", "field_name", {
+		options: partnerFieldOptions,
+		description: partnerModifiedDescription,
+	});
 
 	["partner_identity_field", "partner_frappe_identity_field"].forEach((fieldname) => {
 		frm.set_df_property(fieldname, "options", partnerFieldOptions);

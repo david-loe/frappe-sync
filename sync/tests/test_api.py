@@ -52,7 +52,7 @@ class ApiTestCase(unittest.TestCase):
 
 class TestSyncApi(ApiTestCase):
 
-	def test_doctype_field_choices_filters_non_selectable_fields(self):
+	def test_doctype_field_choices_include_hidden_data_fields(self):
 		meta = SimpleNamespace(
 			fields=[
 				SimpleNamespace(fieldname="subject", label="Subject", fieldtype="Data", hidden=0),
@@ -65,9 +65,13 @@ class TestSyncApi(ApiTestCase):
 			response = self.api.get_sync_definition_field_choices("Task")
 
 		self.assertEqual(response["doctype"], "Task")
-		self.assertEqual([field["fieldname"] for field in response["fields"]], ["name", "modified", "subject"])
+		self.assertEqual(
+			[field["fieldname"] for field in response["fields"]],
+			["name", "creation", "modified", "subject", "internal_note"],
+		)
 		self.assertEqual(response["fields"][0]["label"], "Name")
-		self.assertEqual(response["fields"][1]["label"], "Modified")
+		self.assertEqual(response["fields"][1]["label"], "Created On")
+		self.assertEqual(response["fields"][2]["label"], "Modified")
 
 	def test_get_sync_definition_field_choices_returns_empty_payload_for_blank_doctype(self):
 		self.assertEqual(self.api.get_sync_definition_field_choices("   "), {"doctype": "", "fields": []})

@@ -13,7 +13,10 @@ import frappe
 from frappe.utils import cint
 from frappe.utils.password import get_decrypted_password
 
-IDENTIFIER_RE = re.compile(r"^[^\W\d]\w*$", re.UNICODE)
+POSTGRES_DELIMITED_IDENTIFIER_RE = re.compile(r"^[^\x00\"]+$")
+FIREBIRD_REGULAR_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$]{0,30}$")
+FIREBIRD_DELIMITED_IDENTIFIER_RE = re.compile(r"^[^\x00\"]+$")
+FIREBIRD_MAX_IDENTIFIER_BYTES = 31
 JSON_CONFIG_FIELDS = {
 	"connection_options",
 }
@@ -703,10 +706,10 @@ class RelationalConnector(BasePartnerConnector):
 		for part in parts:
 			if self.dialect == "mssql":
 				part = _normalize_mssql_identifier_part(part, original_identifier=identifier)
-			elif not IDENTIFIER_RE.match(part):
+			elif self.dialect == "firebird":
+				part = _normalize_firebird_identifier_part(part, original_identifier=identifier)
+			elif not POSTGRES_DELIMITED_IDENTIFIER_RE.match(part):
 				raise ValueError(f"Unsafe SQL identifier '{identifier}'")
-			if self.dialect == "firebird":
-				part = part.upper()
 			if self.dialect == "mssql":
 				part = part.replace("]", "]]")
 			quoted_parts.append(f"{quote_char[0]}{part}{quote_char[1]}")
@@ -879,7 +882,10 @@ def _split_compound_identifier(identifier: str, *, dialect: str) -> list[str]:
 	if not raw_identifier:
 		return []
 	if dialect != "mssql":
-		return [part.strip() for part in raw_identifier.split(".") if part.strip()]
+		parts = [part.strip() for part in raw_identifier.split(".")]
+		if any(not part for part in parts):
+			raise ValueError(f"Unsafe SQL identifier '{identifier}'")
+		return parts
 
 	parts: list[str] = []
 	current: list[str] = []
@@ -934,6 +940,19 @@ def _split_compound_identifier(identifier: str, *, dialect: str) -> list[str]:
 def _normalize_mssql_identifier_part(part: str, *, original_identifier: str) -> str:
 	value = str(part or "").strip()
 	if not value:
+		raise ValueError(f"Unsafe SQL identifier '{original_identifier}'")
+	return value
+
+
+def _normalize_firebird_identifier_part(part: str, *, original_identifier: str) -> str:
+	value = str(part or "").strip()
+	if not value:
+		raise ValueError(f"Unsafe SQL identifier '{original_identifier}'")
+	if FIREBIRD_REGULAR_IDENTIFIER_RE.match(value):
+		return value.upper()
+	if not FIREBIRD_DELIMITED_IDENTIFIER_RE.match(value):
+		raise ValueError(f"Unsafe SQL identifier '{original_identifier}'")
+	if len(value.encode("utf-8")) > FIREBIRD_MAX_IDENTIFIER_BYTES:
 		raise ValueError(f"Unsafe SQL identifier '{original_identifier}'")
 	return value
 
