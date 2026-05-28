@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import frappe
 
+from sync.sync.service import connectors as connector_module
 from sync.sync.service.connectors import (
 	FirebirdConnector,
 	ConnectorCreateOptions,
@@ -16,7 +17,9 @@ from sync.sync.service.connectors import (
 	get_connector_for_partner,
 	get_partner_type,
 	_parse_config_text,
+	_decode_keyset_cursor,
 	_encode_keyset_cursor,
+	_validate_scope_where,
 	_strip_trailing_semicolon,
 	_to_bool,
 	_to_non_negative_int,
@@ -230,6 +233,28 @@ class TestRelationalConnectorSql(unittest.TestCase):
 		self.assertEqual(source, "public.sync_records")
 		self.assertEqual(query, "SELECT * FROM sync_records")
 
+	def test_driver_candidates_use_config_type_metadata_and_import_fallback(self):
+		config_connector = PostgresConnector(DummyPartner("postgres", connection_options='{"driver_module": "custom.psycopg"}'))
+		self.assertEqual(config_connector._get_driver_candidates(), ("custom.psycopg", "psycopg", "psycopg2"))
+
+		type_connector = PostgresConnector(DummyPartner("Custom Type"))
+		type_doc = SimpleNamespace(get=lambda key, default=None: "metadata.driver" if key == "db_api_module" else default)
+		with (
+			patch.dict(connector_module.frappe.__dict__, {"db": SimpleNamespace(exists=lambda *args, **kwargs: True)}),
+			patch("sync.sync.service.connectors.frappe.get_doc", return_value=type_doc),
+		):
+			self.assertEqual(type_connector._get_driver_candidates(), ("metadata.driver", "psycopg", "psycopg2"))
+
+		loaded_driver = SimpleNamespace(__name__="psycopg2")
+		with patch(
+			"sync.sync.service.connectors.importlib.import_module",
+			side_effect=[ImportError("missing"), loaded_driver],
+		):
+			self.assertIs(type_connector._load_driver_module(), loaded_driver)
+
+		with patch("sync.sync.service.connectors.importlib.import_module", side_effect=ImportError("missing")):
+			self.assertIsNone(type_connector._load_driver_module())
+
 	def test_build_fetch_sql_for_table_sources(self):
 		self.assertEqual(
 			MssqlConnector(DummyPartner("mssql"))._build_fetch_sql(
@@ -363,12 +388,23 @@ class TestRelationalConnectorSql(unittest.TestCase):
 		self.assertEqual(connector._quote_compound_identifier("dbo.[01adr_Spender]"), "[dbo].[01adr_Spender]")
 		self.assertEqual(connector._quote_compound_identifier("Telefon mobil"), "[Telefon mobil]")
 		self.assertEqual(connector._quote_compound_identifier("[Änderung]"), "[Änderung]")
+		self.assertEqual(connector._quote_compound_identifier("[dbo].[a]]b]"), "[dbo].[a]]b]")
 
 	def test_quote_compound_identifier_rejects_malformed_mssql_brackets(self):
 		connector = MssqlConnector(DummyPartner("mssql"))
 
-		with self.assertRaisesRegex(ValueError, "Unsafe SQL identifier"):
-			connector._quote_compound_identifier("[01adr_Spender")
+		for identifier in ("[01adr_Spender", "dbo[SyncTable]", "dbo]", "[]"):
+			with self.subTest(identifier=identifier), self.assertRaisesRegex(ValueError, "Unsafe SQL identifier|Identifier is empty"):
+				connector._quote_compound_identifier(identifier)
+
+	def test_cursor_helpers_reject_invalid_values(self):
+		self.assertIsNone(_encode_keyset_cursor({}, ["id"]))
+		self.assertIsNone(_encode_keyset_cursor({"id": ""}, ["id"]))
+		self.assertIsNone(_decode_keyset_cursor(None))
+		with self.assertRaisesRegex(ValueError, "Invalid pagination cursor"):
+			_decode_keyset_cursor("bm90LWpzb24=")
+		with self.assertRaisesRegex(ValueError, "Invalid pagination cursor"):
+			_decode_keyset_cursor("eyJhIjoxfQ==")
 
 	def test_placeholder_matches_paramstyle(self):
 		self.assertEqual(MssqlConnector(DummyPartner("mssql"))._placeholder(), "?")
@@ -458,6 +494,15 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 
 		self.assertEqual(result.records, [{"group_id": "A", "row_id": 1}])
 		self.assertEqual(result.next_cursor, _encode_keyset_cursor({"group_id": "A", "row_id": 1}, ["group_id", "row_id"]))
+
+	def test_fetch_records_builds_cursor_from_firebird_uppercase_result_keys(self):
+		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database_name="sync", username="tester"))
+
+		with patch.object(connector, "_run_select", return_value=[{"ID": "A1"}, {"ID": "A2"}]):
+			result = connector.fetch_records(source="SYNC_RECORDS", batch_size=1, key_fields=["id"])
+
+		self.assertEqual(result.records, [{"ID": "A1"}])
+		self.assertEqual(result.next_cursor, _encode_keyset_cursor({"id": "A1"}, ["id"]))
 
 	def test_upsert_record_rejects_query_only_targets(self):
 		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
@@ -755,6 +800,20 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 			with self.subTest(predicate=predicate), self.assertRaisesRegex(ValueError, "Unsafe scope predicate"):
 				connector._build_scope_where(predicate)
 
+	def test_scope_where_accepts_supported_predicate_forms(self):
+		connector = PostgresConnector(DummyPartner("postgres"))
+
+		sql, params = connector._build_scope_where(
+			"(id IS NOT NULL) AND status IN ('open', 'won''t fix') AND amount >= -1.5 AND name LIKE 'A%' AND deleted_at IS NULL"
+		)
+
+		self.assertEqual(
+			sql,
+			'("id" IS NOT NULL) AND "status" IN (%s, %s) AND "amount" >= %s AND "name" LIKE %s AND "deleted_at" IS NULL',
+		)
+		self.assertEqual(params, ["open", "won't fix", -1.5, "A%"])
+		self.assertEqual(_validate_scope_where("id IS NULL"), "id IS NULL")
+
 	def test_upsert_record_connector_default_returns_loaded_identity_record(self):
 		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
 		cursor = _FakeCursor(rowcount=0, rows=[("AUTO-7", "open")], description=[("id",), ("status",)])
@@ -834,6 +893,14 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(
 			cursor.executed[0][0],
 			"SELECT * FROM (select id as external_id, status as status_label from sync_table) AS source_rows WHERE 1 = 0",
+		)
+
+	def test_relational_connector_builds_firebird_query_column_inspection_sql(self):
+		connector = FirebirdConnector(DummyPartner("firebird"))
+
+		self.assertEqual(
+			connector._build_describe_source_columns_sql(source="SYNC_TABLE", query="select id from sync_table"),
+			"SELECT * FROM (select id from sync_table) source_rows WHERE 1 = 0",
 		)
 
 	def test_relational_connector_prefers_query_for_column_inspection_when_source_is_also_present(self):
