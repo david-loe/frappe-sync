@@ -78,17 +78,29 @@ class TestSyncApi(ApiTestCase):
 
 	def test_get_sync_partner_table_columns_returns_connector_columns(self):
 		partner = _doc_stub("Sync Partner", "PARTNER-1")
-		connector = SimpleNamespace(describe_source_columns=lambda **kwargs: ["id", "status", "updated_at"])
+		calls = []
+		connector = SimpleNamespace(
+			describe_source_columns=lambda **kwargs: calls.append(kwargs) or ["id", "status", "updated_at"]
+		)
 
 		with (
 			patch.object(self.api.frappe, "get_doc", return_value=partner),
 			patch.object(self.api, "get_connector_for_partner", return_value=connector),
 		):
-			response = self.api.get_sync_partner_table_columns(partner.name, table_name="  dbo.SyncTable  ")
+			response = self.api.get_sync_partner_table_columns(
+				partner.name,
+				table_name="  dbo.SyncTable  ",
+				read_query=" select id as external_id from dbo.SyncTable ",
+			)
 
 		self.assertEqual(response["sync_partner"], partner.name)
 		self.assertEqual(response["table_name"], "dbo.SyncTable")
+		self.assertEqual(response["read_query"], "select id as external_id from dbo.SyncTable")
 		self.assertEqual(response["columns"], ["id", "status", "updated_at"])
+		self.assertEqual(
+			calls,
+			[{"source": "dbo.SyncTable", "query": "select id as external_id from dbo.SyncTable"}],
+		)
 
 	def test_get_sync_partner_table_columns_raises_validation_error_on_connector_error(self):
 		partner = _doc_stub("Sync Partner", "PARTNER-1")

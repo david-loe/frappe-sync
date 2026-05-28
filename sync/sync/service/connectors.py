@@ -239,17 +239,20 @@ class RelationalConnector(BasePartnerConnector):
 		cursor_values = _decode_keyset_cursor(cursor)
 		batch_size = max(cint(batch_size) or 100, 1)
 		where_clause, params = self._keyset_where_clause(key_fields, cursor_values)
+		query_batch_size = batch_size + 1
 		sql = self._build_fetch_sql(
 			source=source_name,
 			query=query_text,
-			batch_size=batch_size,
+			batch_size=query_batch_size,
 			key_fields=key_fields or [],
 			where_clause=where_clause,
 		)
 
 		rows = self._run_select(sql, params)
-		next_cursor = _encode_keyset_cursor(rows[-1], key_fields) if len(rows) >= batch_size else None
-		return ConnectorFetchResult(records=rows, next_cursor=next_cursor)
+		has_more = len(rows) > batch_size
+		records = rows[:batch_size]
+		next_cursor = self._next_fetch_cursor(records, rows[batch_size] if has_more else None, key_fields)
+		return ConnectorFetchResult(records=records, next_cursor=next_cursor)
 
 	def upsert_record(
 		self,
@@ -539,15 +542,10 @@ class RelationalConnector(BasePartnerConnector):
 		query: str | None = None,
 	) -> list[str]:
 		source_name, query_text = self._resolve_source(source=source, query=query)
-		if query_text and not source_name:
-			raise RuntimeError(
-				f"{self.dialect} column inspection currently supports table sources only; query inspection is disabled"
-			)
-		if not source_name:
-			raise RuntimeError(f"{self.dialect} column inspection requires a table source")
+		if not source_name and not query_text:
+			raise RuntimeError(f"{self.dialect} column inspection requires a table source or read query")
 
-		table = self._quote_compound_identifier(source_name)
-		sql = f"SELECT * FROM {table} WHERE 1 = 0"
+		sql = self._build_describe_source_columns_sql(source=source_name, query=query_text)
 		with self._connection() as connection:
 			db_cursor = connection.cursor()
 			db_cursor.execute(sql, [])
@@ -555,6 +553,14 @@ class RelationalConnector(BasePartnerConnector):
 			with suppress(Exception):
 				db_cursor.close()
 		return [str(column) for column in columns if column]
+
+	def _build_describe_source_columns_sql(self, *, source: str | None, query: str | None) -> str:
+		if query:
+			if self.dialect == "firebird":
+				return f"SELECT * FROM ({query}) source_rows WHERE 1 = 0"
+			return f"SELECT * FROM ({query}) AS source_rows WHERE 1 = 0"
+		table = self._quote_compound_identifier(source or "")
+		return f"SELECT * FROM {table} WHERE 1 = 0"
 
 	def _load_driver_module(self):
 		for module_name in self._get_driver_candidates():
@@ -690,6 +696,39 @@ class RelationalConnector(BasePartnerConnector):
 			params.append(cursor_values[idx])
 			clauses.append("(" + " AND ".join(prefix) + ")")
 		return "(" + " OR ".join(clauses) + ")", params
+
+	def _next_fetch_cursor(
+		self,
+		records: list[dict[str, Any]],
+		lookahead_record: dict[str, Any] | None,
+		key_fields: list[str],
+	) -> str | None:
+		if not lookahead_record:
+			return None
+		cursor_record = records[-1] if records else lookahead_record
+		cursor_values = self._record_keyset_values(cursor_record, key_fields)
+		cursor = _encode_keyset_cursor_values(cursor_values)
+		if not cursor:
+			raise RuntimeError(
+				f"{self.dialect} fetch pagination requires non-empty values for key fields: {', '.join(key_fields)}"
+			)
+		if cursor_values == self._record_keyset_values(lookahead_record, key_fields):
+			raise RuntimeError(
+				f"{self.dialect} fetch pagination requires unique key fields. Configure Partner Identity Field "
+				"or another unique non-empty partner fetch key."
+			)
+		return cursor
+
+	def _record_keyset_values(self, record: dict[str, Any], key_fields: list[str]) -> list[Any]:
+		values: list[Any] = []
+		for field in key_fields:
+			if field in record:
+				values.append(record.get(field))
+			elif self.dialect == "firebird" and field.upper() in record:
+				values.append(record.get(field.upper()))
+			else:
+				values.append(record.get(field))
+		return values
 
 	def _build_scope_where(self, scope_where: str | None) -> tuple[str | None, list[Any]]:
 		return _parse_scope_where(scope_where, quote_identifier=self._quote_compound_identifier, placeholder=self._placeholder())
@@ -960,11 +999,19 @@ def _normalize_firebird_identifier_part(part: str, *, original_identifier: str) 
 def _encode_keyset_cursor(record: dict[str, Any], key_fields: list[str]) -> str | None:
 	if not record:
 		return None
-	values = [record.get(field) for field in key_fields]
+	values = _keyset_cursor_values(record, key_fields)
+	return _encode_keyset_cursor_values(values)
+
+
+def _encode_keyset_cursor_values(values: list[Any]) -> str | None:
 	if any(value in (None, "") for value in values):
 		return None
 	payload = json.dumps(values, default=str, ensure_ascii=True, separators=(",", ":"))
 	return base64.urlsafe_b64encode(payload.encode()).decode()
+
+
+def _keyset_cursor_values(record: dict[str, Any], key_fields: list[str]) -> list[Any]:
+	return [record.get(field) for field in key_fields]
 
 
 def _decode_keyset_cursor(value: str | None) -> list[Any] | None:

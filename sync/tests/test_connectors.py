@@ -404,16 +404,60 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		with patch.object(
 			connector,
 			"_run_select",
-			return_value=[{"id": "A1"}, {"id": "A2"}],
+			return_value=[{"id": "A1"}, {"id": "A2"}, {"id": "A3"}],
 		) as mock_select:
 			result = connector.fetch_records(source="public.sync_records", batch_size=2, key_fields=["id"])
 
 		self.assertEqual(result.records, [{"id": "A1"}, {"id": "A2"}])
 		self.assertEqual(result.next_cursor, _encode_keyset_cursor({"id": "A2"}, ["id"]))
 		mock_select.assert_called_once_with(
-			'SELECT * FROM "public"."sync_records" ORDER BY "id" LIMIT 2',
+			'SELECT * FROM "public"."sync_records" ORDER BY "id" LIMIT 3',
 			[],
 		)
+
+	def test_fetch_records_returns_no_cursor_without_lookahead_row(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
+
+		with patch.object(connector, "_run_select", return_value=[{"id": "A1"}, {"id": "A2"}]):
+			result = connector.fetch_records(source="public.sync_records", batch_size=2, key_fields=["id"])
+
+		self.assertEqual(result.records, [{"id": "A1"}, {"id": "A2"}])
+		self.assertIsNone(result.next_cursor)
+
+	def test_fetch_records_rejects_duplicate_page_boundary_keys(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
+
+		with patch.object(
+			connector,
+			"_run_select",
+			return_value=[{"id": "A1"}, {"id": "A1"}],
+		):
+			with self.assertRaisesRegex(RuntimeError, "requires unique key fields"):
+				connector.fetch_records(source="public.sync_records", batch_size=1, key_fields=["id"])
+
+	def test_fetch_records_rejects_blank_cursor_key_when_more_rows_exist(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
+
+		with patch.object(
+			connector,
+			"_run_select",
+			return_value=[{"id": ""}, {"id": "A2"}],
+		):
+			with self.assertRaisesRegex(RuntimeError, "requires non-empty values"):
+				connector.fetch_records(source="public.sync_records", batch_size=1, key_fields=["id"])
+
+	def test_fetch_records_allows_duplicate_match_key_with_unique_identity_key(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
+
+		with patch.object(
+			connector,
+			"_run_select",
+			return_value=[{"group_id": "A", "row_id": 1}, {"group_id": "A", "row_id": 2}],
+		):
+			result = connector.fetch_records(source="public.sync_records", batch_size=1, key_fields=["group_id", "row_id"])
+
+		self.assertEqual(result.records, [{"group_id": "A", "row_id": 1}])
+		self.assertEqual(result.next_cursor, _encode_keyset_cursor({"group_id": "A", "row_id": 1}, ["group_id", "row_id"]))
 
 	def test_upsert_record_rejects_query_only_targets(self):
 		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
@@ -778,11 +822,31 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertIn("WHERE 1 = 0", cursor.executed[0][0])
 		self.assertEqual(cursor.executed[0][1], [])
 
-	def test_relational_connector_rejects_query_column_inspection(self):
+	def test_relational_connector_describes_query_columns(self):
 		connector = PostgresConnector(DummyPartner("postgres"))
+		cursor = _FakeCursor(description=[("external_id",), ("status_label",)])
+		connection = _FakeConnection(cursor)
 
-		with self.assertRaisesRegex(RuntimeError, "table sources only"):
-			connector.describe_source_columns(query="select * from sync_table")
+		with patch.object(connector, "_connect", return_value=connection):
+			columns = connector.describe_source_columns(query="select id as external_id, status as status_label from sync_table")
+
+		self.assertEqual(columns, ["external_id", "status_label"])
+		self.assertEqual(
+			cursor.executed[0][0],
+			"SELECT * FROM (select id as external_id, status as status_label from sync_table) AS source_rows WHERE 1 = 0",
+		)
+
+	def test_relational_connector_prefers_query_for_column_inspection_when_source_is_also_present(self):
+		connector = PostgresConnector(DummyPartner("postgres"))
+		cursor = _FakeCursor(description=[("query_id",), ("computed_status",)])
+		connection = _FakeConnection(cursor)
+
+		with patch.object(connector, "_connect", return_value=connection):
+			columns = connector.describe_source_columns(source="public.sync_table", query="select id as query_id, 1 as computed_status from sync_table")
+
+		self.assertEqual(columns, ["query_id", "computed_status"])
+		self.assertIn("query_id", cursor.executed[0][0])
+		self.assertNotIn('"public"."sync_table"', cursor.executed[0][0])
 
 	def test_relational_connector_requires_source_for_column_inspection(self):
 		connector = PostgresConnector(DummyPartner("postgres"))
@@ -1012,7 +1076,7 @@ class TestPostgresConnectorIntegration(unittest.TestCase):
 		self.assertEqual(len(page.records), 1)
 		self.assertEqual(page.records[0]["id"], "A1")
 		self.assertEqual(page.records[0]["status"], "closed")
-		self.assertEqual(page.next_cursor, _encode_keyset_cursor({"id": "A1"}, ["id"]))
+		self.assertIsNone(page.next_cursor)
 
 		query_page = self.connector.fetch_records(
 			query=f"SELECT id, status, updated_at FROM {self.table_name}",
