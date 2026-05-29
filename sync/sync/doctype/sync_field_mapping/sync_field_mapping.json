@@ -6,7 +6,9 @@
  "field_order": [
   "frappe_field",
   "partner_field",
-  "direction"
+  "direction",
+  "unmapped_action",
+  "fallback_value"
  ],
  "fields": [
   {
@@ -32,12 +34,26 @@
    "in_list_view": 1,
    "label": "Direction",
    "options": "Frappe <-> Partner\nFrappe -> Partner\nFrappe <- Partner"
+  },
+  {
+   "default": "Keep Original",
+   "description": "Fallback for values that do not match a Value Mapping row.",
+   "fieldname": "unmapped_action",
+   "fieldtype": "Select",
+   "label": "Unmapped Action",
+   "options": "Keep Original\nUse Fallback Value\nUse NULL"
+  },
+  {
+   "description": "Literal value used when Unmapped Action is Use Fallback Value.",
+   "fieldname": "fallback_value",
+   "fieldtype": "Data",
+   "label": "Fallback Value"
   }
  ],
  "grid_page_length": 50,
  "istable": 1,
  "links": [],
- "modified": "2026-05-21 12:00:00.000000",
+ "modified": "2026-05-29 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Field Mapping",
  "permissions": [],

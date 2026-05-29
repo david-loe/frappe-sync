@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 import unittest
@@ -87,7 +87,14 @@ class TestRuntimeHelpers(unittest.TestCase):
 			if childdoctype == "Sync Key Field":
 				return [dict(frappe_field="name")]
 			if childdoctype == "Sync Field Mapping":
-				return [dict(frappe_field="name", partner_field="name")]
+				return [
+					dict(
+						frappe_field="name",
+						partner_field="name",
+						unmapped_action="Use NULL",
+						fallback_value="ignored",
+					)
+				]
 			if childdoctype == "Sync Value Mapping":
 				return [dict(frappe_field="state", source_value="open", target_value="1")]
 			return []
@@ -117,8 +124,12 @@ class TestRuntimeHelpers(unittest.TestCase):
 			config = runtime._build_definition_config(doc)
 
 		self.assertEqual(config.match_fields, ["name"])
-		self.assertEqual(config.mapping, {"name": {"partner_field": "name", "direction": "Frappe <-> Partner"}})
+		self.assertEqual(config.mapping, {"name": {"partner_field": "name", "direction": "Frappe -> Partner"}})
 		self.assertEqual(config.value_mapping, {"state": {"open": "1"}})
+		self.assertEqual(
+			config.value_mapping_fallbacks,
+			{"name": {"action": "null", "value": None}},
+		)
 		self.assertIsInstance(config.filters, list)
 		self.assertEqual(config.use_last_sync_date, True)
 		self.assertEqual(config.frappe_modified_fields, ["modified"])
@@ -158,6 +169,34 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(config.frappe_modified_fields, ["modified", "changed_on"])
 		self.assertEqual(config.partner_modified_fields, ["updated_at", "partner_changed"])
 
+	@patch("sync.sync.service.runtime._get_child_rows_by_options")
+	def test_build_definition_config_allows_partner_to_frappe_read_query_without_table_name(self, mock_children):
+		def fake_rows(parent, childdoctype):
+			if childdoctype == "Sync Key Field":
+				return [dict(frappe_field="name")]
+			if childdoctype == "Sync Field Mapping":
+				return [dict(frappe_field="name", partner_field="id")]
+			return []
+
+		mock_children.side_effect = fake_rows
+
+		doc = FakeDoc(
+			{
+				"name": "SYNC-QUERY",
+				"sync_type": "Frappe <- Partner",
+				"partner": "PARTNER-1",
+				"doctype_name": "Task",
+				"read_query": "select id from remote_tasks",
+			}
+		)
+
+		with patch("sync.sync.service.runtime.frappe.get_meta", return_value=SimpleNamespace(fields=[])):
+			config = runtime._build_definition_config(doc)
+
+		self.assertIsNone(config.table_name)
+		self.assertEqual(config.read_query, "select id from remote_tasks")
+		self.assertEqual(config.mapping, {"name": {"partner_field": "id", "direction": "Frappe <- Partner"}})
+
 	@patch("sync.sync.service.runtime._get_child_rows_by_options", return_value=[])
 	def test_build_definition_config_uses_first_mapping_key_as_default_key(self, _mock_children):
 		doc = FakeDoc(
@@ -165,6 +204,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				"name": "SYNC-DEFAULT-KEY",
 				"partner": "PARTNER-1",
 				"doctype_name": "Task",
+				"table_name": "tabTask",
 				"field_mapping": {"subject": "title"},
 			}
 		)
@@ -173,16 +213,17 @@ class TestRuntimeHelpers(unittest.TestCase):
 			config = runtime._build_definition_config(doc)
 
 		self.assertEqual(config.match_fields, ["subject"])
-		self.assertEqual(config.mapping, {"subject": {"partner_field": "title", "direction": "Frappe <-> Partner"}})
+		self.assertEqual(config.mapping, {"subject": {"partner_field": "title", "direction": "Frappe -> Partner"}})
 
 	@patch("sync.sync.service.runtime._get_child_rows_by_options", return_value=[])
 	def test_build_definition_config_rejects_key_mapping_direction_mismatch(self, _mock_children):
 		doc = FakeDoc(
 			{
 				"name": "SYNC-DIR",
-				"sync_type": "Frappe -> Partner",
+				"sync_type": "Frappe <-> Partner",
 				"partner": "PARTNER-1",
 				"doctype_name": "Task",
+				"table_name": "tabTask",
 				"match_fields": "name",
 				"field_mapping": {
 					"name": {"partner_field": "id", "direction": "Frappe <- Partner"},
@@ -542,6 +583,22 @@ class TestRuntimeHelpers(unittest.TestCase):
 				new_record={"enabled": 1},
 				old_record={"enabled": True},
 				field_names=["enabled"],
+			),
+			[],
+		)
+		self.assertEqual(
+			runtime._diff_target_values(
+				new_record={"changed_at": "2025-12-03 16:33:48"},
+				old_record={"changed_at": "2025-12-03T16:33:48"},
+				field_names=["changed_at"],
+			),
+			[],
+		)
+		self.assertEqual(
+			runtime._diff_target_values(
+				new_record={"birth_date": "1972-08-21 00:00:00"},
+				old_record={"birth_date": date(1972, 8, 21)},
+				field_names=["birth_date"],
 			),
 			[],
 		)
@@ -1344,7 +1401,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
 				connector=object(),
-				partner_records=[{"id": "TASK-1", "state": "1", "title": "Ignored"}],
+				partner_records=[{"id": "TASK-1", "state": 1, "title": "Ignored"}],
 				frappe_records=[{"name": "TASK-1", "status": "Closed", "subject": "Old"}],
 				dry_run=False,
 				stats=runtime.SyncStats(),

@@ -5,6 +5,7 @@ sync.forms.DEFINITION_PARTNER_COLUMN_METHOD = "get_sync_partner_table_columns";
 frappe.ui.form.on("Sync Definition", {
 	refresh(frm) {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
+		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
 		sync.forms.setupButtons(frm);
 		sync.helpers.toggleSourceFields(frm);
 		sync.helpers.toggleSyncTypeSections(frm);
@@ -22,8 +23,10 @@ frappe.ui.form.on("Sync Definition", {
 	},
 	sync_type(frm) {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
+		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
 		sync.helpers.toggleSyncTypeSections(frm);
 		sync.helpers.toggleDefinitionModifiedFieldRows(frm);
+		sync.helpers.refreshDefinitionSourceValidation(frm);
 	},
 	doctype_name(frm) {
 		sync.helpers.refreshDefinitionFieldChoices(frm);
@@ -54,6 +57,7 @@ frappe.ui.form.on("Sync Definition", {
 	},
 	validate(frm) {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
+		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
 		sync.helpers.validateDefinitionSourceSettings(frm);
 	},
 });
@@ -287,14 +291,19 @@ sync.helpers.getDefinitionPartnerColumnSignature = function (frm) {
 };
 
 sync.helpers.isDefinitionPartnerColumnReady = function (frm) {
-	return Boolean((frm.doc.partner || "").trim() && (frm.doc.table_name || "").trim());
+	return Boolean(
+		(frm.doc.partner || "").trim() &&
+			((frm.doc.table_name || "").trim() || sync.helpers.getDefinitionSourceReadQuery(frm))
+	);
 };
 
 sync.helpers.getDefinitionPartnerColumnRequestArgs = function (frm) {
 	const args = {
 		sync_partner_name: frm.doc.partner,
-		table_name: frm.doc.table_name,
 	};
+	if ((frm.doc.table_name || "").trim()) {
+		args.table_name = frm.doc.table_name;
+	}
 	const readQuery = sync.helpers.getDefinitionSourceReadQuery(frm);
 	if (readQuery) {
 		args.read_query = readQuery;
@@ -380,7 +389,7 @@ sync.helpers.renderDefinitionPartnerColumnPanel = function (frm) {
 	if (!frm.doc.partner) {
 		missing.push(__("Partner"));
 	}
-	if (!frm.doc.table_name) {
+	if (!frm.doc.table_name && !sync.helpers.getDefinitionSourceReadQuery(frm)) {
 		missing.push(__("Table Name"));
 	}
 
@@ -390,7 +399,7 @@ sync.helpers.renderDefinitionPartnerColumnPanel = function (frm) {
 			missing,
 			source_label: sync.helpers.getDefinitionSourceReadQuery(frm) ? __("Read Query") : __("Table Name"),
 			source_details: sync.helpers.getDefinitionSourceReadQuery(frm)
-				? __("Partner rows are loaded from the Read Query, while writes still target Table Name.")
+				? __("Partner rows are loaded from the Read Query.")
 				: __("Partner rows are loaded directly from Table Name."),
 		})
 	);
@@ -414,7 +423,7 @@ sync.helpers.setupDefinitionPartnerColumnPanel = function (frm) {
 sync.helpers.loadDefinitionPartnerColumns = function (frm) {
 	if (!sync.helpers.isDefinitionPartnerColumnReady(frm)) {
 		frappe.show_alert({
-			message: __("Set Partner and Table Name first."),
+			message: __("Set Partner and Table Name or Read Query first."),
 			indicator: "orange",
 		});
 		return Promise.resolve([]);
@@ -519,7 +528,7 @@ sync.helpers.refreshDefinitionFieldChoices = function (frm) {
 sync.helpers.getDefinitionSourceSettingsIssue = function (frm) {
 	const hasTableName = Boolean((frm.doc.table_name || "").trim());
 	const hasQuery = Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
-	if (!hasTableName) {
+	if (!hasTableName && !sync.helpers.canDefinitionReadQueryReplaceTableName(frm)) {
 		return __("Table Name is required.");
 	}
 	if (frm.doc.delete_missing && hasQuery) {
@@ -529,10 +538,7 @@ sync.helpers.getDefinitionSourceSettingsIssue = function (frm) {
 };
 
 sync.helpers.getDefinitionSourceSettingsNotice = function (frm) {
-	if (!sync.helpers.getDefinitionSourceReadQuery(frm)) {
-		return "";
-	}
-	return __("Read Query is active. Partner rows are loaded from the query, while inserts and updates still target Table Name.");
+	return "";
 };
 
 sync.helpers.refreshDefinitionSourceValidation = function (frm) {

@@ -131,6 +131,15 @@ sync.helpers.getDefinitionSourceReadQuery = function (frm) {
 	return String(frm.doc?.read_query || "").trim();
 };
 
+sync.helpers.isDefinitionPartnerToFrappe = function (frm) {
+	const direction = String(frm.doc?.sync_type || "").toLowerCase();
+	return direction === "frappe <- partner" || direction === "a<-b";
+};
+
+sync.helpers.canDefinitionReadQueryReplaceTableName = function (frm) {
+	return sync.helpers.isDefinitionPartnerToFrappe(frm) && Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
+};
+
 sync.helpers.setDefinitionFieldProperty = function (frm, fieldname, property, value) {
 	if (!fieldname || !frm?.fields_dict?.[fieldname]) {
 		return;
@@ -149,8 +158,8 @@ sync.helpers.toggleDefinitionField = function (frm, fieldname, visible, reqd) {
 };
 
 sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
-	const hasReadQuery = Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
-	const canWritePartner = (frm.doc.sync_type || "").toLowerCase() !== "a<-b";
+	const tableNameRequired = !sync.helpers.canDefinitionReadQueryReplaceTableName(frm);
+	const canWritePartner = !sync.helpers.isDefinitionPartnerToFrappe(frm);
 	const identityFieldNames = [
 		"partner_identity_field",
 		"frappe_partner_identity_field",
@@ -170,10 +179,11 @@ sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 		frm,
 		"table_name",
 		"description",
-		hasReadQuery
-			? __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Read Query is active, so reads are limited by the query while writes still target Table Name.")
-			: __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Leave Read Query blank to read the full table.")
+		tableNameRequired
+			? __("Partner table used for writes and as the default read source when Read Query is blank.")
+			: __("Optional partner table for column introspection.")
 	);
+	sync.helpers.toggleDefinitionField(frm, "table_name", true, tableNameRequired);
 
 	sync.helpers.setDefinitionFieldProperty(
 		frm,
@@ -185,7 +195,7 @@ sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 		frm,
 		"read_query",
 		"description",
-		__("Optional read-only query used to load partner rows. Leave blank to read the full table. Writes still target Table Name.")
+		__("Optional query used to load partner rows. Leave blank to read from Table Name.")
 	);
 	sync.helpers.setDefinitionFieldProperty(
 		frm,
@@ -299,6 +309,24 @@ sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 				break;
 		}
 	});
+};
+
+sync.helpers.refreshDefinitionFieldMappingDirection = function (frm) {
+	const direction = String(frm.doc?.sync_type || "").trim();
+	const showDirection = direction === "Frappe <-> Partner";
+	const grid = frm.fields_dict.field_mapping?.grid;
+	if (!grid) {
+		return;
+	}
+
+	grid.update_docfield_property("direction", "hidden", showDirection ? 0 : 1);
+	grid.update_docfield_property("direction", "in_list_view", showDirection ? 1 : 0);
+	if (!showDirection && direction) {
+		(frm.doc.field_mapping || []).forEach((row) => {
+			row.direction = direction;
+		});
+	}
+	frm.refresh_field("field_mapping");
 };
 
 sync.helpers.normalizePartnerColumnChoices = function (payload) {
@@ -1205,17 +1233,17 @@ sync.helpers.testPartnerConnection = function (frm) {
 };
 
 sync.helpers.toggleSourceFields = function (frm) {
-	const hasReadQuery = Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
+	const tableNameRequired = !sync.helpers.canDefinitionReadQueryReplaceTableName(frm);
 
 	sync.helpers.toggleDefinitionField(frm, "read_query", true, false);
-	sync.helpers.toggleDefinitionField(frm, "table_name", true, true);
+	sync.helpers.toggleDefinitionField(frm, "table_name", true, tableNameRequired);
 	sync.helpers.setDefinitionFieldProperty(
 		frm,
 		"table_name",
 		"description",
-		hasReadQuery
-			? __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Read Query is active, so reads are limited by the query while writes still target Table Name.")
-			: __("Writable partner table. Required for inserts, updates, deletes, and column introspection. Leave Read Query blank to read the full table.")
+		tableNameRequired
+			? __("Partner table used for writes and as the default read source when Read Query is blank.")
+			: __("Optional partner table for column introspection.")
 	);
 	sync.helpers.setDefinitionFieldProperty(
 		frm,

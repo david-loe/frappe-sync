@@ -374,6 +374,7 @@ class TestRuntimeManagement(unittest.TestCase):
 				"match_fields": "name, external_id",
 				"field_mapping": '{"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}, "status": {"partner_field": "state", "direction": "Frappe <- Partner"}, "subject": {"partner_field": "title", "direction": "Frappe -> Partner"}}',
 				"value_mapping": '{"status": {"Open": "1"}}',
+				"value_mapping_fallbacks": '{"status": {"action": "null", "value": "ignored"}}',
 			}.get(key, default),
 		)
 
@@ -389,6 +390,10 @@ class TestRuntimeManagement(unittest.TestCase):
 				},
 			)
 			self.assertEqual(runtime._get_value_mapping(doc), {"status": {"Open": "1"}})
+			self.assertEqual(
+				runtime._get_value_mapping_fallbacks(doc),
+				{"status": {"action": "null", "value": None}},
+			)
 		self.assertEqual(
 			runtime._map_partner_to_frappe(
 				{"id": "TASK-1", "state": "1", "title": "Ignored"},
@@ -404,6 +409,84 @@ class TestRuntimeManagement(unittest.TestCase):
 				{"status": {"Open": "1"}},
 			),
 			{"id": "TASK-1", "title": "Hello"},
+		)
+
+	def test_value_mapping_fallbacks_apply_only_after_mapping_miss(self):
+		mapping = {
+			"status": {"partner_field": "state", "direction": "Frappe <-> Partner"},
+		}
+		value_mapping = {"status": {"Open": "1"}}
+		value_mapping_fallbacks = {
+			"status": {"action": "fallback", "value": "Unknown"}
+		}
+
+		self.assertEqual(
+			runtime._map_partner_to_frappe(
+				{"state": "2"},
+				mapping,
+				value_mapping,
+				value_mapping_fallbacks,
+			),
+			{"status": "Unknown"},
+		)
+		self.assertEqual(
+			runtime._map_frappe_to_partner(
+				{"status": "Closed"},
+				mapping,
+				value_mapping,
+				value_mapping_fallbacks,
+			),
+			{"state": "Unknown"},
+		)
+		self.assertEqual(
+			runtime._map_partner_to_frappe(
+				{"state": "1"},
+				mapping,
+				value_mapping,
+				value_mapping_fallbacks,
+			),
+			{"status": "Open"},
+		)
+		self.assertEqual(
+			runtime._map_frappe_to_partner(
+				{"status": "Open"},
+				mapping,
+				value_mapping,
+				value_mapping_fallbacks,
+			),
+			{"state": "1"},
+		)
+
+	def test_value_mapping_fallbacks_can_keep_original_or_write_null(self):
+		mapping = {
+			"status": {"partner_field": "state", "direction": "Frappe <-> Partner"},
+		}
+
+		self.assertEqual(
+			runtime._map_partner_to_frappe(
+				{"state": "2"},
+				mapping,
+				{"status": {"Open": "1"}},
+			),
+			{"status": "2"},
+		)
+		self.assertEqual(
+			runtime._map_partner_to_frappe(
+				{"state": "2"},
+				mapping,
+				{"status": {"Open": "1"}},
+				{"status": {"action": "null", "value": "ignored"}},
+			),
+			{"status": None},
+		)
+		self.assertEqual(
+			runtime._map_frappe_to_partner(
+				{"status": "Closed"},
+				mapping,
+				{"status": {"Open": "1"}},
+				{"status": {"action": "Use NULL", "value": "ignored"}},
+			),
+			{"state": None},
 		)
 		datetime_mapping = {"scheduled_at": {"partner_field": "scheduled_at", "direction": "Frappe <-> Partner"}}
 		datetime_meta = DummyMeta([_field("scheduled_at", "Datetime")])

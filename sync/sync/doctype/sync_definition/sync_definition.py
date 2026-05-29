@@ -7,6 +7,19 @@ import frappe
 from frappe.model.document import Document
 
 MAPPING_DIRECTIONS = ("Frappe <-> Partner", "Frappe -> Partner", "Frappe <- Partner")
+UNMAPPED_ACTION_KEEP_ORIGINAL = "Keep Original"
+UNMAPPED_ACTION_USE_FALLBACK = "Use Fallback Value"
+UNMAPPED_ACTION_USE_NULL = "Use NULL"
+UNMAPPED_ACTIONS = (
+	UNMAPPED_ACTION_KEEP_ORIGINAL,
+	UNMAPPED_ACTION_USE_FALLBACK,
+	UNMAPPED_ACTION_USE_NULL,
+)
+UNMAPPED_ACTION_KEYS = {
+	UNMAPPED_ACTION_KEEP_ORIGINAL: "keep_original",
+	UNMAPPED_ACTION_USE_FALLBACK: "fallback",
+	UNMAPPED_ACTION_USE_NULL: "null",
+}
 
 
 class SyncDefinition(Document):
@@ -31,12 +44,13 @@ class SyncDefinition(Document):
 		seen: set[str] = set()
 		duplicates: list[str] = []
 		for row in self.field_mapping or []:
-			entry = _normalize_field_mapping_row(row)
+			entry = _normalize_field_mapping_row(row, sync_type=getattr(self, "sync_type", None))
 			if not entry:
 				continue
 			_assign_row_value(row, "frappe_field", entry["frappe_field"])
 			_assign_row_value(row, "partner_field", entry["partner_field"])
 			_assign_row_value(row, "direction", entry["direction"])
+			_normalize_field_mapping_fallbacks(row)
 			if entry["frappe_field"] in seen:
 				duplicates.append(entry["frappe_field"])
 				continue
@@ -53,7 +67,7 @@ class SyncDefinition(Document):
 	def validate_source_settings(self):
 		table_name = _clean_value(self.table_name)
 		read_query = _clean_value(getattr(self, "read_query", None))
-		if not table_name:
+		if not table_name and not _read_query_can_replace_table_name(getattr(self, "sync_type", None), read_query):
 			frappe.throw("Table Name is required.")
 		if read_query and getattr(self, "delete_missing", None):
 			frappe.throw("Delete Missing cannot be used together with Read Query.")
@@ -124,7 +138,7 @@ class SyncDefinition(Document):
 	def get_field_mapping(self) -> dict[str, dict[str, str]]:
 		mapping = {}
 		for row in self.field_mapping or []:
-			entry = _normalize_field_mapping_row(row)
+			entry = _normalize_field_mapping_row(row, sync_type=getattr(self, "sync_type", None))
 			if not entry:
 				continue
 			mapping[entry["frappe_field"]] = {
@@ -141,6 +155,18 @@ class SyncDefinition(Document):
 				continue
 			field_map = result.setdefault(frappe_field, {})
 			field_map[cstr(_get_row_value(row, "frappe_value"))] = cstr(_get_row_value(row, "partner_value"))
+		return result
+
+	def get_value_mapping_fallbacks(self) -> dict[str, dict[str, str | None]]:
+		result: dict[str, dict[str, str | None]] = {}
+		for row in self.field_mapping or []:
+			entry = _normalize_field_mapping_row(row, sync_type=getattr(self, "sync_type", None))
+			if not entry:
+				continue
+			result[entry["frappe_field"]] = _get_unmapped_action_config(
+				_get_row_value(row, "unmapped_action"),
+				_get_row_value(row, "fallback_value"),
+			)
 		return result
 
 	def get_frappe_modified_fields(self) -> list[str]:
@@ -176,6 +202,7 @@ class SyncDefinition(Document):
 			"match_fields": SyncDefinition.get_match_fields(self),
 			"field_mapping": SyncDefinition.get_field_mapping(self),
 			"value_mapping": SyncDefinition.get_value_mapping(self),
+			"value_mapping_fallbacks": SyncDefinition.get_value_mapping_fallbacks(self),
 			"partner_identity_field": getattr(self, "partner_identity_field", None),
 			"frappe_partner_identity_field": getattr(self, "frappe_partner_identity_field", None),
 			"partner_frappe_identity_field": getattr(self, "partner_frappe_identity_field", None),
@@ -258,7 +285,53 @@ def _normalize_mapping_direction(value, *, default: str = "Frappe <-> Partner") 
 	return direction
 
 
-def _normalize_field_mapping_row(row) -> dict[str, str] | None:
+def _one_way_mapping_direction(sync_type) -> str | None:
+	sync_type = _clean_value(sync_type)
+	if sync_type in {"Frappe -> Partner", "Frappe <- Partner"}:
+		return sync_type
+	return None
+
+
+def _read_query_can_replace_table_name(sync_type, read_query) -> bool:
+	return _one_way_mapping_direction(sync_type) == "Frappe <- Partner" and bool(_clean_value(read_query))
+
+
+def _normalize_unmapped_action(value) -> str:
+	action = _clean_value(value) or UNMAPPED_ACTION_KEEP_ORIGINAL
+	if action not in UNMAPPED_ACTIONS:
+		frappe.throw(f"Unmapped Action must be one of: {', '.join(UNMAPPED_ACTIONS)}")
+	return action
+
+
+def _normalize_field_mapping_fallbacks(row) -> None:
+	_normalize_field_mapping_fallback(
+		row,
+		action_fieldname="unmapped_action",
+		value_fieldname="fallback_value",
+	)
+
+
+def _normalize_field_mapping_fallback(row, *, action_fieldname: str, value_fieldname: str) -> None:
+	action = _normalize_unmapped_action(_get_row_value(row, action_fieldname))
+	_assign_row_value(row, action_fieldname, action)
+	if action == UNMAPPED_ACTION_USE_FALLBACK:
+		fallback_value = _clean_value(_get_row_value(row, value_fieldname))
+		if fallback_value is None:
+			frappe.throw("Fallback Value is required when Unmapped Action is Use Fallback Value.")
+		_assign_row_value(row, value_fieldname, fallback_value)
+		return
+	if action == UNMAPPED_ACTION_USE_NULL:
+		_assign_row_value(row, value_fieldname, None)
+
+
+def _get_unmapped_action_config(action, value) -> dict[str, str | None]:
+	normalized_action = _normalize_unmapped_action(action)
+	if normalized_action == UNMAPPED_ACTION_USE_FALLBACK:
+		return {"action": UNMAPPED_ACTION_KEYS[normalized_action], "value": _clean_value(value)}
+	return {"action": UNMAPPED_ACTION_KEYS[normalized_action], "value": None}
+
+
+def _normalize_field_mapping_row(row, *, sync_type: str | None = None) -> dict[str, str] | None:
 	frappe_field = _clean_value(
 		_get_row_value(row, "frappe_field", "source_field", "doctype_field", "field_name")
 	)
@@ -270,7 +343,8 @@ def _normalize_field_mapping_row(row) -> dict[str, str] | None:
 	return {
 		"frappe_field": frappe_field,
 		"partner_field": partner_field,
-		"direction": _normalize_mapping_direction(_get_row_value(row, "direction")),
+		"direction": _one_way_mapping_direction(sync_type)
+		or _normalize_mapping_direction(_get_row_value(row, "direction")),
 	}
 
 

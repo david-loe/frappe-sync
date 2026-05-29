@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import json
 from typing import Any
@@ -47,6 +47,15 @@ MAPPING_DIRECTION_BOTH = "Frappe <-> Partner"
 MAPPING_DIRECTION_FRAPPE_TO_PARTNER = "Frappe -> Partner"
 MAPPING_DIRECTION_PARTNER_TO_FRAPPE = "Frappe <- Partner"
 
+VALUE_MAPPING_FALLBACK_KEEP_ORIGINAL = "keep_original"
+VALUE_MAPPING_FALLBACK_USE_FALLBACK = "fallback"
+VALUE_MAPPING_FALLBACK_USE_NULL = "null"
+VALUE_MAPPING_FALLBACK_ACTIONS = {
+	VALUE_MAPPING_FALLBACK_KEEP_ORIGINAL,
+	VALUE_MAPPING_FALLBACK_USE_FALLBACK,
+	VALUE_MAPPING_FALLBACK_USE_NULL,
+}
+
 SYNC_TYPE_FRAPPE_TO_PARTNER = MAPPING_DIRECTION_FRAPPE_TO_PARTNER
 SYNC_TYPE_PARTNER_TO_FRAPPE = MAPPING_DIRECTION_PARTNER_TO_FRAPPE
 SYNC_TYPE_BIDIRECTIONAL = MAPPING_DIRECTION_BOTH
@@ -54,6 +63,7 @@ SYNC_TYPE_BIDIRECTIONAL = MAPPING_DIRECTION_BOTH
 DEFAULT_RUNTIME_COMMIT_BATCH = 50
 RUN_DOC_PENDING_WRITES_ATTR = "_sync_pending_write_count"
 AUDIT_RECORD_UNSET = object()
+VALUE_MAPPING_UNSET = object()
 
 
 @dataclass(slots=True)
@@ -77,6 +87,7 @@ class SyncDefinitionConfig:
 	value_mapping: dict[str, dict[Any, Any]]
 	frappe_modified_fields: list[str]
 	partner_modified_fields: list[str]
+	value_mapping_fallbacks: dict[str, dict[str, Any]] | None = None
 	partner_identity_field: str | None = None
 	frappe_partner_identity_field: str | None = None
 	partner_frappe_identity_field: str | None = None
@@ -739,6 +750,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 			normalized_config = replace(
 				config,
 				partner_time_zone=_normalize_time_zone_name(config.partner_time_zone),
+				value_mapping_fallbacks=_normalize_value_mapping_fallbacks(config.value_mapping_fallbacks),
 			)
 			_validate_runtime_mapping(normalized_config)
 			return normalized_config
@@ -763,6 +775,9 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		value_mapping=dict(getattr(config, "value_mapping", {}) or {}),
 		frappe_modified_fields=list(getattr(config, "frappe_modified_fields", ["modified"]) or ["modified"]),
 		partner_modified_fields=list(getattr(config, "partner_modified_fields", ["modified"]) or ["modified"]),
+		value_mapping_fallbacks=_normalize_value_mapping_fallbacks(
+			getattr(config, "value_mapping_fallbacks", {}) or {}
+		),
 		partner_identity_field=_clean_string(getattr(config, "partner_identity_field", None)),
 		frappe_partner_identity_field=_clean_string(getattr(config, "frappe_partner_identity_field", None)),
 		partner_frappe_identity_field=_clean_string(getattr(config, "partner_frappe_identity_field", None)),
@@ -867,6 +882,7 @@ def _sync_frappe_to_partner(
 				frappe_record,
 				config.mapping,
 				config.value_mapping,
+				getattr(config, "value_mapping_fallbacks", None),
 				doctype=getattr(config, "doctype", None),
 				partner_time_zone=getattr(config, "partner_time_zone", None),
 			),
@@ -1137,6 +1153,7 @@ def _sync_partner_to_frappe(
 			partner_record,
 			config.mapping,
 			config.value_mapping,
+			getattr(config, "value_mapping_fallbacks", None),
 			doctype=getattr(config, "doctype", None),
 			partner_time_zone=getattr(config, "partner_time_zone", None),
 		)
@@ -1443,6 +1460,7 @@ def _sync_bidirectional(
 			partner_record,
 			config.mapping,
 			config.value_mapping,
+			getattr(config, "value_mapping_fallbacks", None),
 			doctype=getattr(config, "doctype", None),
 			partner_time_zone=getattr(config, "partner_time_zone", None),
 		)
@@ -1450,6 +1468,7 @@ def _sync_bidirectional(
 			frappe_record,
 			config.mapping,
 			config.value_mapping,
+			getattr(config, "value_mapping_fallbacks", None),
 			doctype=getattr(config, "doctype", None),
 			partner_time_zone=getattr(config, "partner_time_zone", None),
 		)
@@ -1947,7 +1966,9 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 
 	match_fields = _get_match_fields(sync_definition_doc)
 	mapping = _get_field_mapping(sync_definition_doc)
+	mapping = _force_mapping_direction(mapping, sync_type)
 	value_mapping = _get_value_mapping(sync_definition_doc)
+	value_mapping_fallbacks = _get_value_mapping_fallbacks(sync_definition_doc)
 	if not mapping:
 		raise frappe.ValidationError("Sync Definition has no field mapping entries.")
 	if not match_fields:
@@ -1977,6 +1998,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		value_mapping=value_mapping,
 		frappe_modified_fields=frappe_modified_fields,
 		partner_modified_fields=partner_modified_fields,
+		value_mapping_fallbacks=value_mapping_fallbacks,
 		partner_identity_field=_clean_string(_first_value(sync_definition_doc, ["partner_identity_field"])),
 		frappe_partner_identity_field=_clean_string(_first_value(sync_definition_doc, ["frappe_partner_identity_field"])),
 		partner_frappe_identity_field=_clean_string(_first_value(sync_definition_doc, ["partner_frappe_identity_field"])),
@@ -1985,6 +2007,8 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		partner_create_id_scope_where=_clean_string(_first_value(sync_definition_doc, ["partner_create_id_scope_where"])),
 		capture_audit_payloads=_as_bool(_first_value(sync_definition_doc, ["capture_audit_payloads"], default=0)),
 	)
+	if not config.table_name and not _read_query_can_replace_table_name(config.sync_type, config.read_query):
+		raise frappe.ValidationError("Table Name is required.")
 	if config.delete_missing and config.read_query:
 		raise frappe.ValidationError("Delete Missing cannot be used together with Read Query.")
 	_validate_runtime_mapping(config)
@@ -2007,6 +2031,7 @@ def _get_match_fields(sync_definition_doc: Any) -> list[str]:
 def _get_field_mapping(sync_definition_doc: Any) -> dict[str, dict[str, str]]:
 	rows = _get_child_rows_by_options(sync_definition_doc, "Sync Field Mapping")
 	mapping: dict[str, dict[str, str]] = {}
+	sync_type = _clean_string(_first_value(sync_definition_doc, ["sync_type"]))
 	for row in rows:
 		frappe_field = _clean_string(
 			_first_value_dict(
@@ -2014,7 +2039,7 @@ def _get_field_mapping(sync_definition_doc: Any) -> dict[str, dict[str, str]]:
 				["frappe_field", "source_field", "doctype_field", "source_fieldname", "field_name"],
 			)
 		)
-		entry = _normalize_field_mapping_entry(row)
+		entry = _normalize_field_mapping_entry(row, sync_type=sync_type)
 		if frappe_field and entry:
 			mapping[frappe_field] = entry
 	top_level = _first_value(sync_definition_doc, ["field_mapping"])
@@ -2022,6 +2047,8 @@ def _get_field_mapping(sync_definition_doc: Any) -> dict[str, dict[str, str]]:
 		mapping = _normalize_field_mapping(top_level)
 	if not mapping and isinstance(top_level, dict):
 		mapping = _normalize_field_mapping(top_level)
+	if _one_way_mapping_direction(sync_type):
+		mapping = _force_mapping_direction(mapping, sync_type)
 	return mapping
 
 
@@ -2049,7 +2076,18 @@ def _normalize_mapping_direction(direction: Any) -> str:
 	return value
 
 
-def _normalize_field_mapping_entry(raw_entry: Any) -> dict[str, str] | None:
+def _one_way_mapping_direction(sync_type: Any) -> str | None:
+	sync_type = _clean_string(sync_type)
+	if sync_type in {MAPPING_DIRECTION_FRAPPE_TO_PARTNER, MAPPING_DIRECTION_PARTNER_TO_FRAPPE}:
+		return sync_type
+	return None
+
+
+def _read_query_can_replace_table_name(sync_type: Any, read_query: Any) -> bool:
+	return _one_way_mapping_direction(sync_type) == MAPPING_DIRECTION_PARTNER_TO_FRAPPE and bool(_clean_string(read_query))
+
+
+def _normalize_field_mapping_entry(raw_entry: Any, *, sync_type: str | None = None) -> dict[str, str] | None:
 	if raw_entry in (None, ""):
 		return None
 	if isinstance(raw_entry, str):
@@ -2066,7 +2104,7 @@ def _normalize_field_mapping_entry(raw_entry: Any) -> dict[str, str] | None:
 		return None
 	return {
 		"partner_field": partner_field,
-		"direction": _normalize_mapping_direction(direction),
+		"direction": _one_way_mapping_direction(sync_type) or _normalize_mapping_direction(direction),
 	}
 
 
@@ -2089,6 +2127,16 @@ def _normalize_field_mapping(mapping: Any) -> dict[str, dict[str, str]]:
 	if not isinstance(mapping, dict):
 		return {}
 	return {frappe_field: entry for frappe_field, entry in _iter_field_mapping_entries(mapping)}
+
+
+def _force_mapping_direction(mapping: dict[str, Any], sync_type: str | None) -> dict[str, dict[str, str]]:
+	direction = _one_way_mapping_direction(sync_type)
+	if not direction:
+		return _normalize_field_mapping(mapping)
+	return {
+		frappe_field: {"partner_field": entry["partner_field"], "direction": direction}
+		for frappe_field, entry in _iter_field_mapping_entries(mapping)
+	}
 
 
 def _mapping_allows_direction(mapping_entry: dict[str, str], direction: str) -> bool:
@@ -2189,10 +2237,87 @@ def _get_value_mapping(sync_definition_doc: Any) -> dict[str, dict[Any, Any]]:
 	return result
 
 
+def _get_value_mapping_fallbacks(sync_definition_doc: Any) -> dict[str, dict[str, Any]]:
+	rows = _get_child_rows_by_options(sync_definition_doc, "Sync Field Mapping")
+	result: dict[str, dict[str, Any]] = {}
+	for row in rows:
+		frappe_field = _clean_string(
+			_first_value_dict(
+				row,
+				["frappe_field", "source_field", "doctype_field", "source_fieldname", "field_name"],
+			)
+		)
+		if not frappe_field:
+			continue
+		result[frappe_field] = _normalize_value_mapping_fallback(
+			_first_value_dict(row, ["unmapped_action"]),
+			_first_value_dict(row, ["fallback_value"]),
+		)
+
+	top_level = _first_value(sync_definition_doc, ["value_mapping_fallbacks"])
+	if not result:
+		return _normalize_value_mapping_fallbacks(top_level)
+	return result
+
+
+def _normalize_value_mapping_fallbacks(raw_fallbacks: Any) -> dict[str, dict[str, Any]]:
+	if isinstance(raw_fallbacks, str):
+		try:
+			raw_fallbacks = json.loads(raw_fallbacks)
+		except Exception:
+			return {}
+	if not isinstance(raw_fallbacks, dict):
+		return {}
+
+	result: dict[str, dict[str, Any]] = {}
+	for frappe_field, raw_field_fallbacks in raw_fallbacks.items():
+		frappe_field = _clean_string(frappe_field)
+		if not frappe_field or not isinstance(raw_field_fallbacks, dict):
+			continue
+		if "action" in raw_field_fallbacks:
+			result[frappe_field] = _normalize_value_mapping_fallback(
+				raw_field_fallbacks.get("action"),
+				raw_field_fallbacks.get("value"),
+			)
+	return result
+
+
+def _normalize_value_mapping_fallback(action: Any, value: Any = None) -> dict[str, Any]:
+	normalized_action = _normalize_value_mapping_fallback_action(action)
+	if normalized_action == VALUE_MAPPING_FALLBACK_KEEP_ORIGINAL:
+		return {"action": normalized_action, "value": None}
+	if normalized_action == VALUE_MAPPING_FALLBACK_USE_NULL:
+		return {"action": normalized_action, "value": None}
+	return {"action": normalized_action, "value": value}
+
+
+def _normalize_value_mapping_fallback_action(action: Any) -> str:
+	cleaned = _clean_string(action)
+	if not cleaned:
+		return VALUE_MAPPING_FALLBACK_KEEP_ORIGINAL
+	normalized = cleaned.lower().replace("-", "_").replace(" ", "_")
+	aliases = {
+		"keep_original": VALUE_MAPPING_FALLBACK_KEEP_ORIGINAL,
+		"fallback": VALUE_MAPPING_FALLBACK_USE_FALLBACK,
+		"use_fallback_value": VALUE_MAPPING_FALLBACK_USE_FALLBACK,
+		"null": VALUE_MAPPING_FALLBACK_USE_NULL,
+		"use_null": VALUE_MAPPING_FALLBACK_USE_NULL,
+	}
+	result = aliases.get(normalized)
+	if result:
+		return result
+	if cleaned in VALUE_MAPPING_FALLBACK_ACTIONS:
+		return cleaned
+	raise frappe.ValidationError(
+		"Value Mapping fallback action must be one of: keep_original, fallback, null."
+	)
+
+
 def _map_frappe_to_partner(
 	record: dict[str, Any],
 	mapping: dict[str, Any],
 	value_mapping: dict[str, dict[Any, Any]],
+	value_mapping_fallbacks: dict[str, dict[str, Any]] | None = None,
 	*,
 	doctype: str | None = None,
 	partner_time_zone: str | None = None,
@@ -2208,8 +2333,15 @@ def _map_frappe_to_partner(
 		partner_field = entry["partner_field"]
 		value = record.get(frappe_field)
 		field_map = value_mapping.get(frappe_field) or {}
-		if value in field_map:
-			value = field_map[value]
+		value = _mapped_value_with_fallback(
+			field_map,
+			value,
+			_value_mapping_fallback_for_direction(
+				value_mapping_fallbacks,
+				frappe_field,
+				MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
+			),
+		)
 		if frappe_field in datetime_fields:
 			value = _convert_datetime_between_time_zones(
 				value,
@@ -2224,6 +2356,7 @@ def _map_partner_to_frappe(
 	record: dict[str, Any],
 	mapping: dict[str, Any],
 	value_mapping: dict[str, dict[Any, Any]],
+	value_mapping_fallbacks: dict[str, dict[str, Any]] | None = None,
 	*,
 	doctype: str | None = None,
 	partner_time_zone: str | None = None,
@@ -2240,8 +2373,15 @@ def _map_partner_to_frappe(
 		value = record.get(partner_field)
 		field_map = value_mapping.get(frappe_field) or {}
 		reverse_map = {mapped_value: source_value for source_value, mapped_value in field_map.items()}
-		if value in reverse_map:
-			value = reverse_map[value]
+		value = _mapped_value_with_fallback(
+			reverse_map,
+			value,
+			_value_mapping_fallback_for_direction(
+				value_mapping_fallbacks,
+				frappe_field,
+				MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
+			),
+		)
 		if frappe_field in datetime_fields:
 			value = _convert_datetime_between_time_zones(
 				value,
@@ -2250,6 +2390,50 @@ def _map_partner_to_frappe(
 			)
 		result[frappe_field] = value
 	return result
+
+
+def _mapped_value_with_fallback(field_map: dict[Any, Any], value: Any, fallback: dict[str, Any] | None) -> Any:
+	mapped = _mapped_value(field_map, value, default=VALUE_MAPPING_UNSET)
+	if mapped is not VALUE_MAPPING_UNSET:
+		return mapped
+	return _apply_value_mapping_fallback(value, fallback)
+
+
+def _mapped_value(field_map: dict[Any, Any], value: Any, *, default: Any = None) -> Any:
+	try:
+		if value in field_map:
+			return field_map[value]
+	except TypeError:
+		pass
+	normalized_value = _normalize_comparable_scalar_value(value)
+	for source_value, target_value in field_map.items():
+		if _normalize_comparable_scalar_value(source_value) == normalized_value:
+			return target_value
+	return default
+
+
+def _value_mapping_fallback_for_direction(
+	value_mapping_fallbacks: dict[str, dict[str, Any]] | None,
+	frappe_field: str,
+	direction: str,
+) -> dict[str, Any] | None:
+	if not isinstance(value_mapping_fallbacks, dict):
+		return None
+	field_fallbacks = value_mapping_fallbacks.get(frappe_field)
+	if not isinstance(field_fallbacks, dict):
+		return None
+	return field_fallbacks if "action" in field_fallbacks else None
+
+
+def _apply_value_mapping_fallback(value: Any, fallback: dict[str, Any] | None) -> Any:
+	if not fallback:
+		return value
+	action = _normalize_value_mapping_fallback_action(fallback.get("action"))
+	if action == VALUE_MAPPING_FALLBACK_USE_FALLBACK:
+		return fallback.get("value")
+	if action == VALUE_MAPPING_FALLBACK_USE_NULL:
+		return None
+	return value
 
 
 def _diff_target_values(
@@ -2290,7 +2474,7 @@ def _normalize_field_value(
 	assumed_time_zone: str | None = None,
 	target_time_zone: str | None = None,
 ) -> Any:
-	if field_name in (datetime_fields or set()) or isinstance(value, datetime):
+	if field_name in (datetime_fields or set()) or isinstance(value, datetime | date):
 		parsed = _parse_datetime(
 			value,
 			assumed_time_zone=assumed_time_zone,
@@ -2300,6 +2484,16 @@ def _normalize_field_value(
 			return parsed
 		if isinstance(value, datetime):
 			return value.replace(tzinfo=None)
+		if isinstance(value, date):
+			return datetime.combine(value, datetime.min.time())
+	if isinstance(value, str) and _finite_decimal_from_string(value.strip()) is None:
+		parsed = _parse_datetime(
+			value,
+			assumed_time_zone=assumed_time_zone,
+			target_time_zone=target_time_zone,
+		)
+		if parsed is not None:
+			return parsed
 	if isinstance(value, list | dict):
 		return json.dumps(value, sort_keys=True, default=str, ensure_ascii=True)
 	return _normalize_comparable_scalar_value(value)

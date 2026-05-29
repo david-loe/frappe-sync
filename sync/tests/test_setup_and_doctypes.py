@@ -97,6 +97,9 @@ class FakeSyncDefinitionDoc:
 	def get_value_mapping(self):
 		return sync_definition_module.SyncDefinition.get_value_mapping(self)
 
+	def get_value_mapping_fallbacks(self):
+		return sync_definition_module.SyncDefinition.get_value_mapping_fallbacks(self)
+
 	def get_frappe_modified_fields(self):
 		return sync_definition_module.SyncDefinition.get_frappe_modified_fields(self)
 
@@ -191,6 +194,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		self.assertEqual(self._field_by_name(sync_definition_json, "partner_frappe_identity_field")["fieldtype"], "Select")
 		self.assertEqual(self._field_by_name(sync_definition_json, "frappe_partner_identity_field")["fieldtype"], "Select")
 		self.assertEqual(self._field_by_name(field_mapping_json, "partner_field")["fieldtype"], "Select")
+		self.assertEqual(self._field_by_name(field_mapping_json, "unmapped_action")["options"], "Keep Original\nUse Fallback Value\nUse NULL")
 		self.assertEqual(self._field_by_name(modified_field_json, "field_name")["fieldtype"], "Select")
 
 	def test_sync_run_on_trash_deletes_items_and_clears_last_run_links(self):
@@ -279,14 +283,24 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 
 	def test_validate_field_mapping_normalizes_rows_and_rejects_duplicates(self):
 		doc = FakeSyncDefinitionDoc(
-			field_mapping=[SimpleNamespace(frappe_field=" name ", partner_field=" id ", direction="")]
+			field_mapping=[
+				SimpleNamespace(
+					frappe_field=" name ",
+					partner_field=" id ",
+					direction="",
+					unmapped_action="Use NULL",
+					fallback_value="ignored",
+				)
+			]
 		)
 
 		sync_definition_module.SyncDefinition.validate_field_mapping(doc)
 
 		self.assertEqual(doc.field_mapping[0].frappe_field, "name")
 		self.assertEqual(doc.field_mapping[0].partner_field, "id")
-		self.assertEqual(doc.field_mapping[0].direction, "Frappe <-> Partner")
+		self.assertEqual(doc.field_mapping[0].direction, "Frappe -> Partner")
+		self.assertEqual(doc.field_mapping[0].unmapped_action, "Use NULL")
+		self.assertIsNone(doc.field_mapping[0].fallback_value)
 
 		duplicate_doc = FakeSyncDefinitionDoc(
 			field_mapping=[
@@ -301,6 +315,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 
 	def test_validate_field_mapping_rejects_invalid_direction(self):
 		doc = FakeSyncDefinitionDoc(
+			sync_type="Frappe <-> Partner",
 			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id", direction="Outbound")]
 		)
 
@@ -312,6 +327,36 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 			"Direction must be one of: Frappe <-> Partner, Frappe -> Partner, Frappe <- Partner"
 		)
 
+	def test_validate_field_mapping_rejects_invalid_fallback_settings(self):
+		invalid_action_doc = FakeSyncDefinitionDoc(
+			field_mapping=[
+				SimpleNamespace(
+					frappe_field="status",
+					partner_field="state",
+					unmapped_action="Drop",
+				)
+			]
+		)
+
+		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-action")):
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_field_mapping(invalid_action_doc)
+
+		missing_literal_doc = FakeSyncDefinitionDoc(
+			field_mapping=[
+				SimpleNamespace(
+					frappe_field="status",
+					partner_field="state",
+					unmapped_action="Use Fallback Value",
+					fallback_value=" ",
+				)
+			]
+		)
+
+		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("missing-value")):
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_field_mapping(missing_literal_doc)
+
 	def test_validate_source_settings_requires_table_name(self):
 		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
 			with self.assertRaises(frappe.ValidationError):
@@ -320,6 +365,10 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		sync_definition_module.SyncDefinition.validate_source_settings(doc)
 		self.assertEqual(doc.table_name, "tabTask")
 		self.assertEqual(doc.read_query, "select * from tabTask")
+		read_query_doc = FakeSyncDefinitionDoc(sync_type="Frappe <- Partner", table_name="", read_query=" select 1 ")
+		sync_definition_module.SyncDefinition.validate_source_settings(read_query_doc)
+		self.assertIsNone(read_query_doc.table_name)
+		self.assertEqual(read_query_doc.read_query, "select 1")
 
 	def test_validate_modified_fields_and_preview_limit_reject_invalid_values(self):
 		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
@@ -389,7 +438,13 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		doc = FakeSyncDefinitionDoc(
 			match_fields=[SimpleNamespace(frappe_field=" name "), SimpleNamespace(frappe_field="")],
 			field_mapping=[
-				SimpleNamespace(frappe_field=" name ", partner_field=" id ", direction=None),
+				SimpleNamespace(
+					frappe_field=" name ",
+					partner_field=" id ",
+					direction=None,
+					unmapped_action="Use Fallback Value",
+					fallback_value="unknown",
+				),
 				SimpleNamespace(frappe_field="", partner_field="status", direction="Frappe <-> Partner"),
 			],
 			value_mapping=[
@@ -403,7 +458,11 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		self.assertEqual(sync_definition_module.SyncDefinition.get_match_fields(doc), ["name"])
 		self.assertEqual(
 			sync_definition_module.SyncDefinition.get_field_mapping(doc),
-			{"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}},
+			{"name": {"partner_field": "id", "direction": "Frappe -> Partner"}},
+		)
+		self.assertEqual(
+			sync_definition_module.SyncDefinition.get_value_mapping_fallbacks(doc),
+			{"name": {"action": "fallback", "value": "unknown"}},
 		)
 		self.assertEqual(sync_definition_module.SyncDefinition.get_value_mapping(doc), {"status": {"Open": "1"}})
 		self.assertEqual(sync_definition_module.SyncDefinition.get_frappe_modified_fields(doc), ["modified", "changed_on"])
@@ -411,8 +470,17 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 
 	def test_export_payload_helpers_cover_preview_limit_and_serialization(self):
 		doc = FakeSyncDefinitionDoc(
+			sync_type="Frappe <- Partner",
 			value_mapping=[SimpleNamespace(frappe_field="status", frappe_value={"a": 1}, partner_value=["x"])],
-			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id", direction="Frappe <- Partner")],
+			field_mapping=[
+				SimpleNamespace(
+					frappe_field="name",
+					partner_field="id",
+					direction="Frappe <- Partner",
+					unmapped_action="Use Fallback Value",
+					fallback_value="UNKNOWN",
+				)
+			],
 			match_fields=[SimpleNamespace(frappe_field="name")],
 			frappe_modified_field_rows=[SimpleNamespace(field_name="modified")],
 			partner_modified_field_rows=[SimpleNamespace(field_name="updated_at")],
@@ -424,6 +492,10 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		exported = sync_definition_module.SyncDefinition.as_export_dict(doc)
 		self.assertEqual(exported["field_mapping"]["name"]["direction"], "Frappe <- Partner")
 		self.assertEqual(exported["value_mapping"]["status"], {'{"a": 1}': '["x"]'})
+		self.assertEqual(
+			exported["value_mapping_fallbacks"]["name"],
+			{"action": "fallback", "value": "UNKNOWN"},
+		)
 		self.assertEqual(exported["one_way_match_mode"], "all_matches")
 		payload = sync_definition_module.SyncDefinition.get_export_payload(doc)
 		self.assertIn("sync_definition", payload)

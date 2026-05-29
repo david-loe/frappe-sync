@@ -32,17 +32,6 @@ Each sync entry links to a `Sync Partner` (host / port / credentials) plus a `Sy
 
 The app ships with Desk helpers (Run, Preview, Export YAML, Import YAML, Open Latest Run, Test Connection). Use the YAML export/import as a transport format, but keep secret values out of shared exports.
 
-### Security considerations
-
-- Secrets stored on `Sync Partner` (username/password) remain in Password-type fields and are never serialized into exports unless you manually copy them out; YAML exports filter those fields when provided by the UI.
-- The run history stores JSON payloads of Frappe and partner records for debugging. Rotate file permissions for the site where sensitive data is synchronized.
-- Avoid creating `Sync Partner` entries that share credentials via exposed fixtures; prefer environment-specific secret management.
-
-### Testing & validation
-
-- `bench --site <site> run-tests --app sync` exercises the service and API contracts added so far.
-- The app relies on bench for asset building and ensures default partner types during migrations (`after_migrate` hook) so local migrations bring the plan up correctly.
-
 ### Contributing & CI
 
 The project uses `pre-commit` with the usual suspects (ruff, eslint, prettier, pyupgrade). Running `bench lint` indirectly benefits from the same setup. CI workflows run unit tests and pip-audit on every push into `develop`.

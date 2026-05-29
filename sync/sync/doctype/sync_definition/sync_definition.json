@@ -178,14 +178,13 @@
    "fieldname": "table_name",
    "fieldtype": "Data",
    "label": "Table Name",
-   "reqd": 1,
-   "description": "Writable partner table used for inserts, updates, deletes, and as the default read source when Read Query is blank."
+   "description": "Partner table used for writes and as the default read source when Read Query is blank."
   },
   {
    "fieldname": "read_query",
    "fieldtype": "Code",
    "label": "Read Query",
-   "description": "Optional SELECT query used only for reading partner records. Writes always target Table Name."
+   "description": "Optional SELECT query used to read partner records."
   },
   {
    "fieldname": "partner_columns_status",
@@ -374,7 +373,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-21 12:00:00.000000",
+ "modified": "2026-05-29 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [
