@@ -515,6 +515,48 @@ class TestRuntimeManagement(unittest.TestCase):
 				{"scheduled_at": datetime(2026, 3, 17, 10, 0)},
 			)
 
+	def test_runtime_mapping_context_reuses_reverse_maps_and_datetime_fields(self):
+		config = SimpleNamespace(
+			doctype="Task",
+			mapping={
+				"status": {"partner_field": "state", "direction": "Frappe <-> Partner"},
+				"scheduled_at": {"partner_field": "scheduled_at", "direction": "Frappe <-> Partner"},
+			},
+			value_mapping={"status": {"Open": "1"}},
+			value_mapping_fallbacks=None,
+			frappe_modified_fields=[],
+			partner_modified_fields=[],
+			partner_time_zone="UTC",
+		)
+
+		with (
+			patch("sync.sync.service.runtime._get_frappe_datetime_fields", return_value={"scheduled_at"}) as mock_datetime_fields,
+			patch("sync.sync.service.runtime._doctype_fieldnames", return_value={"status", "scheduled_at"}),
+			patch("sync.sync.service.runtime._site_time_zone", return_value="Europe/Berlin"),
+		):
+			context = runtime._build_runtime_mapping_context(config)
+			self.assertEqual(
+				runtime._map_partner_to_frappe(
+					{"state": "1", "scheduled_at": "2026-03-17T10:00:00+00:00"},
+					config.mapping,
+					config.value_mapping,
+					mapping_context=context,
+				),
+				{"status": "Open", "scheduled_at": datetime(2026, 3, 17, 11, 0)},
+			)
+			self.assertEqual(
+				runtime._map_frappe_to_partner(
+					{"status": "Open", "scheduled_at": datetime(2026, 3, 17, 11, 0)},
+					config.mapping,
+					config.value_mapping,
+					mapping_context=context,
+				),
+				{"state": "1", "scheduled_at": datetime(2026, 3, 17, 10, 0)},
+			)
+
+		mock_datetime_fields.assert_called_once()
+		self.assertEqual(context.reverse_value_mapping, {"status": {"1": "Open"}})
+
 	def test_helper_functions_cover_string_lookup_and_lock_behaviour(self):
 		row = SimpleNamespace(as_dict=lambda: {"field_name": "subject"})
 		parent_meta = DummyMeta([_field("rows", "Table", "Sync Key Field")])
@@ -856,3 +898,57 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertEqual(mock_get_all.call_args.kwargs["filters"]["dry_run"], 0)
 
 		self.assertIn("processed=5", runtime._format_run_summary({"processed_count": 5, "error_count": 1}))
+
+	def test_update_helpers_batch_valid_field_writes_and_preserve_commit_flags(self):
+		meta = DummyMeta(
+			[
+				_field("status"),
+				_field("last_run"),
+				_field("last_run_status"),
+				_field("last_run_summary"),
+				_field("last_sync_at"),
+				_field("last_successful_sync"),
+			]
+		)
+		set_value = Mock()
+		commit = Mock()
+		db = _db_stub(set_value=set_value, commit=commit)
+
+		with patch(
+			"sync.sync.service.runtime.frappe",
+			new=_runtime_frappe_stub(db=db, get_meta=lambda *_args, **_kwargs: meta),
+		):
+			run_doc = SimpleNamespace(name="RUN-1", doctype="Sync Run", db_set=Mock())
+			runtime._update_doc_fields(run_doc, {"status": "Success", "missing": "ignored"}, commit=True)
+			definition_doc = SimpleNamespace(name="SYNC-1", doctype="Sync Definition", db_set=Mock())
+			runtime._update_definition_runtime(
+				definition_doc,
+				last_run="RUN-1",
+				last_sync_at=datetime(2026, 3, 17, 12, 0),
+				summary="ok",
+				commit=False,
+			)
+
+		self.assertEqual(
+			set_value.call_args_list[0].args,
+			("Sync Run", "RUN-1", {"status": "Success"}),
+		)
+		self.assertEqual(set_value.call_args_list[0].kwargs, {"update_modified": False})
+		self.assertFalse(run_doc.db_set.called)
+		self.assertEqual(
+			set_value.call_args_list[1].args,
+			(
+				"Sync Definition",
+				"SYNC-1",
+				{
+					"last_run": "RUN-1",
+					"last_run_status": "Success",
+					"last_run_summary": "ok",
+					"last_sync_at": datetime(2026, 3, 17, 12, 0),
+					"last_successful_sync": datetime(2026, 3, 17, 12, 0),
+				},
+			),
+		)
+		self.assertEqual(set_value.call_args_list[1].kwargs, {"update_modified": False})
+		self.assertFalse(definition_doc.db_set.called)
+		commit.assert_called_once()

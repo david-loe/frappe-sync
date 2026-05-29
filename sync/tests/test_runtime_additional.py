@@ -566,6 +566,96 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertEqual(recorded_batches, [["TASK-1"], ["TASK-2"]])
 		self.assertEqual(mock_sync.call_count, 2)
 
+	def test_run_engine_reuses_partner_lookup_across_frappe_batches(self):
+		config = SimpleNamespace(
+			name="SYNC-A2B-LOOKUP",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe -> Partner",
+			cron=None,
+			filters=None,
+			batch_size=1,
+			create_new=True,
+			delete_missing=False,
+			use_last_sync_date=False,
+			conflict_policy="newest_wins",
+			timestamp_buffer_seconds=0,
+			table_name="tabTask",
+			read_query=None,
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"subject": {"partner_field": "title", "direction": "Frappe -> Partner"},
+			},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+		meta = MetaWithFields(
+			[
+				SimpleNamespace(fieldname="name", fieldtype="Data"),
+				SimpleNamespace(fieldname="subject", fieldtype="Data"),
+				SimpleNamespace(fieldname="modified", fieldtype="Datetime"),
+			]
+		)
+
+		with (
+			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_doc=lambda *_args, **_kwargs: SimpleNamespace(), get_meta=lambda *_args, **_kwargs: meta)),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
+			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1", "subject": "A"}], [{"name": "TASK-2", "subject": "B"}]])),
+			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-1", "title": "A"}, {"id": "TASK-2", "title": "B"}]])),
+			patch("sync.sync.service.runtime._group_partner_records", wraps=runtime._group_partner_records) as mock_group,
+			patch("sync.sync.service.runtime._create_run_item", return_value=SimpleNamespace(name="ITEM-1")),
+		):
+			runtime._run_engine(SimpleNamespace(name="SYNC-A2B-LOOKUP"), SimpleNamespace(name="RUN-1"), config=config)
+
+		self.assertEqual(mock_group.call_count, 1)
+
+	def test_run_engine_reuses_frappe_lookup_across_partner_batches(self):
+		config = SimpleNamespace(
+			name="SYNC-P2F-LOOKUP",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe <- Partner",
+			cron=None,
+			filters=None,
+			batch_size=1,
+			create_new=True,
+			delete_missing=False,
+			use_last_sync_date=False,
+			conflict_policy="newest_wins",
+			timestamp_buffer_seconds=0,
+			table_name="tabTask",
+			read_query=None,
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"subject": {"partner_field": "title", "direction": "Frappe <- Partner"},
+			},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+		meta = MetaWithFields(
+			[
+				SimpleNamespace(fieldname="name", fieldtype="Data"),
+				SimpleNamespace(fieldname="subject", fieldtype="Data"),
+				SimpleNamespace(fieldname="modified", fieldtype="Datetime"),
+			]
+		)
+
+		with (
+			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_doc=lambda *_args, **_kwargs: SimpleNamespace(), get_meta=lambda *_args, **_kwargs: meta)),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
+			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1", "subject": "A"}, {"name": "TASK-2", "subject": "B"}]])),
+			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-1", "title": "A"}], [{"id": "TASK-2", "title": "B"}]])),
+			patch("sync.sync.service.runtime._group_frappe_records", wraps=runtime._group_frappe_records) as mock_group,
+			patch("sync.sync.service.runtime._create_run_item", return_value=SimpleNamespace(name="ITEM-1")),
+		):
+			runtime._run_engine(SimpleNamespace(name="SYNC-P2F-LOOKUP"), SimpleNamespace(name="RUN-1"), config=config)
+
+		self.assertEqual(mock_group.call_count, 1)
+
 	def test_run_engine_streams_bidirectional_batches_into_indexes(self):
 		config = SimpleNamespace(
 			name="SYNC-BI",

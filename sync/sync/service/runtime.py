@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import json
+from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -97,6 +98,38 @@ class SyncDefinitionConfig:
 	partner_time_zone: str | None = None
 	one_way_match_mode: str = "first_match"
 	capture_audit_payloads: bool = False
+
+
+@dataclass(slots=True)
+class PartnerMatchLookup:
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]]
+	groups: dict[tuple[Any, ...], list[dict[str, Any]]]
+	latest_by_key: dict[tuple[Any, ...], dict[str, Any]]
+	identity_by_value: dict[Any, dict[str, Any]]
+
+
+@dataclass(slots=True)
+class FrappeMatchLookup:
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]]
+	groups: dict[tuple[Any, ...], list[dict[str, Any]]]
+	latest_by_key: dict[tuple[Any, ...], dict[str, Any]]
+	identity_by_value: dict[Any, dict[str, Any]]
+
+
+@dataclass(slots=True)
+class RuntimeMappingContext:
+	mapping: dict[str, dict[str, str]]
+	value_mapping: dict[str, dict[Any, Any]]
+	value_mapping_fallbacks: dict[str, dict[str, Any]] | None
+	to_partner_entries: tuple[tuple[str, str], ...]
+	to_frappe_entries: tuple[tuple[str, str], ...]
+	connector_mapping: dict[str, str]
+	reverse_value_mapping: dict[str, dict[Any, Any]]
+	frappe_datetime_fields: set[str]
+	partner_datetime_fields: set[str]
+	frappe_fieldnames: set[str] | None
+	site_time_zone: str
+	partner_time_zone: str | None
 
 
 @dataclass(slots=True)
@@ -384,10 +417,16 @@ def _build_preview(sync_definition: Any, *, limit: int) -> dict[str, Any]:
 		| {"name", "modified"}
 		| ({_config_frappe_partner_identity_field(config)} if _config_frappe_partner_identity_field(config) else set())
 	)
+	doctype_fieldnames = _doctype_fieldnames(config.doctype)
+	valid_fields = (
+		[field for field in fields if field in doctype_fieldnames]
+		if doctype_fieldnames is not None
+		else [field for field in fields if _doctype_has_field(config.doctype, field)]
+	)
 	filters = config.filters
 	frappe_records = frappe.get_all(
 		config.doctype,
-		fields=[field for field in fields if _doctype_has_field(config.doctype, field)],
+		fields=valid_fields,
 		filters=filters,
 		limit_page_length=cint(limit),
 		order_by="modified desc",
@@ -604,6 +643,7 @@ def _run_engine(
 	config = context.config
 	partner_doc = frappe.get_doc(SYNC_PARTNER, config.partner)
 	config = _merge_partner_runtime_settings(config, partner_doc)
+	mapping_context = _build_runtime_mapping_context(config)
 	connector = get_connector_for_partner(partner_doc)
 	ping = connector.ping()
 	if not ping.ok:
@@ -626,6 +666,7 @@ def _run_engine(
 			]
 		else:
 			partner_records = _build_partner_index_from_batches(config, partner_batches)
+		partner_lookup = _build_partner_match_lookup(config, partner_records)
 		if config.delete_missing and context.is_full_sync:
 			frappe_source = [
 				record
@@ -638,6 +679,8 @@ def _run_engine(
 				connector=connector,
 				frappe_records=frappe_source,
 				partner_records=partner_records,
+				partner_lookup=partner_lookup,
+				mapping_context=mapping_context,
 				dry_run=context.dry_run,
 				stats=stats,
 				label_direction="Frappe -> Partner",
@@ -652,6 +695,8 @@ def _run_engine(
 					connector=connector,
 					frappe_records=frappe_batch,
 					partner_records=partner_records,
+					partner_lookup=partner_lookup,
+					mapping_context=mapping_context,
 					dry_run=context.dry_run,
 					stats=stats,
 					label_direction="Frappe -> Partner",
@@ -661,6 +706,7 @@ def _run_engine(
 			_flush_pending_run_writes(run_doc, force=True)
 	elif config.sync_type == "Frappe <- Partner":
 		frappe_records = _get_frappe_source_records(config, context, apply_delta_filter=False)
+		frappe_lookup = _build_frappe_match_lookup(config, frappe_records)
 		if config.delete_missing and context.is_full_sync:
 			partner_source = [
 				record
@@ -673,6 +719,8 @@ def _run_engine(
 				connector=connector,
 				partner_records=partner_source,
 				frappe_records=frappe_records,
+				frappe_lookup=frappe_lookup,
+				mapping_context=mapping_context,
 				dry_run=context.dry_run,
 				stats=stats,
 				label_direction="Frappe <- Partner",
@@ -687,6 +735,8 @@ def _run_engine(
 					connector=connector,
 					partner_records=partner_batch,
 					frappe_records=frappe_records,
+					frappe_lookup=frappe_lookup,
+					mapping_context=mapping_context,
 					dry_run=context.dry_run,
 					stats=stats,
 					label_direction="Frappe <- Partner",
@@ -730,6 +780,7 @@ def _run_engine(
 			last_successful_sync=context.last_successful_sync,
 			frappe_lookup_records=frappe_lookup_index,
 			partner_lookup_records=partner_lookup_index,
+			mapping_context=mapping_context,
 		)
 	return {
 		"sync_definition": config.name,
@@ -837,6 +888,34 @@ def _group_partner_records(
 	return grouped
 
 
+def _build_partner_match_lookup(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> PartnerMatchLookup:
+	lookup_records = _normalize_partner_match_records(config, records)
+	groups = _group_partner_records(config, lookup_records)
+	return PartnerMatchLookup(
+		records=lookup_records,
+		groups=groups,
+		latest_by_key={key: grouped_records[-1] for key, grouped_records in groups.items()},
+		identity_by_value=_build_partner_identity_index(config, lookup_records),
+	)
+
+
+def _build_frappe_match_lookup(
+	config: SyncDefinitionConfig,
+	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+) -> FrappeMatchLookup:
+	lookup_records = _normalize_frappe_match_records(config, records)
+	groups = _group_frappe_records(config, lookup_records)
+	return FrappeMatchLookup(
+		records=lookup_records,
+		groups=groups,
+		latest_by_key={key: grouped_records[-1] for key, grouped_records in groups.items()},
+		identity_by_value=_build_frappe_partner_identity_index(config, lookup_records),
+	)
+
+
 def _sync_frappe_to_partner(
 	*,
 	run_doc: Any,
@@ -849,13 +928,16 @@ def _sync_frappe_to_partner(
 	label_direction: str,
 	full_sync: bool,
 	source_keys: set[tuple[Any, ...]] | None = None,
+	partner_lookup: PartnerMatchLookup | None = None,
+	mapping_context: RuntimeMappingContext | None = None,
 ):
-	partner_lookup_records = _normalize_partner_match_records(config, partner_records)
-	partner_groups = _group_partner_records(config, partner_lookup_records)
-	partner_index = {key: records[-1] for key, records in partner_groups.items()}
-	partner_identity_index = _build_partner_identity_index(config, partner_lookup_records)
+	partner_lookup = partner_lookup or _build_partner_match_lookup(config, partner_records)
+	mapping_context = mapping_context or _build_runtime_mapping_context(config)
+	partner_groups = partner_lookup.groups
+	partner_index = partner_lookup.latest_by_key
+	partner_identity_index = partner_lookup.identity_by_value
 	collected_source_keys = source_keys if source_keys is not None else set()
-	connector_mapping = _flatten_mapping_for_direction(config.mapping, MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
+	connector_mapping = mapping_context.connector_mapping
 
 	for frappe_record in frappe_records:
 		key = _key_tuple_from_frappe(frappe_record, _config_match_fields(config))
@@ -885,6 +967,7 @@ def _sync_frappe_to_partner(
 				getattr(config, "value_mapping_fallbacks", None),
 				doctype=getattr(config, "doctype", None),
 				partner_time_zone=getattr(config, "partner_time_zone", None),
+				mapping_context=mapping_context,
 			),
 		)
 		existing_partners = _find_existing_partner_records(
@@ -961,9 +1044,9 @@ def _sync_frappe_to_partner(
 					new_record=partner_payload,
 					old_record=matched_partner,
 					field_names=list(partner_payload.keys()),
-					datetime_fields=_partner_datetime_fields(config),
+					datetime_fields=mapping_context.partner_datetime_fields,
 					assumed_time_zone=getattr(config, "partner_time_zone", None),
-					target_time_zone=getattr(config, "partner_time_zone", None) or _site_time_zone(),
+					target_time_zone=getattr(config, "partner_time_zone", None) or mapping_context.site_time_zone,
 				)
 				for matched_partner in existing_partners
 			]
@@ -1033,9 +1116,9 @@ def _sync_frappe_to_partner(
 				new_record=partner_payload,
 				old_record=matched_partner or {},
 				field_names=list(partner_payload.keys()),
-				datetime_fields=_partner_datetime_fields(config),
+				datetime_fields=mapping_context.partner_datetime_fields,
 				assumed_time_zone=getattr(config, "partner_time_zone", None),
-				target_time_zone=getattr(config, "partner_time_zone", None) or _site_time_zone(),
+				target_time_zone=getattr(config, "partner_time_zone", None) or mapping_context.site_time_zone,
 			)
 			if not changes:
 				_register_and_log(
@@ -1123,12 +1206,15 @@ def _sync_partner_to_frappe(
 	label_direction: str,
 	full_sync: bool,
 	source_keys: set[tuple[Any, ...]] | None = None,
+	frappe_lookup: FrappeMatchLookup | None = None,
+	mapping_context: RuntimeMappingContext | None = None,
 ):
-	frappe_lookup_records = _normalize_frappe_match_records(config, frappe_records)
+	frappe_lookup = frappe_lookup or _build_frappe_match_lookup(config, frappe_records)
+	mapping_context = mapping_context or _build_runtime_mapping_context(config)
 	partner_input_records = _normalize_partner_match_records(config, partner_records)
-	frappe_groups = _group_frappe_records(config, frappe_lookup_records)
-	frappe_index = {key: records[-1] for key, records in frappe_groups.items()}
-	frappe_partner_identity_index = _build_frappe_partner_identity_index(config, frappe_lookup_records)
+	frappe_groups = frappe_lookup.groups
+	frappe_index = frappe_lookup.latest_by_key
+	frappe_partner_identity_index = frappe_lookup.identity_by_value
 	collected_source_keys = source_keys if source_keys is not None else set()
 
 	for partner_record in partner_input_records.values() if isinstance(partner_input_records, dict) else partner_input_records:
@@ -1156,6 +1242,7 @@ def _sync_partner_to_frappe(
 			getattr(config, "value_mapping_fallbacks", None),
 			doctype=getattr(config, "doctype", None),
 			partner_time_zone=getattr(config, "partner_time_zone", None),
+			mapping_context=mapping_context,
 		)
 		frappe_partner_field = _config_frappe_partner_identity_field(config)
 		partner_identity_field = _config_partner_identity_field(config)
@@ -1233,8 +1320,8 @@ def _sync_partner_to_frappe(
 				new_record=frappe_payload,
 				old_record=matched_frappe or {},
 				field_names=list(frappe_payload.keys()),
-				datetime_fields=_frappe_datetime_fields(config),
-				target_time_zone=_site_time_zone(),
+				datetime_fields=mapping_context.frappe_datetime_fields,
+				target_time_zone=mapping_context.site_time_zone,
 			)
 			if not changes:
 				_register_and_log(
@@ -1414,11 +1501,15 @@ def _sync_bidirectional(
 	last_successful_sync: datetime | None,
 	frappe_lookup_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None = None,
 	partner_lookup_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None = None,
+	mapping_context: RuntimeMappingContext | None = None,
 ):
+	mapping_context = mapping_context or _build_runtime_mapping_context(config)
 	frappe_index = _index_paired_frappe_records(config, frappe_records)
 	partner_index = _index_paired_partner_records(config, partner_records)
 	frappe_target_lookup_records = frappe_lookup_records if frappe_lookup_records is not None else []
 	partner_target_lookup_records = partner_lookup_records if partner_lookup_records is not None else []
+	frappe_target_lookup = _build_frappe_match_lookup(config, frappe_target_lookup_records)
+	partner_target_lookup = _build_partner_match_lookup(config, partner_target_lookup_records)
 	all_keys = set(frappe_index.keys()) | set(partner_index.keys())
 
 	for key in sorted(all_keys, key=lambda item: json.dumps(item, default=str, ensure_ascii=True)):
@@ -1432,6 +1523,8 @@ def _sync_bidirectional(
 				connector=connector,
 				frappe_records=[frappe_record],
 				partner_records=partner_target_lookup_records,
+				partner_lookup=partner_target_lookup,
+				mapping_context=mapping_context,
 				dry_run=dry_run,
 				stats=stats,
 				label_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
@@ -1446,6 +1539,8 @@ def _sync_bidirectional(
 				connector=connector,
 				partner_records=[partner_record],
 				frappe_records=frappe_target_lookup_records,
+				frappe_lookup=frappe_target_lookup,
+				mapping_context=mapping_context,
 				dry_run=dry_run,
 				stats=stats,
 				label_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
@@ -1463,6 +1558,7 @@ def _sync_bidirectional(
 			getattr(config, "value_mapping_fallbacks", None),
 			doctype=getattr(config, "doctype", None),
 			partner_time_zone=getattr(config, "partner_time_zone", None),
+			mapping_context=mapping_context,
 		)
 		partner_payload = _map_frappe_to_partner(
 			frappe_record,
@@ -1471,22 +1567,23 @@ def _sync_bidirectional(
 			getattr(config, "value_mapping_fallbacks", None),
 			doctype=getattr(config, "doctype", None),
 			partner_time_zone=getattr(config, "partner_time_zone", None),
+			mapping_context=mapping_context,
 		)
 
 		to_partner_changes = _diff_target_values(
 			new_record=partner_payload,
 			old_record=partner_record,
 			field_names=list(partner_payload.keys()),
-			datetime_fields=_partner_datetime_fields(config),
+			datetime_fields=mapping_context.partner_datetime_fields,
 			assumed_time_zone=getattr(config, "partner_time_zone", None),
-			target_time_zone=getattr(config, "partner_time_zone", None) or _site_time_zone(),
+			target_time_zone=getattr(config, "partner_time_zone", None) or mapping_context.site_time_zone,
 		)
 		to_frappe_changes = _diff_target_values(
 			new_record=frappe_payload,
 			old_record=frappe_record,
 			field_names=list(frappe_payload.keys()),
-			datetime_fields=_frappe_datetime_fields(config),
-			target_time_zone=_site_time_zone(),
+			datetime_fields=mapping_context.frappe_datetime_fields,
+			target_time_zone=mapping_context.site_time_zone,
 		)
 		if not to_partner_changes and not to_frappe_changes:
 			_register_and_log(
@@ -1507,14 +1604,14 @@ def _sync_bidirectional(
 			record=frappe_record,
 			modified_fields=config.frappe_modified_fields,
 			last_successful_sync=last_successful_sync,
-			target_time_zone=_site_time_zone(),
+			target_time_zone=mapping_context.site_time_zone,
 		)
 		partner_changed_since_last = _record_changed_since(
 			record=partner_record,
 			modified_fields=config.partner_modified_fields,
 			last_successful_sync=last_successful_sync,
 			assumed_time_zone=getattr(config, "partner_time_zone", None),
-			target_time_zone=_site_time_zone(),
+			target_time_zone=mapping_context.site_time_zone,
 		)
 
 		if frappe_changed_since_last and not partner_changed_since_last:
@@ -1533,6 +1630,7 @@ def _sync_bidirectional(
 				status="success",
 				message="Updated partner from frappe.",
 				commit=False,
+				mapping_context=mapping_context,
 			)
 			continue
 
@@ -1572,13 +1670,13 @@ def _sync_bidirectional(
 		frappe_latest = _latest_modified(
 			record=frappe_record,
 			modified_fields=config.frappe_modified_fields,
-			target_time_zone=_site_time_zone(),
+			target_time_zone=mapping_context.site_time_zone,
 		)
 		partner_latest = _latest_modified(
 			record=partner_record,
 			modified_fields=config.partner_modified_fields,
 			assumed_time_zone=getattr(config, "partner_time_zone", None),
-			target_time_zone=_site_time_zone(),
+			target_time_zone=mapping_context.site_time_zone,
 		)
 		if partner_latest and frappe_latest and partner_latest > frappe_latest:
 			_apply_frappe_update(
@@ -1612,6 +1710,7 @@ def _sync_bidirectional(
 				status="conflict",
 				message="Conflict resolved with newest_wins: frappe won.",
 				commit=False,
+				mapping_context=mapping_context,
 			)
 	_flush_pending_run_writes(run_doc)
 
@@ -1632,10 +1731,15 @@ def _apply_partner_update(
 	status: str,
 	message: str,
 	commit: bool = True,
+	mapping_context: RuntimeMappingContext | None = None,
 ):
 	key = _key_tuple_from_frappe(frappe_record, _config_match_fields(config))
 	partner_payload = _apply_partner_link_fields(config, frappe_record, partner_payload)
-	connector_mapping = _flatten_mapping_for_direction(config.mapping, MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
+	connector_mapping = (
+		mapping_context.connector_mapping
+		if mapping_context is not None
+		else _flatten_mapping_for_direction(config.mapping, MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
+	)
 	try:
 		write = connector.upsert_record(
 			record=partner_payload,
@@ -1756,6 +1860,7 @@ def _iter_frappe_source_batches(
 	*,
 	apply_delta_filter: bool = True,
 ):
+	doctype_fieldnames = _doctype_fieldnames(config.doctype)
 	fields = sorted(
 		_mapping_fields_for_sync_type(config.mapping, config.sync_type)
 		| set(_config_match_fields(config))
@@ -1763,13 +1868,20 @@ def _iter_frappe_source_batches(
 		| {"name", "modified"}
 		| ({_config_frappe_partner_identity_field(config)} if _config_frappe_partner_identity_field(config) else set())
 	)
-	valid_fields = [field for field in fields if _doctype_has_field(config.doctype, field)]
+	if doctype_fieldnames is None:
+		valid_fields = [field for field in fields if _doctype_has_field(config.doctype, field)]
+	else:
+		valid_fields = [field for field in fields if field in doctype_fieldnames]
 	or_filters = None
 	if apply_delta_filter and context.is_delta_sync:
 		since = context.delta_since
 		or_filters = []
 		for modified_field in config.frappe_modified_fields:
-			if _doctype_has_field(config.doctype, modified_field):
+			if (
+				(modified_field in doctype_fieldnames)
+				if doctype_fieldnames is not None
+				else _doctype_has_field(config.doctype, modified_field)
+			):
 				or_filters.append([modified_field, ">=", since])
 	if not valid_fields:
 		valid_fields = ["name", "modified"]
@@ -1911,12 +2023,13 @@ def _upsert_frappe_record(
 	if dry_run:
 		return existing_name
 	mapped_modified = payload["modified"] if "modified" in payload else AUDIT_RECORD_UNSET
+	doctype_fieldnames = _doctype_fieldnames(doctype)
 	if existing_name:
 		doc = frappe.get_doc(doctype, existing_name)
 		for key, value in payload.items():
 			if key in SYSTEM_KEYS:
 				continue
-			if _doctype_has_field(doctype, key):
+			if _doctype_payload_allows_field(doctype, key, doctype_fieldnames):
 				doc.set(key, value)
 		doc.save(ignore_permissions=True)
 		_set_mapped_frappe_modified(doctype, doc.name, mapped_modified)
@@ -1926,7 +2039,7 @@ def _upsert_frappe_record(
 	for key, value in payload.items():
 		if key in SYSTEM_KEYS:
 			continue
-		if _doctype_has_field(doctype, key):
+		if _doctype_payload_allows_field(doctype, key, doctype_fieldnames):
 			doc.set(key, value)
 	doc.insert(ignore_permissions=True)
 	_set_mapped_frappe_modified(doctype, doc.name, mapped_modified)
@@ -2313,6 +2426,81 @@ def _normalize_value_mapping_fallback_action(action: Any) -> str:
 	)
 
 
+def _build_runtime_mapping_context(config: SyncDefinitionConfig | Any) -> RuntimeMappingContext:
+	mapping = _normalize_field_mapping(getattr(config, "mapping", {}) or {})
+	value_mapping = dict(getattr(config, "value_mapping", {}) or {})
+	value_mapping_fallbacks = _normalize_value_mapping_fallbacks(
+		getattr(config, "value_mapping_fallbacks", {}) or {}
+	)
+	to_partner_entries = tuple(
+		(frappe_field, entry["partner_field"])
+		for frappe_field, entry in _iter_field_mapping_entries(mapping)
+		if _mapping_allows_direction(entry, MAPPING_DIRECTION_FRAPPE_TO_PARTNER)
+	)
+	to_frappe_entries = tuple(
+		(frappe_field, entry["partner_field"])
+		for frappe_field, entry in _iter_field_mapping_entries(mapping)
+		if _mapping_allows_direction(entry, MAPPING_DIRECTION_PARTNER_TO_FRAPPE)
+	)
+	frappe_fields = set(mapping.keys()) | set(getattr(config, "frappe_modified_fields", []) or [])
+	frappe_datetime_fields = _get_frappe_datetime_fields(getattr(config, "doctype", None), frappe_fields)
+	partner_datetime_fields = set(getattr(config, "partner_modified_fields", []) or [])
+	for frappe_field in frappe_datetime_fields:
+		partner_field = _partner_field_for_mapping(mapping, frappe_field, frappe_field)
+		if partner_field:
+			partner_datetime_fields.add(partner_field)
+	return RuntimeMappingContext(
+		mapping=mapping,
+		value_mapping=value_mapping,
+		value_mapping_fallbacks=value_mapping_fallbacks,
+		to_partner_entries=to_partner_entries,
+		to_frappe_entries=to_frappe_entries,
+		connector_mapping=dict(to_partner_entries),
+		reverse_value_mapping=_build_reverse_value_mapping(value_mapping),
+		frappe_datetime_fields=frappe_datetime_fields,
+		partner_datetime_fields=partner_datetime_fields,
+		frappe_fieldnames=_doctype_fieldnames(getattr(config, "doctype", None)),
+		site_time_zone=_site_time_zone(),
+		partner_time_zone=getattr(config, "partner_time_zone", None),
+	)
+
+
+def _build_reverse_value_mapping(value_mapping: dict[str, dict[Any, Any]]) -> dict[str, dict[Any, Any]]:
+	result: dict[str, dict[Any, Any]] = {}
+	for frappe_field, field_map in value_mapping.items():
+		if not isinstance(field_map, dict):
+			continue
+		reverse_map = {}
+		for source_value, mapped_value in field_map.items():
+			try:
+				reverse_map[mapped_value] = source_value
+			except TypeError:
+				continue
+		result[frappe_field] = reverse_map
+	return result
+
+
+def _build_ad_hoc_mapping_context(
+	*,
+	mapping: dict[str, Any],
+	value_mapping: dict[str, dict[Any, Any]],
+	value_mapping_fallbacks: dict[str, dict[str, Any]] | None,
+	doctype: str | None,
+	partner_time_zone: str | None,
+) -> RuntimeMappingContext:
+	return _build_runtime_mapping_context(
+		SimpleNamespace(
+			doctype=doctype,
+			mapping=mapping,
+			value_mapping=value_mapping,
+			value_mapping_fallbacks=value_mapping_fallbacks,
+			frappe_modified_fields=[],
+			partner_modified_fields=[],
+			partner_time_zone=partner_time_zone,
+		)
+	)
+
+
 def _map_frappe_to_partner(
 	record: dict[str, Any],
 	mapping: dict[str, Any],
@@ -2321,32 +2509,33 @@ def _map_frappe_to_partner(
 	*,
 	doctype: str | None = None,
 	partner_time_zone: str | None = None,
+	mapping_context: RuntimeMappingContext | None = None,
 ) -> dict[str, Any]:
 	result: dict[str, Any] = {}
-	datetime_fields = _get_frappe_datetime_fields(
-		doctype,
-		[frappe_field for frappe_field, _entry in _iter_field_mapping_entries(mapping)],
+	context = mapping_context or _build_ad_hoc_mapping_context(
+		mapping=mapping,
+		value_mapping=value_mapping,
+		value_mapping_fallbacks=value_mapping_fallbacks,
+		doctype=doctype,
+		partner_time_zone=partner_time_zone,
 	)
-	for frappe_field, entry in _iter_field_mapping_entries(mapping):
-		if not _mapping_allows_direction(entry, MAPPING_DIRECTION_FRAPPE_TO_PARTNER):
-			continue
-		partner_field = entry["partner_field"]
+	for frappe_field, partner_field in context.to_partner_entries:
 		value = record.get(frappe_field)
-		field_map = value_mapping.get(frappe_field) or {}
+		field_map = context.value_mapping.get(frappe_field) or {}
 		value = _mapped_value_with_fallback(
 			field_map,
 			value,
 			_value_mapping_fallback_for_direction(
-				value_mapping_fallbacks,
+				context.value_mapping_fallbacks,
 				frappe_field,
 				MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
 			),
 		)
-		if frappe_field in datetime_fields:
+		if frappe_field in context.frappe_datetime_fields:
 			value = _convert_datetime_between_time_zones(
 				value,
-				source_time_zone=_site_time_zone(),
-				target_time_zone=partner_time_zone or _site_time_zone(),
+				source_time_zone=context.site_time_zone,
+				target_time_zone=context.partner_time_zone or context.site_time_zone,
 			)
 		result[partner_field] = value
 	return result
@@ -2360,33 +2549,33 @@ def _map_partner_to_frappe(
 	*,
 	doctype: str | None = None,
 	partner_time_zone: str | None = None,
+	mapping_context: RuntimeMappingContext | None = None,
 ) -> dict[str, Any]:
 	result: dict[str, Any] = {}
-	datetime_fields = _get_frappe_datetime_fields(
-		doctype,
-		[frappe_field for frappe_field, _entry in _iter_field_mapping_entries(mapping)],
+	context = mapping_context or _build_ad_hoc_mapping_context(
+		mapping=mapping,
+		value_mapping=value_mapping,
+		value_mapping_fallbacks=value_mapping_fallbacks,
+		doctype=doctype,
+		partner_time_zone=partner_time_zone,
 	)
-	for frappe_field, entry in _iter_field_mapping_entries(mapping):
-		if not _mapping_allows_direction(entry, MAPPING_DIRECTION_PARTNER_TO_FRAPPE):
-			continue
-		partner_field = entry["partner_field"]
+	for frappe_field, partner_field in context.to_frappe_entries:
 		value = record.get(partner_field)
-		field_map = value_mapping.get(frappe_field) or {}
-		reverse_map = {mapped_value: source_value for source_value, mapped_value in field_map.items()}
+		reverse_map = context.reverse_value_mapping.get(frappe_field) or {}
 		value = _mapped_value_with_fallback(
 			reverse_map,
 			value,
 			_value_mapping_fallback_for_direction(
-				value_mapping_fallbacks,
+				context.value_mapping_fallbacks,
 				frappe_field,
 				MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
 			),
 		)
-		if frappe_field in datetime_fields:
+		if frappe_field in context.frappe_datetime_fields:
 			value = _convert_datetime_between_time_zones(
 				value,
-				source_time_zone=partner_time_zone,
-				target_time_zone=_site_time_zone(),
+				source_time_zone=context.partner_time_zone,
+				target_time_zone=context.site_time_zone,
 			)
 		result[frappe_field] = value
 	return result
@@ -3428,12 +3617,30 @@ def _flush_pending_run_writes(run_doc: Any, *, threshold: int | None = None, for
 	setattr(run_doc, RUN_DOC_PENDING_WRITES_ATTR, 0)
 
 
+def _set_doc_values(doc: Any, values: dict[str, Any]) -> None:
+	if not values:
+		return
+	set_value = getattr(getattr(frappe, "db", None), "set_value", None)
+	doc_name = _doc_name(doc)
+	if callable(set_value) and doc_name:
+		set_value(doc.doctype, doc_name, values, update_modified=False)
+		if hasattr(doc, "payload") and isinstance(doc.payload, dict):
+			doc.payload.update(values)
+		if hasattr(doc, "values") and isinstance(doc.values, dict):
+			doc.values.update(values)
+		return
+	for fieldname, value in values.items():
+		doc.db_set(fieldname, value, update_modified=False)
+
+
 def _update_doc_fields(doc: Any, values: dict[str, Any], *, commit: bool = True) -> None:
 	meta = frappe.get_meta(doc.doctype)
+	updates = {}
 	for key, value in values.items():
 		fieldname = _find_field(meta, [key])
 		if fieldname:
-			doc.db_set(fieldname, value, update_modified=False)
+			updates[fieldname] = value
+	_set_doc_values(doc, updates)
 	if commit:
 		frappe.db.commit()
 
@@ -3456,11 +3663,13 @@ def _update_definition_runtime(
 	}
 	if status == "Success" and last_sync_at is not None:
 		updates["last_successful_sync"] = last_sync_at
+	valid_updates = {}
 	for fieldname, value in updates.items():
 		if value is None:
 			continue
 		if meta.has_field(fieldname):
-			sync_definition_doc.db_set(fieldname, value, update_modified=False)
+			valid_updates[fieldname] = value
+	_set_doc_values(sync_definition_doc, valid_updates)
 	if commit:
 		frappe.db.commit()
 
@@ -3472,11 +3681,13 @@ def _update_definition_failure(sync_definition_doc: Any, *, last_run: str, error
 		"last_run_status": "Error",
 		"last_run_summary": error_message.splitlines()[-1] if error_message else "Sync failed",
 	}
+	valid_updates = {}
 	for fieldname, value in updates.items():
 		if value is None:
 			continue
 		if meta.has_field(fieldname):
-			sync_definition_doc.db_set(fieldname, value, update_modified=False)
+			valid_updates[fieldname] = value
+	_set_doc_values(sync_definition_doc, valid_updates)
 	if commit:
 		frappe.db.commit()
 
@@ -3635,9 +3846,37 @@ def _get_child_rows_by_options(parent_doc: Any, child_doctype: str) -> list[dict
 	return []
 
 
+def _doctype_fieldnames(doctype: str | None) -> set[str] | None:
+	if not doctype:
+		return None
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		return None
+	fieldnames = set(SYSTEM_KEYS) | {"name", "creation", "modified", "owner", "modified_by"}
+	for field in getattr(meta, "fields", []) or []:
+		fieldname = _clean_string(getattr(field, "fieldname", None))
+		if fieldname:
+			fieldnames.add(fieldname)
+	return fieldnames
+
+
+def _doctype_payload_allows_field(
+	doctype: str,
+	fieldname: str,
+	doctype_fieldnames: set[str] | None,
+) -> bool:
+	if doctype_fieldnames is not None:
+		return fieldname in doctype_fieldnames
+	return _doctype_has_field(doctype, fieldname)
+
+
 def _doctype_has_field(doctype: str, fieldname: str) -> bool:
 	if fieldname in {"name", "creation", "modified", "owner", "modified_by"}:
 		return True
+	fieldnames = _doctype_fieldnames(doctype)
+	if fieldnames is not None:
+		return fieldname in fieldnames
 	return bool(frappe.get_meta(doctype).has_field(fieldname))
 
 
@@ -3735,9 +3974,12 @@ def _update_partner_connection_status(partner_doc: Any, *, status: str, details:
 		"last_checked_on": now_datetime(),
 		"last_connection_error": "" if status == "ok" else details,
 	}
+	meta = frappe.get_meta(partner_doc.doctype)
+	updates = {}
 	for fieldname, value in values.items():
-		if frappe.get_meta(partner_doc.doctype).has_field(fieldname):
-			partner_doc.db_set(fieldname, value, update_modified=False)
+		if meta.has_field(fieldname):
+			updates[fieldname] = value
+	_set_doc_values(partner_doc, updates)
 	frappe.db.commit()
 
 
