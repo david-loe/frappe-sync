@@ -50,9 +50,21 @@
    "link_type": "DocType",
    "show_arrow": 0,
    "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "settings",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Sync Settings",
+   "link_to": "Sync Settings",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-05-21 19:48:35.033530",
+ "modified": "2026-06-05 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sync",
  "name": "Sync",

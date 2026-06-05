@@ -149,6 +149,9 @@ sync.run.buildHealthHtml = function (frm, doctypeName, items) {
 		issueItems.length || cint(doc.error_count) || cint(doc.conflict_count)
 			? __("Latest issues are shown below.")
 			: __("No recent issue items in the latest loaded slice.");
+	const activeRunHint = ["Queued", "Running"].includes(doc.status)
+		? __("This active run can block new executions until it finishes or is recovered as stale.")
+		: "";
 
 	return [
 		`<div class="row">`,
@@ -161,6 +164,7 @@ sync.run.buildHealthHtml = function (frm, doctypeName, items) {
 			: `<div class="text-warning small">${frappe.utils.escape_html(__("Target DocType unresolved"))}</div>`,
 		`</div>`,
 		`<div class="small text-muted mb-2">${frappe.utils.escape_html(issueHint)}</div>`,
+		activeRunHint ? `<div class="small text-warning mb-2">${frappe.utils.escape_html(activeRunHint)}</div>` : "",
 		`<div class="row">`,
 		...counters.map((counter) => sync.run.metricCard(counter.label, counter.value, counter.color)),
 		`</div>`,

@@ -25,6 +25,7 @@ SYNC_DEFINITION = "Sync Definition"
 SYNC_PARTNER = "Sync Partner"
 SYNC_RUN = "Sync Run"
 SYNC_RUN_ITEM = "Sync Run Item"
+SYNC_SETTINGS = "Sync Settings"
 
 ACTIVE_RUN_STATUSES = {"Queued", "Running"}
 DONE_RUN_STATUSES = {"Success", "Partial Error", "Needs Review", "Error", "Skipped"}
@@ -62,6 +63,9 @@ SYNC_TYPE_PARTNER_TO_FRAPPE = MAPPING_DIRECTION_PARTNER_TO_FRAPPE
 SYNC_TYPE_BIDIRECTIONAL = MAPPING_DIRECTION_BOTH
 
 DEFAULT_RUNTIME_COMMIT_BATCH = 50
+DEFAULT_STALE_RUN_TIMEOUT_MINUTES = 180
+DEFAULT_RUN_RETENTION_DAYS_SUCCESS = 90
+DEFAULT_RUN_RETENTION_DAYS_ERROR = 365
 RUN_DOC_PENDING_WRITES_ATTR = "_sync_pending_write_count"
 AUDIT_RECORD_UNSET = object()
 VALUE_MAPPING_UNSET = object()
@@ -256,7 +260,129 @@ def run_due_sync_definitions(limit: int = 20, queue: bool = True) -> list[dict[s
 
 def run_due_sync_definitions_scheduled(limit: int = 20, queue: bool = True) -> list[dict[str, Any]]:
 	frappe.set_user("Administrator")
+	recover_stale_runs()
 	return run_due_sync_definitions(limit=limit, queue=queue)
+
+
+def recover_stale_runs(
+	sync_definition_name: str | None = None,
+	*,
+	timeout_minutes: int | None = None,
+	terminal_status: str | None = None,
+) -> dict[str, Any]:
+	settings = _get_sync_settings()
+	timeout = _positive_int(timeout_minutes, settings.stale_run_timeout_minutes)
+	timeout = max(1, timeout)
+	cutoff = now_datetime() - timedelta(minutes=timeout)
+	recovered: list[dict[str, Any]] = []
+	filters: dict[str, Any] = {"status": ["in", sorted(ACTIVE_RUN_STATUSES)]}
+	if sync_definition_name:
+		filters["sync_definition"] = str(sync_definition_name)
+	rows = frappe.get_all(
+		SYNC_RUN,
+		filters=filters,
+		fields=["name", "sync_definition", "status", "started_at", "creation"],
+		order_by="creation asc",
+	)
+
+	for row in rows:
+		run_status = str(_row_value(row, "status") or "")
+		run_started_at = _parse_datetime(_row_value(row, "started_at")) or _parse_datetime(_row_value(row, "creation"))
+		if run_started_at and run_started_at > cutoff:
+			continue
+		run_name = str(_row_value(row, "name") or "")
+		if not run_name:
+			continue
+		definition_name = _clean_string(_row_value(row, "sync_definition"))
+		recovered_status = _stale_run_terminal_status(run_status, terminal_status)
+		message = f"Recovered stale {run_status or 'active'} Sync Run after {timeout} minutes."
+		run_doc = frappe.get_doc(SYNC_RUN, run_name)
+		_update_doc_fields(
+			run_doc,
+			{
+				"status": recovered_status,
+				"finished_at": now_datetime(),
+				"summary": message,
+				"error_message": message if recovered_status == "Error" else None,
+			},
+			commit=False,
+		)
+		if definition_name and frappe.db.exists(SYNC_DEFINITION, definition_name):
+			definition_doc = frappe.get_doc(SYNC_DEFINITION, definition_name)
+			_update_definition_stale_recovery(
+				definition_doc,
+				last_run=run_name,
+				status=recovered_status,
+				summary=message,
+				commit=False,
+			)
+		recovered.append(
+			{
+				"run": run_name,
+				"sync_definition": definition_name,
+				"previous_status": run_status,
+				"status": recovered_status,
+			}
+		)
+
+	frappe.db.commit()
+	return {
+		"ok": True,
+		"timeout_minutes": timeout,
+		"cutoff": cutoff.isoformat(),
+		"recovered_count": len(recovered),
+		"runs": recovered,
+	}
+
+
+def cleanup_sync_run_retention(
+	*,
+	retention_days_success: int | None = None,
+	retention_days_error: int | None = None,
+) -> dict[str, Any]:
+	settings = _get_sync_settings()
+	success_days = max(1, _positive_int(retention_days_success, settings.run_retention_days_success))
+	error_days = max(1, _positive_int(retention_days_error, settings.run_retention_days_error))
+	now = now_datetime()
+	success_cutoff = now - timedelta(days=success_days)
+	error_cutoff = now - timedelta(days=error_days)
+	deleted_runs = 0
+	deleted_items = 0
+	rows = frappe.get_all(
+		SYNC_RUN,
+		filters={"status": ["in", sorted(DONE_RUN_STATUSES)]},
+		fields=["name", "status", "finished_at", "creation"],
+		order_by="creation asc",
+	)
+
+	for row in rows:
+		run_name = str(_row_value(row, "name") or "")
+		if not run_name:
+			continue
+		status = str(_row_value(row, "status") or "")
+		cutoff = success_cutoff if status == "Success" else error_cutoff
+		completed_at = _parse_datetime(_row_value(row, "finished_at")) or _parse_datetime(_row_value(row, "creation"))
+		if completed_at and completed_at > cutoff:
+			continue
+		for item_name in _linked_run_item_names(run_name):
+			frappe.delete_doc(SYNC_RUN_ITEM, item_name, ignore_permissions=True, force=True)
+			deleted_items += 1
+		frappe.delete_doc(SYNC_RUN, run_name, ignore_permissions=True, force=True)
+		deleted_runs += 1
+
+	frappe.db.commit()
+	return {
+		"ok": True,
+		"retention_days_success": success_days,
+		"retention_days_error": error_days,
+		"deleted_runs": deleted_runs,
+		"deleted_run_items": deleted_items,
+	}
+
+
+def cleanup_sync_run_retention_scheduled() -> dict[str, Any]:
+	frappe.set_user("Administrator")
+	return cleanup_sync_run_retention()
 
 
 def enqueue_sync_definition(
@@ -3692,6 +3818,31 @@ def _update_definition_failure(sync_definition_doc: Any, *, last_run: str, error
 		frappe.db.commit()
 
 
+def _update_definition_stale_recovery(
+	sync_definition_doc: Any,
+	*,
+	last_run: str,
+	status: str,
+	summary: str,
+	commit: bool = True,
+):
+	meta = frappe.get_meta(sync_definition_doc.doctype)
+	updates = {
+		"last_run": last_run,
+		"last_run_status": status,
+		"last_run_summary": summary,
+	}
+	valid_updates = {}
+	for fieldname, value in updates.items():
+		if value is None:
+			continue
+		if meta.has_field(fieldname):
+			valid_updates[fieldname] = value
+	_set_doc_values(sync_definition_doc, valid_updates)
+	if commit:
+		frappe.db.commit()
+
+
 def _set_next_run_at(sync_definition_doc: Any, cron_expr: str | None, *, commit: bool = True):
 	if not cron_expr or not croniter:
 		return
@@ -3727,6 +3878,47 @@ def _get_last_successful_sync(sync_definition_name: str) -> datetime | None:
 		if parsed:
 			return parsed
 	return None
+
+
+def _get_sync_settings() -> SimpleNamespace:
+	values = {
+		"stale_run_timeout_minutes": DEFAULT_STALE_RUN_TIMEOUT_MINUTES,
+		"run_retention_days_success": DEFAULT_RUN_RETENTION_DAYS_SUCCESS,
+		"run_retention_days_error": DEFAULT_RUN_RETENTION_DAYS_ERROR,
+	}
+	get_single_value = getattr(getattr(frappe, "db", None), "get_single_value", None)
+	if not callable(get_single_value):
+		return SimpleNamespace(**values)
+	for fieldname, default in list(values.items()):
+		try:
+			values[fieldname] = _positive_int(get_single_value(SYNC_SETTINGS, fieldname), default)
+		except Exception:
+			values[fieldname] = default
+	return SimpleNamespace(**values)
+
+
+def _positive_int(value: Any, default: int) -> int:
+	try:
+		normalized = int(value)
+	except Exception:
+		return default
+	return normalized if normalized > 0 else default
+
+
+def _stale_run_terminal_status(previous_status: str, requested_status: str | None = None) -> str:
+	if requested_status in {"Error", "Skipped"}:
+		return requested_status
+	return "Skipped" if previous_status == "Queued" else "Error"
+
+
+def _linked_run_item_names(run_name: str) -> list[str]:
+	rows = frappe.get_all(
+		SYNC_RUN_ITEM,
+		filters={"sync_run": run_name},
+		fields=["name"],
+		order_by=None,
+	)
+	return [str(_row_value(row, "name")) for row in rows if _row_value(row, "name")]
 
 
 def _format_run_summary(result_payload: dict[str, Any]) -> str:
@@ -3816,6 +4008,15 @@ def _doc_name(doc: Any) -> str | None:
 	else:
 		name = getattr(doc, "name", None)
 	return str(name) if name not in (None, "") else None
+
+
+def _row_value(row: Any, fieldname: str, default: Any = None) -> Any:
+	if isinstance(row, dict):
+		return row.get(fieldname, default)
+	getter = getattr(row, "get", None)
+	if callable(getter):
+		return getter(fieldname, default)
+	return getattr(row, fieldname, default)
 
 
 def _first_value_dict(doc: dict[str, Any], candidates: list[str], default: Any = None) -> Any:

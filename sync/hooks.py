@@ -157,7 +157,10 @@ scheduler_events = {
 		"0/5 * * * *": [
 			"sync.sync.service.runtime.run_due_sync_definitions_scheduled",
 		]
-	}
+	},
+	"daily": [
+		"sync.sync.service.runtime.cleanup_sync_run_retention_scheduled",
+	],
 }
 
 # Testing

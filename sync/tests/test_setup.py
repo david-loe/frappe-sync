@@ -34,15 +34,19 @@ def _db_stub(**overrides):
 class TestSetupHooks(unittest.TestCase):
 	def test_after_migrate_delegates_to_default_partner_type_setup(self):
 		with patch("sync.setup.ensure_default_partner_types") as mock_ensure:
-			setup.after_migrate()
+			with patch("sync.setup.ensure_default_sync_settings") as mock_settings:
+				setup.after_migrate()
 
 		mock_ensure.assert_called_once_with()
+		mock_settings.assert_called_once_with()
 
 	def test_before_tests_delegates_to_default_partner_type_setup(self):
 		with patch("sync.setup.ensure_default_partner_types") as mock_ensure:
-			setup.before_tests()
+			with patch("sync.setup.ensure_default_sync_settings") as mock_settings:
+				setup.before_tests()
 
 		mock_ensure.assert_called_once_with()
+		mock_settings.assert_called_once_with()
 
 	def test_ensure_default_partner_types_updates_existing_and_creates_missing(self):
 		existing_codes = {"mssql"}
@@ -78,3 +82,18 @@ class TestSetupHooks(unittest.TestCase):
 			{"postgres", "firebird"},
 		)
 		self.assertTrue(all(doc.inserted for doc in created_docs))
+
+	def test_ensure_default_sync_settings_sets_missing_defaults(self):
+		doc = DummyDoc()
+
+		with patch.object(
+			setup,
+			"frappe",
+			SimpleNamespace(get_single=lambda doctype: doc),
+		):
+			setup.ensure_default_sync_settings()
+
+		self.assertEqual(doc.updated["stale_run_timeout_minutes"], 180)
+		self.assertEqual(doc.updated["run_retention_days_success"], 90)
+		self.assertEqual(doc.updated["run_retention_days_error"], 365)
+		self.assertTrue(doc.saved)

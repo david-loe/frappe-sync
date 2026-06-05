@@ -157,6 +157,106 @@ class TestRuntimeManagement(unittest.TestCase):
 		)
 		self.assertEqual(mock_enqueue.call_count, 2)
 
+	def test_recover_stale_runs_marks_old_active_runs_and_updates_definition(self):
+		now = datetime(2026, 3, 17, 12, 0, 0)
+		run_docs = {
+			"RUN-Q": DummyDoc({"doctype": "Sync Run"}, name="RUN-Q", doctype="Sync Run"),
+			"RUN-R": DummyDoc({"doctype": "Sync Run"}, name="RUN-R", doctype="Sync Run"),
+		}
+		definition_doc = DummyDoc({"doctype": "Sync Definition"}, name="SYNC-1", doctype="Sync Definition")
+
+		def fake_get_doc(doctype, name):
+			if doctype == "Sync Run":
+				return run_docs[name]
+			if doctype == "Sync Definition":
+				return definition_doc
+			raise AssertionError((doctype, name))
+
+		def fake_meta(doctype):
+			fields = {
+				"Sync Run": ["status", "finished_at", "summary", "error_message"],
+				"Sync Definition": ["last_run", "last_run_status", "last_run_summary"],
+			}
+			return DummyMeta([_field(fieldname) for fieldname in fields.get(doctype, [])])
+
+		with (
+			patch("sync.sync.service.runtime.now_datetime", return_value=now),
+			patch("sync.sync.service.runtime._get_sync_settings", return_value=SimpleNamespace(stale_run_timeout_minutes=60)),
+			patch(
+				"sync.sync.service.runtime.frappe.get_all",
+				return_value=[
+					{
+						"name": "RUN-Q",
+						"sync_definition": "SYNC-1",
+						"status": "Queued",
+						"creation": datetime(2026, 3, 17, 10, 0, 0),
+					},
+					{
+						"name": "RUN-R",
+						"sync_definition": "SYNC-1",
+						"status": "Running",
+						"started_at": datetime(2026, 3, 17, 10, 30, 0),
+					},
+					{
+						"name": "RUN-FRESH",
+						"sync_definition": "SYNC-1",
+						"status": "Running",
+						"started_at": datetime(2026, 3, 17, 11, 30, 0),
+					},
+				],
+			),
+			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=fake_get_doc),
+			patch("sync.sync.service.runtime.frappe.get_meta", side_effect=fake_meta),
+			patch("sync.sync.service.runtime.frappe.db", _db_stub(exists=lambda *args, **kwargs: True)),
+		):
+			result = runtime.recover_stale_runs("SYNC-1")
+
+		self.assertEqual(result["recovered_count"], 2)
+		self.assertEqual(run_docs["RUN-Q"].payload["status"], "Skipped")
+		self.assertEqual(run_docs["RUN-R"].payload["status"], "Error")
+		self.assertEqual(definition_doc.payload["last_run_status"], "Error")
+		self.assertIn("Recovered stale Running", definition_doc.payload["last_run_summary"])
+
+	def test_cleanup_sync_run_retention_deletes_items_before_runs(self):
+		now = datetime(2026, 3, 17, 12, 0, 0)
+		deleted = []
+
+		def fake_get_all(doctype, **kwargs):
+			if doctype == "Sync Run":
+				return [
+					{"name": "RUN-OLD-SUCCESS", "status": "Success", "finished_at": datetime(2025, 12, 1, 0, 0)},
+					{"name": "RUN-OLD-ERROR", "status": "Error", "finished_at": datetime(2025, 1, 1, 0, 0)},
+					{"name": "RUN-FRESH", "status": "Success", "finished_at": datetime(2026, 3, 1, 0, 0)},
+				]
+			if doctype == "Sync Run Item":
+				run_name = kwargs["filters"]["sync_run"]
+				return [{"name": f"ITEM-{run_name}"}]
+			raise AssertionError(doctype)
+
+		with (
+			patch("sync.sync.service.runtime.now_datetime", return_value=now),
+			patch(
+				"sync.sync.service.runtime._get_sync_settings",
+				return_value=SimpleNamespace(run_retention_days_success=90, run_retention_days_error=365),
+			),
+			patch("sync.sync.service.runtime.frappe.get_all", side_effect=fake_get_all),
+			patch("sync.sync.service.runtime.frappe.delete_doc", side_effect=lambda doctype, name, **kwargs: deleted.append((doctype, name))),
+			patch("sync.sync.service.runtime.frappe.db", _db_stub()),
+		):
+			result = runtime.cleanup_sync_run_retention()
+
+		self.assertEqual(result["deleted_runs"], 2)
+		self.assertEqual(result["deleted_run_items"], 2)
+		self.assertEqual(
+			deleted,
+			[
+				("Sync Run Item", "ITEM-RUN-OLD-SUCCESS"),
+				("Sync Run", "RUN-OLD-SUCCESS"),
+				("Sync Run Item", "ITEM-RUN-OLD-ERROR"),
+				("Sync Run", "RUN-OLD-ERROR"),
+			],
+		)
+
 	def test_enqueue_sync_definition_executes_immediately_when_queue_disabled(self):
 		run_doc = SimpleNamespace(name="RUN-1")
 		sync_definition = SimpleNamespace(name="SYNC-1")

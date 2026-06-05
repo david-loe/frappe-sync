@@ -89,12 +89,14 @@ class TestRuntimeAdditional(unittest.TestCase):
 
 		with (
 			patch("sync.sync.service.runtime.frappe.set_user") as mock_set_user,
+			patch("sync.sync.service.runtime.recover_stale_runs", return_value={"recovered_count": 0}) as mock_recover,
 			patch("sync.sync.service.runtime.run_due_sync_definitions", return_value=delegated) as mock_run_due,
 		):
 			result = runtime.run_due_sync_definitions_scheduled(limit=7, queue=False)
 
 		self.assertIs(result, delegated)
 		mock_set_user.assert_called_once_with("Administrator")
+		mock_recover.assert_called_once_with()
 		mock_run_due.assert_called_once_with(limit=7, queue=False)
 
 	def test_pairing_key_and_identity_index_helpers_cover_mapping_branches(self):

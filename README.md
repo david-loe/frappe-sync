@@ -32,6 +32,12 @@ Each sync entry links to a `Sync Partner` (host / port / credentials) plus a `Sy
 
 The app ships with Desk helpers (Run, Preview, Export YAML, Import YAML, Open Latest Run, Test Connection). Use the YAML export/import as a transport format, but keep secret values out of shared exports.
 
+### Production operation
+
+`Sync Settings` controls production housekeeping. `stale_run_timeout_minutes` lets the scheduler and the Desk action recover old `Queued` or `Running` runs that would otherwise block a definition. `run_retention_days_success` and `run_retention_days_error` prune `Sync Run` and `Sync Run Item` audit rows; failures, review runs, and skipped runs are retained longer by default.
+
+For destructive flows, take a backup and run a dry run before enabling scheduled execution. `delete_missing` is allowed only for complete source loads, cannot be combined with `read_query`.
+
 ### Contributing & CI
 
 The project uses `pre-commit` with the usual suspects (ruff, eslint, prettier, pyupgrade). Running `bench lint` indirectly benefits from the same setup. CI workflows run unit tests and pip-audit on every push into `develop`.

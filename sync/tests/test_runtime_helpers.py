@@ -425,7 +425,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		context = SimpleNamespace(is_delta_sync=True, delta_since=datetime(2026, 3, 17, 10, 0))
 
 		with (
-			patch("sync.sync.service.runtime._doctype_has_field", side_effect=lambda doctype, field: field != "missing_field"),
+			patch("sync.sync.service.runtime._doctype_fieldnames", return_value={"name", "subject", "status", "modified", "changed_on"}),
 			patch("sync.sync.service.runtime._iter_frappe_record_batches", return_value=iter([[{"name": "TASK-1"}]])) as mock_records,
 		):
 			out = runtime._get_frappe_source_records(config, context)

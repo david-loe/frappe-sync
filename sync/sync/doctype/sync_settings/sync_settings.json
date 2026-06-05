@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_recovery",
+  "stale_run_timeout_minutes",
+  "section_break_retention",
+  "run_retention_days_success",
+  "run_retention_days_error"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_recovery",
+   "fieldtype": "Section Break",
+   "label": "Recovery"
+  },
+  {
+   "default": "180",
+   "description": "Queued or Running Sync Runs older than this timeout can be recovered by the scheduler or operator action.",
+   "fieldname": "stale_run_timeout_minutes",
+   "fieldtype": "Int",
+   "label": "Stale Run Timeout Minutes",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_retention",
+   "fieldtype": "Section Break",
+   "label": "Retention"
+  },
+  {
+   "default": "90",
+   "description": "Successful Sync Runs and their Sync Run Items are deleted after this many days.",
+   "fieldname": "run_retention_days_success",
+   "fieldtype": "Int",
+   "label": "Run Retention Days Success",
+   "reqd": 1
+  },
+  {
+   "default": "365",
+   "description": "Error, Needs Review, Partial Error, and Skipped Sync Runs are deleted after this many days.",
+   "fieldname": "run_retention_days_error",
+   "fieldtype": "Int",
+   "label": "Run Retention Days Error",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-05 00:00:00.000000",
+ "module": "Sync",
+ "name": "Sync Settings",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

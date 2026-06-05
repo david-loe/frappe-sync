@@ -475,6 +475,25 @@ class ApiContractTests(ApiTestCase):
 		self.assertEqual(response, [{"status": "queued"}])
 		mock_run_due.assert_called_once_with(limit=3, queue=False)
 
+	def test_recover_stale_runs_requires_definition_write_permission_and_delegates(self):
+		definition = _doc_stub("Sync Definition", "SYNC-1")
+
+		with (
+			patch.object(self.api.frappe, "get_doc", return_value=definition),
+			patch("sync.api.service_recover_stale_runs", return_value={"recovered_count": 1}) as mock_recover,
+		):
+			response = self.api.recover_stale_runs("SYNC-1", timeout_minutes="45")
+
+		self.assertEqual(response, {"recovered_count": 1})
+		mock_recover.assert_called_once_with(sync_definition_name="SYNC-1", timeout_minutes="45")
+
+	def test_cleanup_sync_run_retention_delegates_with_system_manager_permission(self):
+		with patch("sync.api.service_cleanup_sync_run_retention", return_value={"deleted_runs": 2}) as mock_cleanup:
+			response = self.api.cleanup_sync_run_retention(retention_days_success="30", retention_days_error="120")
+
+		self.assertEqual(response, {"deleted_runs": 2})
+		mock_cleanup.assert_called_once_with(retention_days_success="30", retention_days_error="120")
+
 	def test_import_sync_yaml_from_json_uses_embedded_payload_and_default_overwrite(self):
 		payload = {"yaml_payload": "sync_definition:\n  name: SYNC-1\n"}
 		response_payload = {

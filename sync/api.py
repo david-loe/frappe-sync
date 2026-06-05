@@ -7,11 +7,13 @@ import frappe
 
 from sync.sync.service import (
 	SyncPreviewService,
+	cleanup_sync_run_retention as service_cleanup_sync_run_retention,
 	enqueue_sync_definition as service_enqueue_sync_definition,
 	execute_sync_definition as service_execute_sync_definition,
 	export_sync_definition_yaml as service_export_sync_definition_yaml,
 	import_sync_definition_yaml as service_import_sync_definition_yaml,
 	list_due_sync_definitions as service_list_due_sync_definitions,
+	recover_stale_runs as service_recover_stale_runs,
 	run_due_sync_definitions as service_run_due_sync_definitions,
 )
 from sync.sync.service.connectors import get_connector_for_partner
@@ -305,6 +307,26 @@ def import_sync_definition_yaml(yaml_payload: str, overwrite: bool = False) -> d
 def run_due_sync_definitions(limit: int = 20, queue: bool = True) -> list[dict[str, Any]]:
 	_require_system_manager()
 	return service_run_due_sync_definitions(limit=_as_int(limit, 20), queue=_as_bool(queue))
+
+
+@frappe.whitelist()
+def recover_stale_runs(sync_definition_name: str | None = None, timeout_minutes: int | None = None) -> dict[str, Any]:
+	_require_system_manager()
+	if sync_definition_name:
+		_require_sync_definition_permission(sync_definition_name, permtype="write")
+	return service_recover_stale_runs(sync_definition_name=sync_definition_name, timeout_minutes=timeout_minutes)
+
+
+@frappe.whitelist()
+def cleanup_sync_run_retention(
+	retention_days_success: int | None = None,
+	retention_days_error: int | None = None,
+) -> dict[str, Any]:
+	_require_system_manager()
+	return service_cleanup_sync_run_retention(
+		retention_days_success=retention_days_success,
+		retention_days_error=retention_days_error,
+	)
 
 
 @frappe.whitelist()

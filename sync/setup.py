@@ -36,10 +36,12 @@ DEFAULT_PARTNER_TYPES = (
 
 def after_migrate():
 	ensure_default_partner_types()
+	ensure_default_sync_settings()
 
 
 def before_tests():
 	ensure_default_partner_types()
+	ensure_default_sync_settings()
 
 
 def ensure_default_partner_types():
@@ -53,3 +55,24 @@ def ensure_default_partner_types():
 		doc = frappe.new_doc("Sync Partner Type")
 		doc.update(payload)
 		doc.insert(ignore_permissions=True)
+
+
+def ensure_default_sync_settings():
+	exists = getattr(getattr(frappe, "db", None), "exists", None)
+	if callable(exists):
+		try:
+			if not exists("DocType", "Sync Settings"):
+				return
+		except Exception:
+			pass
+	payload = {
+		"stale_run_timeout_minutes": 180,
+		"run_retention_days_success": 90,
+		"run_retention_days_error": 365,
+	}
+	try:
+		doc = frappe.get_single("Sync Settings")
+	except Exception:
+		doc = frappe.new_doc("Sync Settings")
+	doc.update({fieldname: getattr(doc, fieldname, None) or value for fieldname, value in payload.items()})
+	doc.save(ignore_permissions=True)

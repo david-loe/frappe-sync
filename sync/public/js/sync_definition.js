@@ -55,6 +55,9 @@ frappe.ui.form.on("Sync Definition", {
 	delete_missing(frm) {
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 	},
+	before_save(frm) {
+		return sync.helpers.confirmDefinitionDeleteMissingBeforeSave(frm);
+	},
 	validate(frm) {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
@@ -78,6 +81,9 @@ sync.forms.setupButtons = function (frm) {
 	});
 	frm.add_custom_button(__("Import YAML"), () => {
 		sync.helpers.importDefinitionYaml(frm);
+	});
+	frm.add_custom_button(__("Recover Stale Runs"), () => {
+		sync.helpers.recoverDefinitionStaleRuns(frm);
 	});
 	frm.add_custom_button(__("Open Latest Run"), () => {
 		sync.helpers.openLatestRun(frm);
@@ -538,7 +544,14 @@ sync.helpers.getDefinitionSourceSettingsIssue = function (frm) {
 };
 
 sync.helpers.getDefinitionSourceSettingsNotice = function (frm) {
-	return "";
+	const notices = [];
+	if (frm.doc.delete_missing && !sync.helpers.getDefinitionSourceReadQuery(frm)) {
+		notices.push(__("Delete Missing is enabled. Target records absent from a complete source load may be deleted."));
+	}
+	if (["Queued", "Running"].includes(frm.doc.last_run_status)) {
+		notices.push(__("The latest Sync Run is {0}. Stale active runs can block new executions.", [frm.doc.last_run_status]));
+	}
+	return notices.join(" ");
 };
 
 sync.helpers.refreshDefinitionSourceValidation = function (frm) {
@@ -556,4 +569,57 @@ sync.helpers.validateDefinitionSourceSettings = function (frm) {
 	if (issue) {
 		frappe.throw(issue);
 	}
+};
+
+sync.helpers.getDefinitionDeleteMissingSignature = function (frm) {
+	return [frm.doc.name || "", frm.doc.sync_type || "", frm.doc.table_name || "", frm.doc.delete_missing ? "1" : "0"].join("::");
+};
+
+sync.helpers.confirmDefinitionDeleteMissingBeforeSave = function (frm) {
+	if (!frm.doc.delete_missing || sync.helpers.getDefinitionSourceReadQuery(frm)) {
+		return Promise.resolve();
+	}
+	const signature = sync.helpers.getDefinitionDeleteMissingSignature(frm);
+	if (frm.__sync_delete_missing_confirmed_signature === signature) {
+		return Promise.resolve();
+	}
+	return new Promise((resolve, reject) => {
+		frappe.confirm(
+			__(
+				"Delete Missing is enabled. A full sync can delete target records that are absent from the source load. Continue saving this Sync Definition?"
+			),
+			() => {
+				frm.__sync_delete_missing_confirmed_signature = signature;
+				resolve();
+			},
+			() => {
+				frappe.validated = false;
+				reject();
+			}
+		);
+	});
+};
+
+sync.helpers.recoverDefinitionStaleRuns = function (frm) {
+	if (frm.is_new()) {
+		frappe.msgprint(__("Save this Sync Definition before recovering stale runs."));
+		return;
+	}
+	sync.helpers
+		.callApi(
+			"recover_stale_runs",
+			{ sync_definition_name: frm.doc.name },
+			{ freeze_message: __("Recovering stale runs…") }
+		)
+		.then((response) => {
+			const payload = response?.message || {};
+			frappe.show_alert({
+				message: __("Recovered {0} stale runs.", [cint(payload.recovered_count)]),
+				indicator: payload.recovered_count ? "green" : "blue",
+			});
+			frm.reload_doc();
+		})
+		.catch((error) => {
+			frappe.msgprint(sync.helpers.extractApiErrorMessage(error) || __("Unable to recover stale runs."));
+		});
 };

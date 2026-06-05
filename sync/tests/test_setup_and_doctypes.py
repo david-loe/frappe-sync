@@ -19,6 +19,7 @@ from sync.sync.doctype.sync_run import sync_run as sync_run_module
 from sync.sync.doctype.sync_run.sync_run import SyncRun
 from sync.sync.doctype.sync_run_item import sync_run_item as sync_run_item_module
 from sync.sync.doctype.sync_run_item.sync_run_item import SyncRunItem
+from sync.sync.doctype.sync_settings.sync_settings import SyncSettings
 
 
 class MutableDoc:
@@ -136,16 +137,22 @@ class FakeSyncDefinitionDoc:
 
 class TestSetupModule(unittest.TestCase):
 	def test_after_migrate_delegates_to_default_partner_type_setup(self):
-		with patch("sync.setup.ensure_default_partner_types") as mock_ensure:
+		with patch("sync.setup.ensure_default_partner_types") as mock_ensure, patch(
+			"sync.setup.ensure_default_sync_settings"
+		) as mock_settings:
 			sync_setup.after_migrate()
 
 		mock_ensure.assert_called_once_with()
+		mock_settings.assert_called_once_with()
 
 	def test_before_tests_delegates_to_default_partner_type_setup(self):
-		with patch("sync.setup.ensure_default_partner_types") as mock_ensure:
+		with patch("sync.setup.ensure_default_partner_types") as mock_ensure, patch(
+			"sync.setup.ensure_default_sync_settings"
+		) as mock_settings:
 			sync_setup.before_tests()
 
 		mock_ensure.assert_called_once_with()
+		mock_settings.assert_called_once_with()
 
 	def test_ensure_default_partner_types_updates_existing_and_creates_missing(self):
 		existing_doc = MutableDoc()
@@ -178,6 +185,15 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		self.assertTrue(issubclass(SyncPartnerType, Document))
 		self.assertTrue(issubclass(SyncRun, Document))
 		self.assertTrue(issubclass(SyncRunItem, Document))
+		self.assertTrue(issubclass(SyncSettings, Document))
+
+	def test_sync_settings_metadata_has_production_defaults(self):
+		settings_json = self._load_doctype_json("sync/doctype/sync_settings/sync_settings.json")
+
+		self.assertEqual(settings_json["issingle"], 1)
+		self.assertEqual(self._field_by_name(settings_json, "stale_run_timeout_minutes")["default"], "180")
+		self.assertEqual(self._field_by_name(settings_json, "run_retention_days_success")["default"], "90")
+		self.assertEqual(self._field_by_name(settings_json, "run_retention_days_error")["default"], "365")
 
 	def test_sync_definition_partner_column_metadata_uses_stored_select_options(self):
 		sync_definition_json = self._load_doctype_json("sync/doctype/sync_definition/sync_definition.json")

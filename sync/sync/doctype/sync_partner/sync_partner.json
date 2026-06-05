@@ -155,7 +155,7 @@
    "fieldname": "connection_options",
    "fieldtype": "Code",
    "label": "Connection Options",
-   "description": "Optional driver-specific connection options, one per line or JSON."
+   "description": "Optional driver-specific connection options, one per line or JSON. Add sensitive option keys to Secret Fields so exports mask them."
   },
   {
    "fieldname": "time_zone",
@@ -224,12 +224,13 @@
    "fieldname": "secret_fields",
    "fieldtype": "Small Text",
    "label": "Secret Fields",
-   "description": "Field names to mask when exporting, one per line."
+   "description": "Field names or connection option keys to mask when exporting, one per line."
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
+ "modified": "2026-06-05 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Partner",
  "permissions": [
