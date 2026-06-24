@@ -6,6 +6,36 @@ from frappe.model.document import Document
 
 
 class SyncRun(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		conflict_count: DF.Int
+		created_count: DF.Int
+		deleted_count: DF.Int
+		dry_run: DF.Check
+		error_count: DF.Int
+		error_message: DF.LongText | None
+		finished_at: DF.Datetime | None
+		job_id: DF.Data | None
+		last_sync_at: DF.Datetime | None
+		processed_count: DF.Int
+		skipped_count: DF.Int
+		started_at: DF.Datetime | None
+		status: DF.Literal["Queued", "Running", "Success", "Partial Error", "Needs Review", "Error", "Skipped", "Preview"]
+		success_count: DF.Int
+		summary: DF.SmallText | None
+		sync_definition: DF.Link
+		sync_partner: DF.Link | None
+		sync_type: DF.Literal["Frappe -> Partner", "Frappe <- Partner", "Frappe <-> Partner"]
+		trigger_type: DF.Literal["manual", "scheduler", "api"]
+		updated_count: DF.Int
+	# end: auto-generated types
+
 	def on_trash(self):
 		for item_name in _linked_names("Sync Run Item", {"sync_run": self.name}):
 			frappe.delete_doc("Sync Run Item", item_name, ignore_permissions=True)

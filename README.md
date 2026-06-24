@@ -5,23 +5,23 @@ Sync anything from and to Frappe, allowing a single `Sync Definition` to describ
 ### Prerequisites
 
 1. A Frappe bench (>=16.0) with Python 3.14 from the base repo.
-2. The connector drivers listed below installed globally, because bench apps share the bench-level environment.
+2. The operating-system database drivers listed below.
 
 ### Database driver requirements
-- **MSSQL:** install `pyodbc` plus the Microsoft ODBC driver for SQL Server. On Debian/Ubuntu this is typically `sudo apt install msodbcsql18 unixodbc-dev` and `pip install pyodbc`.
-- **PostgreSQL:** use `psycopg[binary]`; the wheel bundles libpq, so no system package is strictly required, but libssl and libc6 must be modern.
-- **Firebird:** install the Firebird client (`sudo apt install firebird3.0-dev` or equivalent). The app uses `fdb>=2.0.4`, which supports Firebird 2.5 and limited Firebird 3.0 compatibility.
-- **Auxiliary:** `croniter` is required for cron parsing when computing due sync definitions.
 
-Those packages are declared in the app dependencies so `bench setup requirements` pulls them once the app is added to your bench.
+| Database | ⚠️ Manual system installation required | Debian/Ubuntu command |
+| --- | --- | --- |
+| MSSQL | [Add the Microsoft repository](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server), then install UnixODBC and Microsoft ODBC Driver 18 | `sudo ACCEPT_EULA=Y apt install msodbcsql18 unixodbc unixodbc-dev` |
+| PostgreSQL | Nothing | - |
+| Firebird | Firebird client library | `sudo apt install firebird3.0-dev` |
 
 ### Installation
 
-You can install the app with bench:
+Install the required system driver for the database you intend to use before
+testing a connection. Then install the app and its Python requirements:
 
 ```bash
-cd $PATH_TO_YOUR_BENCH
-bench get-app $URL_OF_THIS_REPO --branch develop
+bench get-app https://github.com/david-loe/frappe-sync
 bench install-app sync
 bench setup requirements
 ```

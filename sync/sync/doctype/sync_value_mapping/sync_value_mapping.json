@@ -5,7 +5,9 @@
  "engine": "InnoDB",
  "field_order": [
   "frappe_field",
+  "frappe_value_is_null",
   "frappe_value",
+  "partner_value_is_null",
   "partner_value"
  ],
  "fields": [
@@ -19,23 +21,40 @@
    "reqd": 1
   },
   {
+   "default": "0",
+   "fieldname": "frappe_value_is_null",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Frappe Value Is NULL"
+  },
+  {
    "fieldname": "frappe_value",
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Frappe Value",
-   "reqd": 1
+   "mandatory_depends_on": "eval:!doc.frappe_value_is_null",
+   "read_only_depends_on": "eval:doc.frappe_value_is_null"
+  },
+  {
+   "default": "0",
+   "fieldname": "partner_value_is_null",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Partner Value Is NULL"
   },
   {
    "fieldname": "partner_value",
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Partner Value",
-   "reqd": 1
+   "mandatory_depends_on": "eval:!doc.partner_value_is_null",
+   "read_only_depends_on": "eval:doc.partner_value_is_null"
   }
  ],
  "grid_page_length": 50,
  "istable": 1,
  "links": [],
+ "modified": "2026-06-24 14:35:00.000000",
  "module": "Sync",
  "name": "Sync Value Mapping",
  "permissions": [],

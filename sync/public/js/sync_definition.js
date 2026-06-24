@@ -65,6 +65,24 @@ frappe.ui.form.on("Sync Definition", {
 	},
 });
 
+frappe.ui.form.on("Sync Value Mapping", {
+	frappe_value_is_null(frm, cdt, cdn) {
+		sync.helpers.clearNullValueMappingInput(frm, cdt, cdn, "frappe_value_is_null", "frappe_value");
+	},
+	partner_value_is_null(frm, cdt, cdn) {
+		sync.helpers.clearNullValueMappingInput(frm, cdt, cdn, "partner_value_is_null", "partner_value");
+	},
+});
+
+sync.helpers.clearNullValueMappingInput = function (frm, cdt, cdn, nullField, valueField) {
+	const row = locals[cdt]?.[cdn];
+	if (!row?.[nullField]) {
+		return;
+	}
+	frappe.model.set_value(cdt, cdn, valueField, null);
+	frm.refresh_field("value_mapping");
+};
+
 sync.forms.setupButtons = function (frm) {
 	frm.clear_custom_buttons();
 	frm.add_custom_button(__("Run Now"), () => {

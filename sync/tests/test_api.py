@@ -126,7 +126,16 @@ class TestSyncApi(ApiTestCase):
 			"filter_expression": '[["docstatus","=",0]]',
 			"match_fields": [{"frappe_field": "name"}],
 			"field_mapping": [{"frappe_field": "name", "partner_field": "name"}],
-			"value_mapping": [{"frappe_field": "status", "frappe_value": "open", "partner_value": "1"}],
+			"value_mapping": [
+				{"frappe_field": "status", "frappe_value": "open", "partner_value": "1"},
+				{
+					"frappe_field": "gender",
+					"frappe_value": None,
+					"frappe_value_is_null": 1,
+					"partner_value": "2",
+					"partner_value_is_null": 0,
+				},
+			],
 		}
 		doc = DummyDoc(sample_definition)
 
@@ -145,7 +154,10 @@ class TestSyncApi(ApiTestCase):
 			exported_yaml = self.api.export_sync_definition_yaml(sample_definition["name"])
 
 		self.assertIsInstance(exported_yaml, str)
-		self.assertEqual(yaml.safe_load(exported_yaml)["sync_definition"]["name"], sample_definition["name"])
+		exported_definition = yaml.safe_load(exported_yaml)["sync_definition"]
+		self.assertEqual(exported_definition["name"], sample_definition["name"])
+		self.assertEqual(exported_definition["value_mapping"][1]["frappe_value_is_null"], 1)
+		self.assertIsNone(exported_definition["value_mapping"][1]["frappe_value"])
 
 		def raise_missing(doctype, name=None):
 			if isinstance(doctype, dict):
@@ -422,14 +434,32 @@ class TestSyncApi(ApiTestCase):
 
 def _fake_meta(doctype):
 	child_fields = {
-		"Sync Definition": ["sync_type", "frequency_cron", "batch_size", "filter_expression", "name", "sync_partner"],
-		"Sync Partner": ["name", "partner_type"],
-		"Sync Partner Type": ["name"],
+		"Sync Definition": [
+			("sync_type", "Data", None),
+			("frequency_cron", "Data", None),
+			("batch_size", "Data", None),
+			("filter_expression", "Data", None),
+			("name", "Data", None),
+			("sync_partner", "Data", None),
+			("value_mapping", "Table", "Sync Value Mapping"),
+		],
+		"Sync Value Mapping": [
+			("frappe_field", "Data", None),
+			("frappe_value", "Data", None),
+			("frappe_value_is_null", "Check", None),
+			("partner_value", "Data", None),
+			("partner_value_is_null", "Check", None),
+		],
+		"Sync Partner": [("name", "Data", None), ("partner_type", "Data", None)],
+		"Sync Partner Type": [("name", "Data", None)],
 	}
 
 	class _Meta:
 		def __init__(self, fields):
-			self.fields = [SimpleNamespace(fieldname=field, fieldtype="Data") for field in fields]
+			self.fields = [
+				SimpleNamespace(fieldname=fieldname, fieldtype=fieldtype, options=options)
+				for fieldname, fieldtype, options in fields
+			]
 
 		def has_field(self, fieldname):
 			return fieldname in {field.fieldname for field in self.fields}
@@ -437,7 +467,7 @@ def _fake_meta(doctype):
 		def get_table_fields(self, include_computed=True):
 			return []
 
-	return _Meta(child_fields.get(doctype, ["name"]))
+	return _Meta(child_fields.get(doctype, [("name", "Data", None)]))
 
 
 class ApiContractTests(ApiTestCase):

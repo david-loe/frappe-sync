@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sync VERSION\n"
 "Report-Msgid-Bugs-To: kontak@david-loe.de\n"
-"POT-Creation-Date: 2026-06-05 10:18+0000\n"
-"PO-Revision-Date: 2026-06-05 10:18+0000\n"
+"POT-Creation-Date: 2026-06-24 12:32+0000\n"
+"PO-Revision-Date: 2026-06-24 12:32+0000\n"
 "Last-Translator: kontak@david-loe.de\n"
 "Language-Team: kontak@david-loe.de\n"
 "MIME-Version: 1.0\n"
@@ -32,13 +32,10 @@ msgstr ""
 msgid "API Secret"
 msgstr ""
 
-#: sync/public/js/sync_partner.js:188
-msgid "API key or access token provided by the upstream system."
-msgstr ""
-
 #. Description of the 'API Key' (Data) field in DocType 'Sync Partner'
+#: sync/public/js/sync_partner.js:188
 #: sync/sync/doctype/sync_partner/sync_partner.json
-msgid "API key or access token provided by the upstream system. YAML exports mask this value when credential masking is enabled."
+msgid "API key or access token provided by the upstream system."
 msgstr ""
 
 #. Label of the action (Select) field in DocType 'Sync Run Item'
@@ -267,15 +264,15 @@ msgstr ""
 msgid "Delete Missing"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:541
+#: sync/public/js/sync_definition.js:559
 msgid "Delete Missing cannot be enabled when Read Query is used."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:588
+#: sync/public/js/sync_definition.js:606
 msgid "Delete Missing is enabled. A full sync can delete target records that are absent from the source load. Continue saving this Sync Definition?"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:549
+#: sync/public/js/sync_definition.js:567
 msgid "Delete Missing is enabled. Target records absent from a complete source load may be deleted."
 msgstr ""
 
@@ -291,7 +288,7 @@ msgstr ""
 #. Description of the 'Delete Missing' (Check) field in DocType 'Sync
 #. Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
-msgid "Deletes target records that are missing from a complete source load. Saving with this enabled requires operator confirmation."
+msgid "Deletes target records that are missing from a complete source load."
 msgstr ""
 
 #. Label of the description (Small Text) field in DocType 'Sync Partner Type'
@@ -337,7 +334,7 @@ msgid "Driver Options"
 msgstr ""
 
 #. Label of the dry_run (Check) field in DocType 'Sync Run'
-#: sync/public/js/sync_definition.js:73 sync/public/js/sync_run.js:143
+#: sync/public/js/sync_definition.js:91 sync/public/js/sync_run.js:143
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Dry Run"
 msgstr ""
@@ -409,7 +406,7 @@ msgstr ""
 msgid "Execution Timing"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:79
+#: sync/public/js/sync_definition.js:97
 msgid "Export YAML"
 msgstr ""
 
@@ -440,7 +437,7 @@ msgstr ""
 msgid "Field Name"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:215
+#: sync/public/js/sync_definition.js:233
 msgid "Field choices loaded from {0}."
 msgstr ""
 
@@ -458,11 +455,11 @@ msgstr ""
 msgid "Fields used to detect changes on Frappe side."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:496
+#: sync/public/js/sync_definition.js:514
 msgid "Fields used to detect changes on the Frappe side."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:501 sync/public/js/sync_helpers.js:1269
+#: sync/public/js/sync_definition.js:519 sync/public/js/sync_helpers.js:1269
 msgid "Fields used to detect changes on the partner side."
 msgstr ""
 
@@ -585,6 +582,12 @@ msgstr ""
 msgid "Frappe Value"
 msgstr ""
 
+#. Label of the frappe_value_is_null (Check) field in DocType 'Sync Value
+#. Mapping'
+#: sync/sync/doctype/sync_value_mapping/sync_value_mapping.json
+msgid "Frappe Value Is NULL"
+msgstr ""
+
 #. Label of the frequency_cron (Data) field in DocType 'Sync Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Frequency Cron"
@@ -651,7 +654,7 @@ msgstr ""
 msgid "Import Sync Definition"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:82
+#: sync/public/js/sync_definition.js:100
 msgid "Import YAML"
 msgstr ""
 
@@ -750,7 +753,7 @@ msgstr ""
 msgid "Load Columns"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:356 sync/public/js/sync_helpers.js:442
+#: sync/public/js/sync_definition.js:374 sync/public/js/sync_helpers.js:442
 msgid "Load partner columns from {0} to get guided partner-side field selection."
 msgstr ""
 
@@ -758,7 +761,7 @@ msgstr ""
 msgid "Loaded {0} partner columns from {1}."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:466
+#: sync/public/js/sync_definition.js:484
 msgid "Loaded {0} partner columns."
 msgstr ""
 
@@ -770,7 +773,7 @@ msgstr ""
 msgid "Loading partner columns from the configured source..."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:446
+#: sync/public/js/sync_definition.js:464
 msgid "Loading partner columns…"
 msgstr ""
 
@@ -994,7 +997,7 @@ msgstr ""
 msgid "Open Items"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:88
+#: sync/public/js/sync_definition.js:106
 msgid "Open Latest Run"
 msgstr ""
 
@@ -1083,7 +1086,7 @@ msgid "Partial Error"
 msgstr ""
 
 #. Label of the partner (Link) field in DocType 'Sync Definition'
-#: sync/public/js/sync_definition.js:396
+#: sync/public/js/sync_definition.js:414
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Partner"
 msgstr ""
@@ -1181,19 +1184,25 @@ msgstr ""
 msgid "Partner Value"
 msgstr ""
 
+#. Label of the partner_value_is_null (Check) field in DocType 'Sync Value
+#. Mapping'
+#: sync/sync/doctype/sync_value_mapping/sync_value_mapping.json
+msgid "Partner Value Is NULL"
+msgstr ""
+
 #: sync/public/js/sync_helpers.js:408
 msgid "Partner column loading is only available after a partner and table name are set."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:354
+#: sync/public/js/sync_definition.js:372
 msgid "Partner field choices loaded from the stored partner columns."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:409
+#: sync/public/js/sync_definition.js:427
 msgid "Partner rows are loaded directly from Table Name."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:408
+#: sync/public/js/sync_definition.js:426
 msgid "Partner rows are loaded from the Read Query."
 msgstr ""
 
@@ -1203,7 +1212,7 @@ msgstr ""
 msgid "Partner table used for writes and as the default read source when Read Query is blank."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:475
+#: sync/public/js/sync_definition.js:493
 msgid "Partner-column loading is not available yet. Partner field selections require stored partner columns."
 msgstr ""
 
@@ -1243,7 +1252,7 @@ msgstr ""
 
 #. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
 #. Option for the 'Status' (Select) field in DocType 'Sync Run'
-#: sync/public/js/sync_definition.js:76 sync/public/js/sync_helpers.js:1198
+#: sync/public/js/sync_definition.js:94 sync/public/js/sync_helpers.js:1198
 #: sync/sync/doctype/sync_definition/sync_definition.json
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Preview"
@@ -1299,7 +1308,7 @@ msgid "Raw Preview Data"
 msgstr ""
 
 #. Label of the read_query (Code) field in DocType 'Sync Definition'
-#: sync/public/js/sync_definition.js:406 sync/public/js/sync_helpers.js:192
+#: sync/public/js/sync_definition.js:424 sync/public/js/sync_helpers.js:192
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Read Query"
 msgstr ""
@@ -1317,15 +1326,15 @@ msgstr ""
 msgid "Record Key"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:85
+#: sync/public/js/sync_definition.js:103
 msgid "Recover Stale Runs"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:617
+#: sync/public/js/sync_definition.js:635
 msgid "Recovered {0} stale runs."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:612
+#: sync/public/js/sync_definition.js:630
 msgid "Recovering stale runs…"
 msgstr ""
 
@@ -1399,7 +1408,7 @@ msgstr ""
 msgid "Run Notes"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:70
+#: sync/public/js/sync_definition.js:88
 msgid "Run Now"
 msgstr ""
 
@@ -1459,7 +1468,7 @@ msgstr ""
 msgid "Save the run to load related items."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:605
+#: sync/public/js/sync_definition.js:623
 msgid "Save this Sync Definition before recovering stale runs."
 msgstr ""
 
@@ -1482,7 +1491,7 @@ msgstr ""
 msgid "Security Notes"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:216
+#: sync/public/js/sync_definition.js:234
 msgid "Select a DocType to load guided field choices."
 msgstr ""
 
@@ -1512,7 +1521,7 @@ msgstr ""
 msgid "Select one or more partner-side modified fields aligned with the chosen DocType fields."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:359
+#: sync/public/js/sync_definition.js:377
 msgid "Select partner-side modified fields from the loaded partner source columns."
 msgstr ""
 
@@ -1545,7 +1554,7 @@ msgstr ""
 msgid "Server-side import preview is not available yet. You can still import, but conflict hints are limited to this client-side review step."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:432
+#: sync/public/js/sync_definition.js:450
 msgid "Set Partner and Table Name or Read Query first."
 msgstr ""
 
@@ -1769,13 +1778,13 @@ msgid "System Manager"
 msgstr ""
 
 #. Label of the table_name (Data) field in DocType 'Sync Definition'
-#: sync/public/js/sync_definition.js:399 sync/public/js/sync_definition.js:406
+#: sync/public/js/sync_definition.js:417 sync/public/js/sync_definition.js:424
 #: sync/public/js/sync_helpers.js:176
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Table Name"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:538
+#: sync/public/js/sync_definition.js:556
 msgid "Table Name is required."
 msgstr ""
 
@@ -1810,7 +1819,7 @@ msgstr ""
 msgid "Test Connection"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:552
+#: sync/public/js/sync_definition.js:570
 msgid "The latest Sync Run is {0}. Stale active runs can block new executions."
 msgstr ""
 
@@ -1868,7 +1877,7 @@ msgstr ""
 msgid "Trust Server Certificate"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:527
+#: sync/public/js/sync_definition.js:545
 msgid "Unable to load field choices."
 msgstr ""
 
@@ -1880,7 +1889,7 @@ msgstr ""
 msgid "Unable to load run items."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:623
+#: sync/public/js/sync_definition.js:641
 msgid "Unable to recover stale runs."
 msgstr ""
 

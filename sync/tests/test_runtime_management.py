@@ -615,6 +615,37 @@ class TestRuntimeManagement(unittest.TestCase):
 				{"scheduled_at": datetime(2026, 3, 17, 10, 0)},
 			)
 
+	def test_value_mapping_maps_null_bidirectionally_and_matches_numeric_partner_values(self):
+		mapping = {
+			"gender": {"partner_field": "Geschlecht", "direction": "Frappe <-> Partner"},
+		}
+		value_mapping = {"gender": {None: "2", "Female": "1", "Male": "0"}}
+
+		self.assertEqual(
+			runtime._map_frappe_to_partner(
+				{"gender": None},
+				mapping,
+				value_mapping,
+			),
+			{"Geschlecht": "2"},
+		)
+		self.assertEqual(
+			runtime._map_partner_to_frappe(
+				{"Geschlecht": "2"},
+				mapping,
+				value_mapping,
+			),
+			{"gender": None},
+		)
+		self.assertEqual(
+			runtime._map_partner_to_frappe(
+				{"Geschlecht": 2},
+				mapping,
+				value_mapping,
+			),
+			{"gender": None},
+		)
+
 	def test_runtime_mapping_context_reuses_reverse_maps_and_datetime_fields(self):
 		config = SimpleNamespace(
 			doctype="Task",

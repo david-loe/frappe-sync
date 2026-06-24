@@ -126,3 +126,11 @@ bench update-po-files --app sync
 Then fill all missing German translations in `sync/locale/de.po`. No
 `msgstr ""` entries may remain after localization work, except the standard PO
 header.
+
+## Automatic Typing
+
+After changing DocTypes, regenerate the Python type annotations for the affected controllers. Run this bench command:
+
+`bench --site <site> execute "frappe.get_doc('DocType', '<DocType Name>').export_types_to_controller()"`
+
+The generated type blocks are managed automatically and should not be edited manually.

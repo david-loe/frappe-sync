@@ -116,6 +116,9 @@ class FakeSyncDefinitionDoc:
 	def validate_field_mapping(self):
 		return sync_definition_module.SyncDefinition.validate_field_mapping(self)
 
+	def validate_value_mapping(self):
+		return sync_definition_module.SyncDefinition.validate_value_mapping(self)
+
 	def validate_match_fields(self):
 		return sync_definition_module.SyncDefinition.validate_match_fields(self)
 
@@ -199,6 +202,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		sync_definition_json = self._load_doctype_json("sync/doctype/sync_definition/sync_definition.json")
 		field_mapping_json = self._load_doctype_json("sync/doctype/sync_field_mapping/sync_field_mapping.json")
 		modified_field_json = self._load_doctype_json("sync/doctype/sync_modified_field/sync_modified_field.json")
+		value_mapping_json = self._load_doctype_json("sync/doctype/sync_value_mapping/sync_value_mapping.json")
 
 		for fieldname in ("partner_columns", "partner_columns_signature", "partner_columns_loaded_at"):
 			field = self._field_by_name(sync_definition_json, fieldname)
@@ -212,6 +216,16 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		self.assertEqual(self._field_by_name(field_mapping_json, "partner_field")["fieldtype"], "Select")
 		self.assertEqual(self._field_by_name(field_mapping_json, "unmapped_action")["options"], "Keep Original\nUse Fallback Value\nUse NULL")
 		self.assertEqual(self._field_by_name(modified_field_json, "field_name")["fieldtype"], "Select")
+		self.assertEqual(self._field_by_name(value_mapping_json, "frappe_value_is_null")["fieldtype"], "Check")
+		self.assertEqual(self._field_by_name(value_mapping_json, "partner_value_is_null")["fieldtype"], "Check")
+		self.assertEqual(
+			self._field_by_name(value_mapping_json, "frappe_value")["mandatory_depends_on"],
+			"eval:!doc.frappe_value_is_null",
+		)
+		self.assertEqual(
+			self._field_by_name(value_mapping_json, "partner_value")["read_only_depends_on"],
+			"eval:doc.partner_value_is_null",
+		)
 
 	def test_sync_run_on_trash_deletes_items_and_clears_last_run_links(self):
 		def fake_get_all(doctype, filters=None, fields=None, order_by=None):
@@ -483,6 +497,54 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		self.assertEqual(sync_definition_module.SyncDefinition.get_value_mapping(doc), {"status": {"Open": "1"}})
 		self.assertEqual(sync_definition_module.SyncDefinition.get_frappe_modified_fields(doc), ["modified", "changed_on"])
 		self.assertEqual(sync_definition_module.SyncDefinition.get_partner_modified_fields(doc), ["updated_at", "partner_changed"])
+
+	def test_value_mapping_supports_explicit_null_on_either_side(self):
+		null_to_partner = SimpleNamespace(
+			frappe_field="gender",
+			frappe_value=None,
+			frappe_value_is_null=1,
+			partner_value=" 2 ",
+			partner_value_is_null=0,
+		)
+		partner_to_null = SimpleNamespace(
+			frappe_field="status",
+			frappe_value="Unknown",
+			frappe_value_is_null=0,
+			partner_value=None,
+			partner_value_is_null=1,
+		)
+		doc = FakeSyncDefinitionDoc(value_mapping=[null_to_partner, partner_to_null])
+
+		sync_definition_module.SyncDefinition.validate_value_mapping(doc)
+
+		self.assertIsNone(null_to_partner.frappe_value)
+		self.assertEqual(null_to_partner.partner_value, "2")
+		self.assertIsNone(partner_to_null.partner_value)
+		self.assertEqual(
+			sync_definition_module.SyncDefinition.get_value_mapping(doc),
+			{"gender": {None: "2"}, "status": {"Unknown": None}},
+		)
+
+	def test_value_mapping_requires_values_when_null_flags_are_disabled(self):
+		doc = FakeSyncDefinitionDoc(
+			value_mapping=[
+				SimpleNamespace(
+					frappe_field="gender",
+					frappe_value=None,
+					frappe_value_is_null=0,
+					partner_value="2",
+					partner_value_is_null=0,
+				)
+			]
+		)
+
+		with patch.object(
+			sync_definition_module.frappe,
+			"throw",
+			side_effect=frappe.ValidationError("missing value"),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_value_mapping(doc)
 
 	def test_export_payload_helpers_cover_preview_limit_and_serialization(self):
 		doc = FakeSyncDefinitionDoc(

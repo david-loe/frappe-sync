@@ -96,7 +96,15 @@ class TestRuntimeHelpers(unittest.TestCase):
 					)
 				]
 			if childdoctype == "Sync Value Mapping":
-				return [dict(frappe_field="state", source_value="open", target_value="1")]
+				return [
+					dict(frappe_field="state", source_value="open", target_value="1"),
+					dict(
+						frappe_field="gender",
+						frappe_value_is_null=1,
+						frappe_value=None,
+						partner_value="2",
+					),
+				]
 			return []
 
 		mock_children.side_effect = fake_rows
@@ -125,7 +133,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		self.assertEqual(config.match_fields, ["name"])
 		self.assertEqual(config.mapping, {"name": {"partner_field": "name", "direction": "Frappe -> Partner"}})
-		self.assertEqual(config.value_mapping, {"state": {"open": "1"}})
+		self.assertEqual(config.value_mapping, {"state": {"open": "1"}, "gender": {None: "2"}})
 		self.assertEqual(
 			config.value_mapping_fallbacks,
 			{"name": {"action": "null", "value": None}},

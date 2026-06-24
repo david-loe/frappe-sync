@@ -2458,9 +2458,23 @@ def _get_value_mapping(sync_definition_doc: Any) -> dict[str, dict[Any, Any]]:
 	result: dict[str, dict[Any, Any]] = {}
 	for row in rows:
 		frappe_field = _first_value_dict(row, ["frappe_field", "field_name", "source_field"])
-		source_value = _first_value_dict(row, ["source_value", "frappe_value", "from_value"])
-		target_value = _first_value_dict(row, ["target_value", "partner_value", "to_value"])
-		if frappe_field is None or source_value is None:
+		source_is_null = _as_bool(
+			_first_value_dict(row, ["source_value_is_null", "frappe_value_is_null"], default=False)
+		)
+		target_is_null = _as_bool(
+			_first_value_dict(row, ["target_value_is_null", "partner_value_is_null"], default=False)
+		)
+		source_value = (
+			None
+			if source_is_null
+			else _first_value_dict(row, ["source_value", "frappe_value", "from_value"])
+		)
+		target_value = (
+			None
+			if target_is_null
+			else _first_value_dict(row, ["target_value", "partner_value", "to_value"])
+		)
+		if frappe_field is None or (source_value is None and not source_is_null):
 			continue
 		result.setdefault(str(frappe_field), {})[source_value] = target_value
 	top_level = _first_value(sync_definition_doc, ["value_mapping"])

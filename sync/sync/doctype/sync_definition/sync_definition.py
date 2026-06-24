@@ -23,8 +23,62 @@ UNMAPPED_ACTION_KEYS = {
 
 
 class SyncDefinition(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+		from sync.sync.doctype.sync_field_mapping.sync_field_mapping import SyncFieldMapping
+		from sync.sync.doctype.sync_key_field.sync_key_field import SyncKeyField
+		from sync.sync.doctype.sync_modified_field.sync_modified_field import SyncModifiedField
+		from sync.sync.doctype.sync_value_mapping.sync_value_mapping import SyncValueMapping
+
+		batch_size: DF.Int
+		capture_audit_payloads: DF.Check
+		conflict_policy: DF.Literal["newest_wins"]
+		create_new: DF.Check
+		delete_missing: DF.Check
+		doctype_name: DF.Link
+		enabled: DF.Check
+		export_mask_credentials: DF.Check
+		field_mapping: DF.Table[SyncFieldMapping]
+		filter_expression: DF.Code | None
+		frappe_modified_field_rows: DF.Table[SyncModifiedField]
+		frappe_partner_identity_field: DF.Literal[None]
+		frequency_cron: DF.Data
+		last_run: DF.Link | None
+		last_run_status: DF.Literal["", "Queued", "Running", "Success", "Partial Error", "Needs Review", "Error", "Preview", "Skipped"]
+		last_run_summary: DF.SmallText | None
+		last_successful_sync: DF.Datetime | None
+		last_sync_at: DF.Datetime | None
+		match_fields: DF.Table[SyncKeyField]
+		next_run_at: DF.Datetime | None
+		one_way_match_mode: DF.Literal["first_match", "all_matches"]
+		partner: DF.Link
+		partner_columns: DF.JSON | None
+		partner_columns_loaded_at: DF.Datetime | None
+		partner_columns_signature: DF.Data | None
+		partner_create_id_scope_where: DF.Code | None
+		partner_create_id_source: DF.Data | None
+		partner_create_id_strategy: DF.Literal["payload", "connector_default", "sequence", "max_plus_one"]
+		partner_frappe_identity_field: DF.Literal[None]
+		partner_identity_field: DF.Literal[None]
+		partner_modified_field_rows: DF.Table[SyncModifiedField]
+		preview_limit: DF.Int
+		read_query: DF.Code | None
+		sync_type: DF.Literal["Frappe -> Partner", "Frappe <-> Partner", "Frappe <- Partner"]
+		table_name: DF.Data | None
+		timestamp_buffer_seconds: DF.Int
+		title: DF.Data
+		use_last_sync_date: DF.Check
+		value_mapping: DF.Table[SyncValueMapping]
+	# end: auto-generated types
+
 	def validate(self):
 		SyncDefinition.validate_field_mapping(self)
+		SyncDefinition.validate_value_mapping(self)
 		SyncDefinition.validate_match_fields(self)
 		SyncDefinition.validate_source_settings(self)
 		SyncDefinition.validate_filter_expression(self)
@@ -63,6 +117,24 @@ class SyncDefinition(Document):
 		missing = [field for field in SyncDefinition.get_match_fields(self) if field not in mapping_fields]
 		if missing:
 			frappe.throw(f"Match fields must exist in field mapping: {', '.join(missing)}")
+
+	def validate_value_mapping(self):
+		for row in self.value_mapping or []:
+			frappe_field = _clean_value(_get_row_value(row, "frappe_field"))
+			if not frappe_field:
+				continue
+			_normalize_value_mapping_side(
+				row,
+				null_fieldname="frappe_value_is_null",
+				value_fieldname="frappe_value",
+				label="Frappe Value",
+			)
+			_normalize_value_mapping_side(
+				row,
+				null_fieldname="partner_value_is_null",
+				value_fieldname="partner_value",
+				label="Partner Value",
+			)
 
 	def validate_source_settings(self):
 		table_name = _clean_value(self.table_name)
@@ -147,14 +219,24 @@ class SyncDefinition(Document):
 			}
 		return mapping
 
-	def get_value_mapping(self) -> dict[str, dict[str, str]]:
-		result: dict[str, dict[str, str]] = {}
+	def get_value_mapping(self) -> dict[str, dict[object, object]]:
+		result: dict[str, dict[object, object]] = {}
 		for row in self.value_mapping or []:
 			frappe_field = _clean_value(_get_row_value(row, "frappe_field"))
 			if not frappe_field:
 				continue
 			field_map = result.setdefault(frappe_field, {})
-			field_map[cstr(_get_row_value(row, "frappe_value"))] = cstr(_get_row_value(row, "partner_value"))
+			frappe_value = (
+				None
+				if _row_flag(row, "frappe_value_is_null")
+				else cstr(_get_raw_row_value(row, "frappe_value"))
+			)
+			partner_value = (
+				None
+				if _row_flag(row, "partner_value_is_null")
+				else cstr(_get_raw_row_value(row, "partner_value"))
+			)
+			field_map[frappe_value] = partner_value
 		return result
 
 	def get_value_mapping_fallbacks(self) -> dict[str, dict[str, str | None]]:
@@ -268,6 +350,23 @@ def _get_row_value(row, *fieldnames):
 	return None
 
 
+def _get_raw_row_value(row, fieldname, default=None):
+	if row is None:
+		return default
+	if hasattr(row, "get"):
+		return row.get(fieldname, default)
+	return getattr(row, fieldname, default)
+
+
+def _row_flag(row, fieldname: str) -> bool:
+	value = _get_raw_row_value(row, fieldname)
+	if isinstance(value, bool):
+		return value
+	if isinstance(value, int | float):
+		return bool(value)
+	return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _assign_row_value(row, fieldname: str, value):
 	if row is None:
 		return
@@ -309,6 +408,18 @@ def _normalize_field_mapping_fallbacks(row) -> None:
 		action_fieldname="unmapped_action",
 		value_fieldname="fallback_value",
 	)
+
+
+def _normalize_value_mapping_side(row, *, null_fieldname: str, value_fieldname: str, label: str) -> None:
+	is_null = _row_flag(row, null_fieldname)
+	_assign_row_value(row, null_fieldname, int(is_null))
+	if is_null:
+		_assign_row_value(row, value_fieldname, None)
+		return
+	value = _clean_value(_get_raw_row_value(row, value_fieldname))
+	if value is None:
+		frappe.throw(f"{label} is required unless its NULL option is enabled.")
+	_assign_row_value(row, value_fieldname, value)
 
 
 def _normalize_field_mapping_fallback(row, *, action_fieldname: str, value_fieldname: str) -> None:
