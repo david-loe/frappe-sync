@@ -32,7 +32,6 @@ class SyncDefinition(Document):
 		from frappe.types import DF
 		from sync.sync.doctype.sync_field_mapping.sync_field_mapping import SyncFieldMapping
 		from sync.sync.doctype.sync_key_field.sync_key_field import SyncKeyField
-		from sync.sync.doctype.sync_modified_field.sync_modified_field import SyncModifiedField
 		from sync.sync.doctype.sync_value_mapping.sync_value_mapping import SyncValueMapping
 
 		batch_size: DF.Int
@@ -45,7 +44,8 @@ class SyncDefinition(Document):
 		export_mask_credentials: DF.Check
 		field_mapping: DF.Table[SyncFieldMapping]
 		filter_expression: DF.Code | None
-		frappe_modified_field_rows: DF.Table[SyncModifiedField]
+		frappe_creation_field: DF.Data
+		frappe_modified_field: DF.Literal[None]
 		frappe_partner_identity_field: DF.Literal[None]
 		frequency_cron: DF.Data
 		last_run: DF.Link | None
@@ -63,14 +63,16 @@ class SyncDefinition(Document):
 		partner_create_id_scope_where: DF.Code | None
 		partner_create_id_source: DF.Data | None
 		partner_create_id_strategy: DF.Literal["payload", "connector_default", "sequence", "max_plus_one"]
+		partner_creation_field: DF.Literal[None]
 		partner_frappe_identity_field: DF.Literal[None]
 		partner_identity_field: DF.Literal[None]
-		partner_modified_field_rows: DF.Table[SyncModifiedField]
+		partner_modified_field: DF.Literal[None]
 		preview_limit: DF.Int
 		read_query: DF.Code | None
 		sync_type: DF.Literal["Frappe -> Partner", "Frappe <-> Partner", "Frappe <- Partner"]
 		table_name: DF.Data | None
 		timestamp_buffer_seconds: DF.Int
+		timestamp_tie_breaker: DF.Literal["No Write", "Frappe Wins", "Partner Wins"]
 		title: DF.Data
 		use_last_sync_date: DF.Check
 		value_mapping: DF.Table[SyncValueMapping]
@@ -147,12 +149,51 @@ class SyncDefinition(Document):
 		self.read_query = read_query
 
 	def validate_modified_fields(self):
-		if not self.use_last_sync_date:
-			return
-		if not self.get_frappe_modified_fields():
-			frappe.throw("At least one Frappe Modified Field is required when delta sync is enabled.")
-		if not self.get_partner_modified_fields():
-			frappe.throw("At least one Partner Modified Field is required when delta sync is enabled.")
+		self.frappe_creation_field = "creation"
+		self.frappe_modified_field = _clean_value(getattr(self, "frappe_modified_field", None)) or "modified"
+		self.partner_modified_field = _clean_value(getattr(self, "partner_modified_field", None))
+		self.partner_creation_field = _clean_value(getattr(self, "partner_creation_field", None))
+		self.timestamp_tie_breaker = _clean_value(getattr(self, "timestamp_tie_breaker", None)) or "No Write"
+
+		if not self.partner_modified_field:
+			frappe.throw("Partner Modified Field is required.")
+		if not self.partner_creation_field:
+			frappe.throw("Partner Creation Field is required.")
+		if self.frappe_modified_field == self.frappe_creation_field:
+			frappe.throw("Frappe Modified Field and Frappe Creation Field must be different.")
+		if self.partner_modified_field == self.partner_creation_field:
+			frappe.throw("Partner Modified Field and Partner Creation Field must be different.")
+		if self.timestamp_tie_breaker not in {"No Write", "Frappe Wins", "Partner Wins"}:
+			frappe.throw("Timestamp Tie Breaker must be one of: No Write, Frappe Wins, Partner Wins.")
+
+		doctype_name = _clean_value(getattr(self, "doctype_name", None))
+		if doctype_name:
+			meta = frappe.get_meta(doctype_name)
+			valid_fields = {"name", "creation", "modified"} | {
+				field.fieldname for field in getattr(meta, "fields", []) or []
+			}
+			if self.frappe_modified_field not in valid_fields:
+				frappe.throw(f"Frappe Modified Field does not exist on {doctype_name}.")
+
+		timestamp_fields = {
+			self.frappe_modified_field,
+			self.frappe_creation_field,
+		}
+		mapped_timestamp_fields = timestamp_fields & set(self.get_field_mapping())
+		if mapped_timestamp_fields:
+			frappe.throw(
+				"Dedicated timestamp fields must not also exist in Field Mapping: "
+				+ ", ".join(sorted(mapped_timestamp_fields))
+			)
+		partner_timestamp_fields = {self.partner_modified_field, self.partner_creation_field}
+		mapped_partner_timestamp_fields = partner_timestamp_fields & {
+			entry["partner_field"] for entry in self.get_field_mapping().values()
+		}
+		if mapped_partner_timestamp_fields:
+			frappe.throw(
+				"Dedicated partner timestamp fields must not also exist in Field Mapping: "
+				+ ", ".join(sorted(mapped_partner_timestamp_fields))
+			)
 
 	def validate_identity_settings(self):
 		strategy = _clean_value(self.partner_create_id_strategy) or "payload"
@@ -252,10 +293,12 @@ class SyncDefinition(Document):
 		return result
 
 	def get_frappe_modified_fields(self) -> list[str]:
-		return _extract_modified_fields(getattr(self, "frappe_modified_field_rows", None))
+		fieldname = _clean_value(getattr(self, "frappe_modified_field", None)) or "modified"
+		return [fieldname]
 
 	def get_partner_modified_fields(self) -> list[str]:
-		return _extract_modified_fields(getattr(self, "partner_modified_field_rows", None))
+		fieldname = _clean_value(getattr(self, "partner_modified_field", None))
+		return [fieldname] if fieldname else []
 
 	def as_export_dict(self) -> dict:
 		return {
@@ -279,8 +322,11 @@ class SyncDefinition(Document):
 			"read_query": getattr(self, "read_query", None),
 			"preview_limit": self.get_preview_limit(),
 			"export_mask_credentials": bool(self.export_mask_credentials),
-			"frappe_modified_fields": SyncDefinition.get_frappe_modified_fields(self),
-			"partner_modified_fields": SyncDefinition.get_partner_modified_fields(self),
+			"frappe_modified_field": getattr(self, "frappe_modified_field", "modified"),
+			"frappe_creation_field": "creation",
+			"partner_modified_field": getattr(self, "partner_modified_field", None),
+			"partner_creation_field": getattr(self, "partner_creation_field", None),
+			"timestamp_tie_breaker": getattr(self, "timestamp_tie_breaker", "No Write"),
 			"match_fields": SyncDefinition.get_match_fields(self),
 			"field_mapping": SyncDefinition.get_field_mapping(self),
 			"value_mapping": SyncDefinition.get_value_mapping(self),
@@ -324,15 +370,6 @@ def _clean_value(value: str | None) -> str | None:
 		return None
 	value = str(value).strip()
 	return value or None
-
-
-def _extract_modified_fields(rows) -> list[str]:
-	result: list[str] = []
-	for row in rows or []:
-		clean_value = _clean_value(_get_row_value(row, "field_name", "modified_field", "frappe_field"))
-		if clean_value:
-			result.append(clean_value)
-	return [value for value in result if value]
 
 
 def _get_row_value(row, *fieldnames):

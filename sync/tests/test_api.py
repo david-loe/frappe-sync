@@ -298,6 +298,7 @@ class TestSyncApi(ApiTestCase):
 
 	def test_preview_import_yaml_reports_conflicts_and_missing_sections(self):
 		payload = {
+			"version": 2,
 			"sync_partner_type": {"doctype": "Sync Partner Type", "name": "MSSQL"},
 			"sync_definition": {
 				"doctype": "Sync Definition",
@@ -328,6 +329,7 @@ class TestSyncApi(ApiTestCase):
 
 	def test_preview_import_definition_yaml_marks_existing_documents_as_updates_with_overwrite(self):
 		payload = {
+			"version": 2,
 			"sync_partner": {"doctype": "Sync Partner", "name": "PARTNER-1"},
 		}
 		yaml_payload = yaml.safe_dump(payload, sort_keys=False)

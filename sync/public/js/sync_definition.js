@@ -9,7 +9,6 @@ frappe.ui.form.on("Sync Definition", {
 		sync.forms.setupButtons(frm);
 		sync.helpers.toggleSourceFields(frm);
 		sync.helpers.toggleSyncTypeSections(frm);
-		sync.helpers.toggleDefinitionModifiedFieldRows(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 		sync.helpers.refreshDefinitionFieldChoices(frm);
 		sync.helpers.refreshDefinitionPartnerColumnState(frm);
@@ -25,7 +24,6 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
 		sync.helpers.toggleSyncTypeSections(frm);
-		sync.helpers.toggleDefinitionModifiedFieldRows(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 	},
 	doctype_name(frm) {
@@ -117,11 +115,12 @@ sync.helpers.collectDefinitionFieldChoiceValues = function (frm) {
 			}
 		});
 	});
-	(frm.doc.frappe_modified_field_rows || []).forEach((row) => {
-		if (row?.field_name) {
-			values.push(row.field_name);
-		}
-	});
+	if (frm.doc.frappe_modified_field) {
+		values.push(frm.doc.frappe_modified_field);
+	}
+	if (frm.doc.frappe_creation_field) {
+		values.push(frm.doc.frappe_creation_field);
+	}
 	if (frm.doc.frappe_partner_identity_field) {
 		values.push(frm.doc.frappe_partner_identity_field);
 	}
@@ -247,10 +246,9 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields) {
 	frm.set_df_property("frappe_partner_identity_field", "description", description);
 	frm.refresh_field("frappe_partner_identity_field");
 
-	sync.helpers.updateDefinitionGridSelect(frm, "frappe_modified_field_rows", "field_name", {
-		options,
-		description,
-	});
+	frm.set_df_property("frappe_modified_field", "options", options);
+	frm.set_df_property("frappe_modified_field", "description", description);
+	frm.refresh_field("frappe_modified_field");
 };
 
 sync.helpers.parseDefinitionPartnerColumns = function (rawColumns) {
@@ -373,8 +371,8 @@ sync.helpers.applyDefinitionPartnerColumnChoices = function (frm) {
 		: __("Load partner columns from {0} to get guided partner-side field selection.", [
 				sync.helpers.getDefinitionSourceReadQuery(frm) ? __("Read Query") : __("Table Name"),
 		  ]);
-	const partnerModifiedDescription = columns.length
-		? __("Select partner-side modified fields from the loaded partner source columns.")
+	const partnerTimestampDescription = columns.length
+		? __("Select a partner-side timestamp field from the loaded partner source columns.")
 		: partnerFieldDescription;
 
 	const fieldMappingGrid = frm.fields_dict.field_mapping?.grid;
@@ -386,9 +384,10 @@ sync.helpers.applyDefinitionPartnerColumnChoices = function (frm) {
 		frm.refresh_field("field_mapping");
 	}
 
-	sync.helpers.updateDefinitionGridSelect(frm, "partner_modified_field_rows", "field_name", {
-		options: partnerFieldOptions,
-		description: partnerModifiedDescription,
+	["partner_modified_field", "partner_creation_field"].forEach((fieldname) => {
+		frm.set_df_property(fieldname, "options", partnerFieldOptions);
+		frm.set_df_property(fieldname, "description", partnerTimestampDescription);
+		frm.refresh_field(fieldname);
 	});
 
 	["partner_identity_field", "partner_frappe_identity_field"].forEach((fieldname) => {
@@ -500,24 +499,6 @@ sync.helpers.loadDefinitionPartnerColumns = function (frm) {
 			});
 			return [];
 		});
-};
-
-sync.helpers.toggleDefinitionModifiedFieldRows = function (frm) {
-	const direction = (frm.doc.sync_type || "").toLowerCase();
-	const frappeVisible = direction !== "a<-b";
-	const partnerVisible = direction !== "a->b";
-	frm.toggle_display("frappe_modified_field_rows", frappeVisible);
-	frm.toggle_display("partner_modified_field_rows", partnerVisible);
-	frm.set_df_property(
-		"frappe_modified_field_rows",
-		"description",
-		frappeVisible ? __("Fields used to detect changes on the Frappe side.") : ""
-	);
-	frm.set_df_property(
-		"partner_modified_field_rows",
-		"description",
-		partnerVisible ? __("Fields used to detect changes on the partner side.") : ""
-	);
 };
 
 sync.helpers.refreshDefinitionFieldChoices = function (frm) {

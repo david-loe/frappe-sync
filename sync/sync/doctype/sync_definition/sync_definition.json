@@ -5,58 +5,83 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "tab_configuration",
+  "section_general",
   "title",
   "enabled",
-  "section_break_identity",
-  "partner",
   "sync_type",
-  "column_break_identity",
+  "column_general",
+  "partner",
   "doctype_name",
-  "frequency_cron",
-  "next_run_at",
-  "section_break_behavior",
-  "batch_size",
-  "use_last_sync_date",
-  "timestamp_buffer_seconds",
-  "create_new",
-  "delete_missing",
-  "one_way_match_mode",
-  "conflict_policy",
-  "section_break_source",
+  "section_partner_source",
   "table_name",
   "read_query",
   "partner_columns_status",
   "partner_columns",
   "partner_columns_signature",
   "partner_columns_loaded_at",
-  "section_break_filters",
+  "section_source_filters",
   "filter_expression",
-  "column_break_modified_fields",
-  "frappe_modified_field_rows",
-  "partner_modified_field_rows",
-  "section_break_mapping",
+  "section_change_detection",
+  "frappe_modified_field",
+  "frappe_creation_field",
+  "use_last_sync_date",
+  "timestamp_buffer_seconds",
+  "column_change_detection",
+  "partner_modified_field",
+  "partner_creation_field",
+  "conflict_policy",
+  "timestamp_tie_breaker",
+  "section_write_behavior",
+  "create_new",
+  "delete_missing",
+  "column_write_behavior",
+  "one_way_match_mode",
+  "section_execution",
+  "frequency_cron",
+  "batch_size",
+  "preview_limit",
+  "column_execution",
+  "capture_audit_payloads",
+  "export_mask_credentials",
+  "tab_mapping",
+  "section_record_matching",
   "match_fields",
+  "section_field_mapping",
   "field_mapping",
   "value_mapping",
-  "section_break_partner_identity",
+  "section_advanced_identity",
   "partner_identity_field",
   "frappe_partner_identity_field",
   "partner_frappe_identity_field",
-  "column_break_partner_identity",
+  "column_advanced_identity",
   "partner_create_id_strategy",
   "partner_create_id_source",
   "partner_create_id_scope_where",
-  "section_break_runtime",
-  "preview_limit",
-  "export_mask_credentials",
-  "capture_audit_payloads",
+  "tab_status",
+  "section_schedule_state",
+  "next_run_at",
   "last_sync_at",
+  "column_schedule_state",
   "last_successful_sync",
+  "section_last_run",
   "last_run",
   "last_run_status",
+  "column_last_run",
+  "section_last_run_summary",
   "last_run_summary"
  ],
  "fields": [
+  {
+   "fieldname": "tab_configuration",
+   "fieldtype": "Tab Break",
+   "label": "Configuration"
+  },
+  {
+   "fieldname": "section_general",
+   "fieldtype": "Section Break",
+   "label": "General"
+  },
   {
    "fieldname": "title",
    "fieldtype": "Data",
@@ -74,9 +99,16 @@
    "label": "Enabled"
   },
   {
-   "fieldname": "section_break_identity",
-   "fieldtype": "Section Break",
-   "label": "Identity"
+   "fieldname": "sync_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Sync Type",
+   "options": "Frappe -> Partner\nFrappe <-> Partner\nFrappe <- Partner",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_general",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "partner",
@@ -86,18 +118,6 @@
    "label": "Partner",
    "options": "Sync Partner",
    "reqd": 1
-  },
-  {
-   "fieldname": "sync_type",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Sync Type",
-   "options": "Frappe -> Partner\nFrappe <-> Partner\nFrappe <- Partner",
-   "reqd": 1
-  },
-  {
-   "fieldname": "column_break_identity",
-   "fieldtype": "Column Break"
   },
   {
    "fieldname": "doctype_name",
@@ -112,17 +132,6 @@
    "fieldtype": "Data",
    "label": "Frequency Cron",
    "reqd": 1
-  },
-  {
-   "fieldname": "next_run_at",
-   "fieldtype": "Datetime",
-   "label": "Next Run At",
-   "read_only": 1
-  },
-  {
-   "fieldname": "section_break_behavior",
-   "fieldtype": "Section Break",
-   "label": "Sync Behavior"
   },
   {
    "default": "250",
@@ -171,9 +180,9 @@
    "reqd": 1
   },
   {
-   "fieldname": "section_break_source",
+   "fieldname": "section_partner_source",
    "fieldtype": "Section Break",
-   "label": "Source"
+   "label": "Partner Source"
   },
   {
    "fieldname": "table_name",
@@ -211,37 +220,92 @@
    "read_only": 1
   },
   {
-   "fieldname": "section_break_filters",
+   "fieldname": "section_source_filters",
    "fieldtype": "Section Break",
-   "label": "Filters"
+   "label": "Source Filters"
   },
   {
+   "description": "JSON filters applied when loading Frappe records.",
    "fieldname": "filter_expression",
    "fieldtype": "Code",
    "label": "Filter Expression"
   },
   {
-   "fieldname": "column_break_modified_fields",
+   "fieldname": "section_change_detection",
+   "fieldtype": "Section Break",
+   "label": "Change Detection & Conflicts"
+  },
+  {
+   "default": "modified",
+   "description": "Frappe field used to detect changes. Falls back to the creation field when NULL.",
+   "fieldname": "frappe_modified_field",
+   "fieldtype": "Select",
+   "label": "Frappe Modified Field",
+   "reqd": 1
+  },
+  {
+   "default": "creation",
+   "description": "Frappe creation timestamp used as fallback when the modified field is NULL.",
+   "fieldname": "frappe_creation_field",
+   "fieldtype": "Data",
+   "label": "Frappe Creation Field",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_change_detection",
    "fieldtype": "Column Break"
   },
   {
-   "description": "Select one or more DocType fields used to detect Frappe-side changes.",
-   "fieldname": "frappe_modified_field_rows",
-   "fieldtype": "Table",
-   "label": "Frappe Modified Fields",
-   "options": "Sync Modified Field"
+   "description": "Partner field used to detect changes. Falls back to the creation field when NULL.",
+   "fieldname": "partner_modified_field",
+   "fieldtype": "Select",
+   "label": "Partner Modified Field",
+   "reqd": 1
   },
   {
-   "description": "Select one or more partner-side modified fields aligned with the chosen DocType fields.",
-   "fieldname": "partner_modified_field_rows",
-   "fieldtype": "Table",
-   "label": "Partner Modified Fields",
-   "options": "Sync Modified Field"
+   "description": "Partner creation timestamp used as fallback and written only when creating partner records.",
+   "fieldname": "partner_creation_field",
+   "fieldtype": "Select",
+   "label": "Partner Creation Field",
+   "reqd": 1
   },
   {
-   "fieldname": "section_break_mapping",
+   "default": "No Write",
+   "description": "Controls conflict resolution when both effective timestamps are equal or unavailable.",
+   "fieldname": "timestamp_tie_breaker",
+   "fieldtype": "Select",
+   "label": "Timestamp Tie Breaker",
+   "options": "No Write\nFrappe Wins\nPartner Wins",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_write_behavior",
    "fieldtype": "Section Break",
-   "label": "Field Mapping"
+   "label": "Write Behavior"
+  },
+  {
+   "fieldname": "column_write_behavior",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_execution",
+   "fieldtype": "Section Break",
+   "label": "Execution"
+  },
+  {
+   "fieldname": "column_execution",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "tab_mapping",
+   "fieldtype": "Tab Break",
+   "label": "Mapping"
+  },
+  {
+   "fieldname": "section_record_matching",
+   "fieldtype": "Section Break",
+   "label": "Record Matching"
   },
   {
    "description": "Choose the Frappe fields that define a logical match between Frappe and partner records.",
@@ -250,6 +314,11 @@
    "label": "Match Fields",
    "options": "Sync Key Field",
    "reqd": 1
+  },
+  {
+   "fieldname": "section_field_mapping",
+   "fieldtype": "Section Break",
+   "label": "Field Mapping"
   },
   {
    "description": "Map Frappe fields to partner-side columns. Load partner columns above to get suggestions.",
@@ -266,9 +335,10 @@
    "options": "Sync Value Mapping"
   },
   {
-   "fieldname": "section_break_partner_identity",
+   "collapsible": 1,
+   "fieldname": "section_advanced_identity",
    "fieldtype": "Section Break",
-   "label": "Partner Identity"
+   "label": "Advanced Identity"
   },
   {
    "fieldname": "partner_identity_field",
@@ -289,7 +359,7 @@
    "description": "Optional partner-side column that receives the Frappe document name for a symmetric cross-link."
   },
   {
-   "fieldname": "column_break_partner_identity",
+   "fieldname": "column_advanced_identity",
    "fieldtype": "Column Break"
   },
   {
@@ -313,11 +383,6 @@
    "description": "Optional SQL predicate that limits ID allocation, for example NR BETWEEN 1 AND 89999."
   },
   {
-   "fieldname": "section_break_runtime",
-   "fieldtype": "Section Break",
-   "label": "Runtime"
-  },
-  {
    "fieldname": "preview_limit",
    "fieldtype": "Int",
    "label": "Preview Limit",
@@ -339,16 +404,41 @@
    "label": "Capture Audit Payloads"
   },
   {
+   "fieldname": "tab_status",
+   "fieldtype": "Tab Break",
+   "label": "Status"
+  },
+  {
+   "fieldname": "section_schedule_state",
+   "fieldtype": "Section Break",
+   "label": "Schedule & Sync State"
+  },
+  {
+   "fieldname": "next_run_at",
+   "fieldtype": "Datetime",
+   "label": "Next Run At",
+   "read_only": 1
+  },
+  {
    "fieldname": "last_sync_at",
    "fieldtype": "Datetime",
    "label": "Last Sync At",
    "read_only": 1
   },
   {
+   "fieldname": "column_schedule_state",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "last_successful_sync",
    "fieldtype": "Datetime",
    "label": "Last Successful Sync",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_last_run",
+   "fieldtype": "Section Break",
+   "label": "Last Run"
   },
   {
    "fieldname": "last_run",
@@ -358,11 +448,19 @@
    "read_only": 1
   },
   {
+   "fieldname": "column_last_run",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "last_run_status",
    "fieldtype": "Select",
    "label": "Last Run Status",
    "options": "\nQueued\nRunning\nSuccess\nPartial Error\nNeeds Review\nError\nPreview\nSkipped",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_last_run_summary",
+   "fieldtype": "Section Break"
   },
   {
    "fieldname": "last_run_summary",
@@ -374,7 +472,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-05 00:00:00.000000",
+ "modified": "2026-06-24 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

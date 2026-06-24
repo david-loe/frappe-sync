@@ -75,8 +75,10 @@ def _identity_match_config(one_way_match_mode="first_match"):
 		match_fields=["name"],
 		mapping={"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}},
 		value_mapping={},
-		frappe_modified_fields=["modified"],
-		partner_modified_fields=["updated_at"],
+		frappe_modified_field="modified",
+		frappe_creation_field="creation",
+		partner_modified_field="updated_at",
+		partner_creation_field="created_at",
 		partner_identity_field="external_id",
 		frappe_partner_identity_field="partner_id",
 		one_way_match_mode=one_way_match_mode,
@@ -355,8 +357,10 @@ class TestRuntimeAdditional(unittest.TestCase):
 			match_fields=["name"],
 			mapping={"name": "id"},
 			value_mapping={},
-			frappe_modified_fields=["modified"],
-			partner_modified_fields=["updated_at"],
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+			partner_modified_field="updated_at",
+			partner_creation_field="created_at",
 		)
 		coerced_config = runtime._coerce_config(config)
 		self.assertIsNot(coerced_config, config)
@@ -451,11 +455,11 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertIn("sync_partner_type", exported)
 		self.assertFalse(runtime.preview_import_sync_definition_yaml(":\n  bad")["ok"])
 		self.assertFalse(runtime.preview_import_sync_definition_yaml("- item")["ok"])
-		invalid_section = runtime.preview_import_sync_definition_yaml("sync_definition: []")
+		invalid_section = runtime.preview_import_sync_definition_yaml("version: 2\nsync_definition: []")
 		self.assertFalse(invalid_section["ok"])
 		self.assertEqual(invalid_section["documents"]["Sync Definition"]["status"], "invalid")
 		with self.assertRaises(frappe.ValidationError):
-			runtime.import_sync_definition_yaml("sync_definition: []")
+			runtime.import_sync_definition_yaml("version: 2\nsync_definition: []")
 
 	def test_build_preview_and_coerce_config(self):
 		definition = SimpleNamespace(name="SYNC-1")
@@ -487,7 +491,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		coerced = runtime._coerce_config(SimpleNamespace(name="SYNC-2", doctype="Task", partner="PARTNER-1", sync_type="Frappe <- Partner"))
 		self.assertEqual(coerced.sync_type, "Frappe <- Partner")
 		self.assertEqual(coerced.batch_size, 100)
-		self.assertEqual(coerced.frappe_modified_fields, ["modified"])
+		self.assertEqual(coerced.frappe_modified_field, "modified")
 		self.assertEqual(coerced.mapping, {})
 
 	def test_run_engine_routes_partner_to_frappe_branch(self):

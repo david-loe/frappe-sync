@@ -49,8 +49,11 @@ class TestRuntimeExecution(IntegrationTestCase):
 						"direction": "Frappe <-> Partner",
 					}
 				],
-				"frappe_modified_field_rows": [{"doctype": "Sync Modified Field", "field_name": "modified"}],
-				"partner_modified_field_rows": [{"doctype": "Sync Modified Field", "field_name": "updated_at"}],
+				"frappe_modified_field": "modified",
+				"frappe_creation_field": "creation",
+				"partner_modified_field": "updated_at",
+				"partner_creation_field": "created_at",
+				"timestamp_tie_breaker": "No Write",
 			}
 		).insert(ignore_permissions=True)
 

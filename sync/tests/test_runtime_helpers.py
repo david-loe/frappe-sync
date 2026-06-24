@@ -123,8 +123,10 @@ class TestRuntimeHelpers(unittest.TestCase):
 				"create_new": 1,
 				"delete_missing": 0,
 				"conflict_policy": "newest_wins",
-				"frappe_modified_field_rows": [SimpleNamespace(field_name="modified")],
-				"partner_modified_field_rows": [SimpleNamespace(field_name="updated_at")],
+				"frappe_modified_field": "modified",
+				"frappe_creation_field": "creation",
+				"partner_modified_field": "updated_at",
+				"partner_creation_field": "created_at",
 			}
 		)
 
@@ -140,13 +142,15 @@ class TestRuntimeHelpers(unittest.TestCase):
 		)
 		self.assertIsInstance(config.filters, list)
 		self.assertEqual(config.use_last_sync_date, True)
-		self.assertEqual(config.frappe_modified_fields, ["modified"])
-		self.assertEqual(config.partner_modified_fields, ["updated_at"])
+		self.assertEqual(config.frappe_modified_field, "modified")
+		self.assertEqual(config.partner_modified_field, "updated_at")
+		self.assertEqual(config.frappe_creation_field, "creation")
+		self.assertEqual(config.partner_creation_field, "created_at")
 		self.assertEqual(config.table_name, "tabTask")
 		self.assertIsNone(config.read_query)
 
 	@patch("sync.sync.service.runtime._get_child_rows_by_options")
-	def test_build_definition_config_uses_modified_field_rows(self, mock_children):
+	def test_build_definition_config_uses_dedicated_timestamp_fields(self, mock_children):
 		def fake_rows(parent, childdoctype):
 			if childdoctype == "Sync Key Field":
 				return [dict(frappe_field="name")]
@@ -158,14 +162,16 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		doc = FakeDoc(
 			{
-				"name": "SYNC-LEGACY",
+				"name": "SYNC-TIMESTAMPS",
 				"sync_type": "Frappe -> Partner",
 				"partner": "PARTNER-1",
 				"doctype_name": "Task",
 				"table_name": "  tabTask  ",
 				"read_query": "   ",
-				"frappe_modified_field_rows": [SimpleNamespace(field_name="modified"), SimpleNamespace(field_name="changed_on")],
-				"partner_modified_field_rows": [SimpleNamespace(field_name="updated_at"), SimpleNamespace(field_name="partner_changed")],
+				"frappe_modified_field": "changed_on",
+				"frappe_creation_field": "creation",
+				"partner_modified_field": "partner_changed",
+				"partner_creation_field": "created_at",
 			}
 		)
 
@@ -174,8 +180,9 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		self.assertEqual(config.table_name, "tabTask")
 		self.assertIsNone(config.read_query)
-		self.assertEqual(config.frappe_modified_fields, ["modified", "changed_on"])
-		self.assertEqual(config.partner_modified_fields, ["updated_at", "partner_changed"])
+		self.assertEqual(config.frappe_modified_field, "changed_on")
+		self.assertEqual(config.partner_modified_field, "partner_changed")
+		self.assertEqual(config.partner_creation_field, "created_at")
 
 	@patch("sync.sync.service.runtime._get_child_rows_by_options")
 	def test_build_definition_config_allows_partner_to_frappe_read_query_without_table_name(self, mock_children):
@@ -427,22 +434,27 @@ class TestRuntimeHelpers(unittest.TestCase):
 			},
 			match_fields=["name"],
 			frappe_modified_fields=["modified", "changed_on", "missing_field"],
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
 			filters=[["status", "=", "Open"]],
 			batch_size=20,
 		)
 		context = SimpleNamespace(is_delta_sync=True, delta_since=datetime(2026, 3, 17, 10, 0))
 
 		with (
-			patch("sync.sync.service.runtime._doctype_fieldnames", return_value={"name", "subject", "status", "modified", "changed_on"}),
-			patch("sync.sync.service.runtime._iter_frappe_record_batches", return_value=iter([[{"name": "TASK-1"}]])) as mock_records,
+			patch("sync.sync.service.runtime._doctype_fieldnames", return_value={"name", "subject", "status", "modified", "creation"}),
+			patch(
+				"sync.sync.service.runtime._iter_frappe_record_batches",
+				return_value=iter([[{"name": "TASK-1", "modified": "2026-03-17 10:30:00"}]]),
+			) as mock_records,
 		):
 			out = runtime._get_frappe_source_records(config, context)
 
-		self.assertEqual(out, [{"name": "TASK-1"}])
-		self.assertEqual(mock_records.call_args.kwargs["fields"], ["changed_on", "modified", "name", "subject"])
+		self.assertEqual(out, [{"name": "TASK-1", "modified": "2026-03-17 10:30:00"}])
+		self.assertEqual(mock_records.call_args.kwargs["fields"], ["creation", "modified", "name", "subject"])
 		self.assertEqual(
 			mock_records.call_args.kwargs["or_filters"],
-			[["modified", ">=", context.delta_since], ["changed_on", ">=", context.delta_since]],
+			[["modified", ">=", context.delta_since], ["creation", ">=", context.delta_since]],
 		)
 
 	def test_get_frappe_source_records_can_skip_delta_filters_for_target_lookup(self):
@@ -513,15 +525,26 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		self.assertEqual(out, records)
 
-	def test_record_changed_since_and_latest_modified_handle_multiple_fields(self):
+	def test_record_changed_since_and_latest_modified_use_creation_fallback(self):
 		record = {
-			"modified": "2026-03-17 09:00:00",
-			"changed_on": datetime(2026, 3, 17, 11, 0),
+			"modified": None,
+			"creation": datetime(2026, 3, 17, 11, 0),
 		}
 		since = datetime(2026, 3, 17, 10, 0)
 
-		self.assertTrue(runtime._record_changed_since(record, ["modified", "changed_on"], since))
-		self.assertEqual(runtime._latest_modified(record, ["modified", "changed_on"]), datetime(2026, 3, 17, 11, 0))
+		self.assertTrue(runtime._record_changed_since(record, "modified", since, creation_field="creation"))
+		self.assertEqual(
+			runtime._latest_modified(record, "modified", creation_field="creation"),
+			datetime(2026, 3, 17, 11, 0),
+		)
+		self.assertFalse(
+			runtime._record_changed_since(
+				{"modified": "2026-03-17 09:00:00", "creation": "2026-03-17 11:00:00"},
+				"modified",
+				since,
+				creation_field="creation",
+			)
+		)
 		self.assertFalse(runtime._record_changed_since({"modified": "2026-03-17 08:00:00"}, ["modified"], since))
 		with patch("sync.sync.service.runtime._site_time_zone", return_value="Europe/Berlin"):
 			self.assertTrue(
@@ -1503,19 +1526,22 @@ class TestRuntimeHelpers(unittest.TestCase):
 		mock_apply_frappe.assert_not_called()
 		self.assertEqual(mock_log.call_args.kwargs["action"], "skipped")
 
-	def test_sync_bidirectional_updates_only_mapped_modified_for_scalar_equivalent_key(self):
+	def test_sync_bidirectional_ignores_timestamp_only_differences(self):
 		config = SimpleNamespace(
 			name="SYNC-CONTACT-BI",
 			doctype="Contact",
 			match_fields=["custom_f_key"],
 			mapping={
 				"custom_f_key": {"partner_field": "id", "direction": "Frappe <-> Partner"},
-				"modified": {"partner_field": "updated_at", "direction": "Frappe <- Partner"},
 			},
 			value_mapping={},
 			conflict_policy="newest_wins",
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+			partner_modified_field="updated_at",
+			partner_creation_field="created_at",
 			table_name="contacts",
 			read_query=None,
 			create_new=True,
@@ -1523,7 +1549,6 @@ class TestRuntimeHelpers(unittest.TestCase):
 			capture_audit_payloads=1,
 		)
 		doc = MutableDoc(name="CONTACT-1")
-		mapped_modified = datetime(2026, 3, 17, 10, 0)
 		mock_set_value = Mock()
 
 		with (
@@ -1553,19 +1578,11 @@ class TestRuntimeHelpers(unittest.TestCase):
 				last_successful_sync=datetime(2026, 3, 17, 9, 30),
 			)
 
-		self.assertTrue(doc.saved)
-		mock_set_value.assert_called_once_with(
-			"Contact",
-			"CONTACT-1",
-			"modified",
-			mapped_modified,
-			update_modified=False,
-		)
+		self.assertFalse(doc.saved)
+		mock_set_value.assert_not_called()
 		run_item_kwargs = mock_create_run_item.call_args.kwargs
-		self.assertEqual(run_item_kwargs["action"], "updated")
-		self.assertEqual(run_item_kwargs["write_direction"], "Frappe <- Partner")
-		self.assertEqual(runtime._summarize_changed_fields(run_item_kwargs["changes"]), "modified")
-		self.assertEqual(run_item_kwargs["written_after_record"]["modified"], mapped_modified)
+		self.assertEqual(run_item_kwargs["action"], "skipped")
+		self.assertEqual(run_item_kwargs["changes"], None)
 
 	def test_run_engine_bidirectional_partner_delta_uses_unchanged_frappe_target_lookup(self):
 		config = SimpleNamespace(
@@ -1618,7 +1635,16 @@ class TestRuntimeHelpers(unittest.TestCase):
 				),
 			)
 
-		self.assertEqual(frappe_batch_filters, [[["modified", ">=", datetime(2026, 3, 17, 9, 30)]], None])
+		self.assertEqual(
+			frappe_batch_filters,
+			[
+				[
+					["modified", ">=", datetime(2026, 3, 17, 9, 30)],
+					["creation", ">=", datetime(2026, 3, 17, 9, 30)],
+				],
+				None,
+			],
+		)
 		mock_upsert.assert_called_once()
 		self.assertEqual(mock_upsert.call_args.kwargs["existing_name"], "TASK-1")
 
@@ -1737,3 +1763,120 @@ class TestRuntimeHelpers(unittest.TestCase):
 			)
 
 		self.assertEqual(mock_log.call_args.kwargs["action"], "conflict")
+
+	def test_effective_modified_uses_creation_only_for_null_modified(self):
+		self.assertEqual(
+			runtime._effective_modified(
+				{"updated_at": None, "created_at": "2026-03-17 10:00:00"},
+				modified_field="updated_at",
+				creation_field="created_at",
+			),
+			datetime(2026, 3, 17, 10, 0),
+		)
+		self.assertIsNone(
+			runtime._effective_modified(
+				{"updated_at": "not-a-date", "created_at": "2026-03-17 10:00:00"},
+				modified_field="updated_at",
+				creation_field="created_at",
+			)
+		)
+
+	def test_timestamp_payload_helpers_apply_create_and_update_rules(self):
+		config = SimpleNamespace(
+			frappe_modified_field="changed_at",
+			frappe_creation_field="creation",
+			partner_modified_field="updated_at",
+			partner_creation_field="created_at",
+			partner_time_zone="UTC",
+		)
+		context = SimpleNamespace(site_time_zone="UTC")
+		frappe_record = {
+			"changed_at": None,
+			"creation": "2026-03-17 09:00:00",
+		}
+
+		created = runtime._with_partner_timestamps(
+			config,
+			frappe_record,
+			{"state": "Open"},
+			create=True,
+			mapping_context=context,
+		)
+		updated = runtime._with_partner_timestamps(
+			config,
+			frappe_record,
+			{"state": "Open"},
+			create=False,
+			mapping_context=context,
+		)
+		self.assertEqual(created["updated_at"], datetime(2026, 3, 17, 9, 0))
+		self.assertEqual(created["created_at"], datetime(2026, 3, 17, 9, 0))
+		self.assertNotIn("created_at", updated)
+
+		frappe_payload = runtime._with_frappe_modified_timestamp(
+			config,
+			{"updated_at": None, "created_at": "2026-03-18 08:00:00"},
+			{"status": "Open", "creation": "2000-01-01 00:00:00"},
+			mapping_context=context,
+		)
+		self.assertEqual(frappe_payload["changed_at"], datetime(2026, 3, 18, 8, 0))
+		self.assertNotIn("creation", frappe_payload)
+
+	def test_diff_target_values_excludes_dedicated_timestamp_fields(self):
+		changes = runtime._diff_target_values(
+			new_record={"status": "Open", "updated_at": "2026-03-17 10:00:00"},
+			old_record={"status": "Closed", "updated_at": "2026-03-16 10:00:00"},
+			field_names=["status", "updated_at"],
+			exclude_fields={"updated_at"},
+		)
+
+		self.assertEqual(changes, [("status", "Closed", "Open")])
+
+	def test_sync_bidirectional_timestamp_tie_breaker_controls_writes(self):
+		base_config = {
+			"name": "SYNC-TIE",
+			"doctype": "Task",
+			"match_fields": ["name"],
+			"mapping": {
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <-> Partner"},
+			},
+			"value_mapping": {},
+			"conflict_policy": "newest_wins",
+			"frappe_modified_fields": ["modified"],
+			"partner_modified_fields": ["updated_at"],
+			"frappe_modified_field": "modified",
+			"frappe_creation_field": "creation",
+			"partner_modified_field": "updated_at",
+			"partner_creation_field": "created_at",
+			"table_name": "tabTask",
+			"read_query": None,
+		}
+		frappe_record = {"name": "TASK-1", "status": "Closed", "modified": "2026-03-17 10:00:00"}
+		partner_record = {"id": "TASK-1", "state": "Open", "updated_at": "2026-03-17 10:00:00"}
+
+		for tie_breaker, expected in (
+			(runtime.TIMESTAMP_TIE_NO_WRITE, "log"),
+			(runtime.TIMESTAMP_TIE_FRAPPE_WINS, "partner"),
+			(runtime.TIMESTAMP_TIE_PARTNER_WINS, "frappe"),
+		):
+			with (
+				patch("sync.sync.service.runtime._apply_partner_update") as mock_partner,
+				patch("sync.sync.service.runtime._apply_frappe_update") as mock_frappe,
+				patch("sync.sync.service.runtime._register_and_log") as mock_log,
+			):
+				runtime._sync_bidirectional(
+					run_doc=SimpleNamespace(name="RUN-1"),
+					config=SimpleNamespace(**base_config, timestamp_tie_breaker=tie_breaker),
+					connector=object(),
+					frappe_records=[frappe_record],
+					partner_records=[partner_record],
+					dry_run=True,
+					stats=runtime.SyncStats(),
+					last_successful_sync=None,
+				)
+
+			self.assertEqual(mock_partner.called, expected == "partner")
+			self.assertEqual(mock_frappe.called, expected == "frappe")
+			if expected == "log":
+				self.assertIn("no write", mock_log.call_args.kwargs["message"])

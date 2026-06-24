@@ -1259,14 +1259,8 @@ sync.helpers.toggleSourceFields = function (frm) {
 
 sync.helpers.toggleSyncTypeSections = function (frm) {
 	const direction = (frm.doc.sync_type || "").toLowerCase();
-	const frappeVisible = direction !== "frappe <- partner";
-	const partnerVisible = direction !== "frappe -> partner";
 	const oneWayVisible = direction === "frappe -> partner" || direction === "frappe <- partner";
-	frm.toggle_display("frappe_modified_field_rows", frappeVisible);
-	frm.toggle_display("partner_modified_field_rows", partnerVisible);
 	frm.toggle_display("one_way_match_mode", oneWayVisible);
-	frm.set_df_property("frappe_modified_field_rows", "description", frappeVisible ? __("Fields used to detect changes on Frappe side.") : "");
-	frm.set_df_property("partner_modified_field_rows", "description", partnerVisible ? __("Fields used to detect changes on the partner side.") : "");
 };
 
 sync.helpers.togglePartnerFields = function (frm) {

@@ -112,8 +112,10 @@ class TestRuntimeManagement(unittest.TestCase):
 			match_fields=["name"],
 			mapping={"name": "id"},
 			value_mapping={},
-			frappe_modified_fields=["modified"],
-			partner_modified_fields=["updated_at"],
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+			partner_modified_field="updated_at",
+			partner_creation_field="created_at",
 		)
 		last_sync = datetime(2026, 3, 17, 12, 0, 0)
 		context = runtime.SyncContext(config=config, dry_run=False, last_successful_sync=last_sync)
@@ -369,7 +371,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		):
 			payload = yaml.safe_load(runtime.export_sync_definition_yaml("SYNC-1"))
 
-		self.assertEqual(payload["version"], 1)
+		self.assertEqual(payload["version"], 2)
 		self.assertEqual(payload["sync_definition"]["masked"], True)
 		self.assertEqual(payload["sync_partner"]["name"], "PARTNER-1")
 		self.assertEqual(payload["sync_partner_type"]["name"], "postgres")
@@ -385,7 +387,9 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertEqual(not_mapping["summary"]["invalid"], 1)
 
 	def test_preview_import_sync_definition_yaml_marks_invalid_payload_sections(self):
-		payload = yaml.safe_dump({"sync_partner": [], "sync_definition": {"doctype": "Sync Definition"}})
+		payload = yaml.safe_dump(
+			{"version": 2, "sync_partner": [], "sync_definition": {"doctype": "Sync Definition"}}
+		)
 
 		with patch("sync.sync.service.runtime._normalize_doc_payload", return_value={"doctype": "Sync Definition"}):
 			result = runtime.preview_import_sync_definition_yaml(payload, overwrite=False)
@@ -393,6 +397,14 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertEqual(result["documents"]["Sync Partner"]["status"], "invalid")
 		self.assertEqual(result["documents"]["Sync Definition"]["status"], "invalid")
 		self.assertIn("sync_partner_type", result["missing_payload_parts"])
+
+	def test_preview_import_sync_definition_yaml_rejects_legacy_version(self):
+		result = runtime.preview_import_sync_definition_yaml(
+			yaml.safe_dump({"version": 1, "sync_definition": {"name": "SYNC-1"}})
+		)
+
+		self.assertFalse(result["can_import"])
+		self.assertIn("Version 2", result["error"])
 
 	def test_import_sync_definition_yaml_only_imports_mapping_sections(self):
 		payload = yaml.safe_dump(
@@ -826,8 +838,10 @@ class TestRuntimeManagement(unittest.TestCase):
 			match_fields=["name"],
 			mapping={"name": "id"},
 			value_mapping={},
-			frappe_modified_fields=["modified"],
-			partner_modified_fields=["updated_at"],
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+			partner_modified_field="updated_at",
+			partner_creation_field="created_at",
 		)
 
 		def fetch_records(*, source, query, batch_size, cursor, key_fields):
