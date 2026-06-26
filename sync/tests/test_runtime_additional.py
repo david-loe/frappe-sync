@@ -69,7 +69,7 @@ def _identity_match_config(one_way_match_mode="first_match"):
 		delete_missing=False,
 		use_last_sync_date=False,
 		conflict_policy="newest_wins",
-		timestamp_buffer_seconds=0,
+		timestamp_buffer_ms=0,
 		table_name="tabTask",
 		read_query=None,
 		match_fields=["name"],
@@ -351,7 +351,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			delete_missing=False,
 			use_last_sync_date=False,
 			conflict_policy="newest_wins",
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			table_name="tabTask",
 			read_query=None,
 			match_fields=["name"],
@@ -387,10 +387,10 @@ class TestRuntimeAdditional(unittest.TestCase):
 			},
 		)
 
-		config = SimpleNamespace(use_last_sync_date=1, timestamp_buffer_seconds=15)
+		config = SimpleNamespace(use_last_sync_date=1, timestamp_buffer_ms=15)
 		context = runtime.SyncContext(config=config, dry_run=False, last_successful_sync=datetime(2026, 3, 17, 12, 0))
 		self.assertTrue(context.is_delta_sync)
-		self.assertEqual(context.delta_since, datetime(2026, 3, 17, 11, 59, 45))
+		self.assertEqual(context.delta_since, datetime(2026, 3, 17, 12, 0))
 		self.assertFalse(context.is_full_sync)
 
 	def test_run_due_sync_definitions_respects_limit_and_queue_flag(self):
@@ -507,7 +507,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			delete_missing=False,
 			use_last_sync_date=False,
 			conflict_policy="newest_wins",
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			table_name="tabTask",
 			read_query=None,
 			match_fields=["name"],
@@ -542,7 +542,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			delete_missing=False,
 			use_last_sync_date=False,
 			conflict_policy="newest_wins",
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			table_name="tabTask",
 			read_query=None,
 			match_fields=["name"],
@@ -585,7 +585,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			delete_missing=False,
 			use_last_sync_date=False,
 			conflict_policy="newest_wins",
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			table_name="tabTask",
 			read_query=None,
 			match_fields=["name"],
@@ -630,7 +630,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			delete_missing=False,
 			use_last_sync_date=False,
 			conflict_policy="newest_wins",
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			table_name="tabTask",
 			read_query=None,
 			match_fields=["name"],
@@ -675,7 +675,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			delete_missing=False,
 			use_last_sync_date=False,
 			conflict_policy="newest_wins",
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			table_name="tabTask",
 			read_query=None,
 			match_fields=["name"],

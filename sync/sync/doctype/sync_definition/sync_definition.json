@@ -26,7 +26,7 @@
   "frappe_modified_field",
   "frappe_creation_field",
   "use_last_sync_date",
-  "timestamp_buffer_seconds",
+  "timestamp_buffer_ms",
   "column_change_detection",
   "partner_modified_field",
   "partner_creation_field",
@@ -146,10 +146,11 @@
    "label": "Use Last Sync Date"
   },
   {
-   "default": "15",
-   "fieldname": "timestamp_buffer_seconds",
+   "default": "100",
+   "description": "Tolerance in milliseconds for considering Frappe and partner modified timestamps equal during conflict resolution.",
+   "fieldname": "timestamp_buffer_ms",
    "fieldtype": "Int",
-   "label": "Timestamp Buffer Seconds"
+   "label": "Timestamp Buffer (ms)"
   },
   {
    "default": "1",
@@ -472,7 +473,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-24 00:00:00.000000",
+ "modified": "2026-06-26 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -100,7 +100,14 @@ class TestRuntimeExecution(IntegrationTestCase):
 			"error_count": 0,
 		}
 
-		with patch("sync.sync.service.runtime._run_engine", return_value=result_payload):
+		queued_at = datetime(2026, 3, 17, 9, 59, 0)
+		started_at = datetime(2026, 3, 17, 10, 0, 0)
+		finished_at = datetime(2026, 3, 17, 10, 5, 0)
+		next_run_base = datetime(2026, 3, 17, 10, 5, 1)
+		with (
+			patch("sync.sync.service.runtime.now_datetime", side_effect=[queued_at, started_at, finished_at, next_run_base]),
+			patch("sync.sync.service.runtime._run_engine", return_value=result_payload),
+		):
 			result = runtime.execute_sync_definition(definition.name, trigger="api")
 
 		self.assertEqual(result["status"], "success")
@@ -111,6 +118,9 @@ class TestRuntimeExecution(IntegrationTestCase):
 		self.assertEqual(run_doc.trigger_type, "api")
 		self.assertEqual(run_doc.sync_definition, definition.name)
 		self.assertEqual(run_doc.sync_partner, partner.name)
+		self.assertEqual(run_doc.started_at, started_at)
+		self.assertEqual(run_doc.finished_at, finished_at)
+		self.assertEqual(run_doc.last_sync_at, started_at)
 		self.assertEqual(run_doc.processed_count, 3)
 		self.assertEqual(run_doc.created_count, 1)
 		self.assertEqual(run_doc.updated_count, 1)
@@ -119,6 +129,8 @@ class TestRuntimeExecution(IntegrationTestCase):
 		self.assertIn("processed=3", run_doc.summary)
 		self.assertEqual(definition.last_run, run_doc.name)
 		self.assertEqual(definition.last_run_status, "Success")
+		self.assertEqual(definition.last_sync_at, started_at)
+		self.assertEqual(definition.last_successful_sync, started_at)
 		self.assertIn("created=1", definition.last_run_summary)
 		self.assertIsNotNone(definition.next_run_at)
 

@@ -71,7 +71,7 @@ class SyncDefinition(Document):
 		read_query: DF.Code | None
 		sync_type: DF.Literal["Frappe -> Partner", "Frappe <-> Partner", "Frappe <- Partner"]
 		table_name: DF.Data | None
-		timestamp_buffer_seconds: DF.Int
+		timestamp_buffer_ms: DF.Int
 		timestamp_tie_breaker: DF.Literal["No Write", "Frappe Wins", "Partner Wins"]
 		title: DF.Data
 		use_last_sync_date: DF.Check
@@ -313,7 +313,7 @@ class SyncDefinition(Document):
 			"filter_expression": self.filter_expression,
 			"batch_size": self.batch_size,
 			"use_last_sync_date": self.use_last_sync_date,
-			"timestamp_buffer_seconds": self.timestamp_buffer_seconds,
+			"timestamp_buffer_ms": self.timestamp_buffer_ms,
 			"create_new": self.create_new,
 			"delete_missing": self.delete_missing,
 			"one_way_match_mode": getattr(self, "one_way_match_mode", "first_match"),

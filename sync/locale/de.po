@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sync VERSION\n"
 "Report-Msgid-Bugs-To: kontak@david-loe.de\n"
-"POT-Creation-Date: 2026-06-24 14:49+0000\n"
+"POT-Creation-Date: 2026-06-26 09:05+0000\n"
 "PO-Revision-Date: 2026-05-21 07:35+0000\n"
 "Last-Translator: kontak@david-loe.de\n"
 "Language: de\n"
@@ -1914,11 +1914,10 @@ msgstr "Dieser aktive Run kann neue Ausführungen blockieren, bis er abgeschloss
 msgid "Time Zone"
 msgstr "Zeitzone"
 
-#. Label of the timestamp_buffer_seconds (Int) field in DocType 'Sync
-#. Definition'
+#. Label of the timestamp_buffer_ms (Int) field in DocType 'Sync Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
-msgid "Timestamp Buffer Seconds"
-msgstr "Zeitstempel-Puffer in Sekunden"
+msgid "Timestamp Buffer (ms)"
+msgstr "Zeitstempel-Puffer (ms)"
 
 #. Label of the timestamp_tie_breaker (Select) field in DocType 'Sync
 #. Definition'
@@ -1936,6 +1935,12 @@ msgstr "Zeitstempel des zuletzt aufgezeichneten Verbindungstests."
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Title"
 msgstr "Titel"
+
+#. Description of the 'Timestamp Buffer (ms)' (Int) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Tolerance in milliseconds for considering Frappe and partner modified timestamps equal during conflict resolution."
+msgstr "Toleranz in Millisekunden, um geänderte Zeitstempel von Frappe und Partner bei der Konfliktauflösung als gleich zu betrachten."
 
 #: sync/public/js/sync_run.js:142
 msgid "Trigger"

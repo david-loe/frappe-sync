@@ -106,7 +106,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			delete_missing=False,
 			use_last_sync_date=True,
 			conflict_policy="newest_wins",
-			timestamp_buffer_seconds=30,
+			timestamp_buffer_ms=30,
 			table_name="tabTask",
 			read_query=None,
 			match_fields=["name"],
@@ -121,7 +121,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		context = runtime.SyncContext(config=config, dry_run=False, last_successful_sync=last_sync)
 
 		self.assertTrue(context.is_delta_sync)
-		self.assertEqual(context.delta_since, datetime(2026, 3, 17, 11, 59, 30))
+		self.assertEqual(context.delta_since, datetime(2026, 3, 17, 12, 0))
 		self.assertFalse(context.is_full_sync)
 
 	def test_list_due_sync_definitions_uses_next_run_and_cron(self):
@@ -463,7 +463,7 @@ class TestRuntimeManagement(unittest.TestCase):
 				delete_missing="1",
 				one_way_match_mode="all_matches",
 				use_last_sync_date="0",
-				timestamp_buffer_seconds="3",
+				timestamp_buffer_ms="3",
 				match_fields=("name",),
 				mapping={"name": "id"},
 				value_mapping={"status": {"Open": "1"}},
@@ -476,7 +476,7 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertTrue(coerced.delete_missing)
 		self.assertEqual(coerced.one_way_match_mode, "all_matches")
 		self.assertFalse(coerced.use_last_sync_date)
-		self.assertEqual(coerced.timestamp_buffer_seconds, 3)
+		self.assertEqual(coerced.timestamp_buffer_ms, 3)
 		self.assertEqual(coerced.mapping, {"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}})
 
 	def test_mapping_helpers_support_top_level_string_payloads_and_value_reversal(self):
@@ -832,7 +832,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			delete_missing=True,
 			use_last_sync_date=False,
 			conflict_policy="newest_wins",
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			table_name="dbo.SyncTable",
 			read_query=None,
 			match_fields=["name"],

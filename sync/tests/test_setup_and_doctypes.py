@@ -71,7 +71,7 @@ class FakeSyncDefinitionDoc:
 		self.frequency_cron = values.get("frequency_cron", "*/15 * * * *")
 		self.filter_expression = values.get("filter_expression")
 		self.batch_size = values.get("batch_size", 50)
-		self.timestamp_buffer_seconds = values.get("timestamp_buffer_seconds", 15)
+		self.timestamp_buffer_ms = values.get("timestamp_buffer_ms", 100)
 		self.create_new = values.get("create_new", 1)
 		self.one_way_match_mode = values.get("one_way_match_mode", "first_match")
 		self.conflict_policy = values.get("conflict_policy", "newest_wins")
@@ -229,6 +229,13 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 			self._field_by_name(sync_definition_json, "timestamp_tie_breaker")["options"],
 			"No Write\nFrappe Wins\nPartner Wins",
 		)
+		timestamp_buffer_field = self._field_by_name(sync_definition_json, "timestamp_buffer_ms")
+		self.assertEqual(timestamp_buffer_field["default"], "100")
+		self.assertEqual(timestamp_buffer_field["label"], "Timestamp Buffer (ms)")
+		self.assertEqual(
+			timestamp_buffer_field["description"],
+			"Tolerance in milliseconds for considering Frappe and partner modified timestamps equal during conflict resolution.",
+		)
 		self.assertEqual(self._field_by_name(value_mapping_json, "frappe_value_is_null")["fieldtype"], "Check")
 		self.assertEqual(self._field_by_name(value_mapping_json, "partner_value_is_null")["fieldtype"], "Check")
 		self.assertEqual(
@@ -273,7 +280,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 				"frappe_modified_field",
 				"frappe_creation_field",
 				"use_last_sync_date",
-				"timestamp_buffer_seconds",
+				"timestamp_buffer_ms",
 				"column_change_detection",
 				"partner_modified_field",
 				"partner_creation_field",
@@ -684,6 +691,7 @@ class TestSyncDefinitionDoctype(unittest.TestCase):
 		exported = sync_definition_module.SyncDefinition.as_export_dict(doc)
 		self.assertEqual(exported["field_mapping"]["name"]["direction"], "Frappe <- Partner")
 		self.assertEqual(exported["value_mapping"]["status"], {'{"a": 1}': '["x"]'})
+		self.assertEqual(exported["timestamp_buffer_ms"], 100)
 		self.assertEqual(
 			exported["value_mapping_fallbacks"]["name"],
 			{"action": "fallback", "value": "UNKNOWN"},

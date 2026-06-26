@@ -77,6 +77,7 @@ TIMESTAMP_TIE_BREAKERS = {
 	TIMESTAMP_TIE_FRAPPE_WINS,
 	TIMESTAMP_TIE_PARTNER_WINS,
 }
+DEFAULT_TIMESTAMP_BUFFER_MS = 100
 
 
 @dataclass(slots=True)
@@ -92,7 +93,7 @@ class SyncDefinitionConfig:
 	delete_missing: bool
 	use_last_sync_date: bool
 	conflict_policy: str
-	timestamp_buffer_seconds: int
+	timestamp_buffer_ms: int
 	table_name: str | None
 	read_query: str | None
 	match_fields: list[str]
@@ -202,7 +203,7 @@ class SyncContext:
 	def delta_since(self) -> datetime | None:
 		if not self.is_delta_sync:
 			return None
-		return self.last_successful_sync - timedelta(seconds=max(0, self.config.timestamp_buffer_seconds))
+		return self.last_successful_sync
 
 	@property
 	def is_full_sync(self) -> bool:
@@ -463,7 +464,8 @@ def execute_sync_definition(
 			run_doc = _create_run_doc(sync_definition_doc, status="Queued", trigger=trigger, dry_run=dry_run)
 
 		sync_definition = frappe.get_doc(SYNC_DEFINITION, sync_definition_name)
-		_update_doc_fields(run_doc, {"status": "Running", "started_at": now_datetime(), "trigger_type": trigger})
+		run_started_at = now_datetime()
+		_update_doc_fields(run_doc, {"status": "Running", "started_at": run_started_at, "trigger_type": trigger})
 
 		try:
 			config = _build_definition_config(sync_definition)
@@ -472,7 +474,7 @@ def execute_sync_definition(
 			result_payload = _run_engine(sync_definition, run_doc, context=context)
 
 			terminal_status = _terminal_status_for_result(result_payload)
-			sync_stamp = now_datetime() if terminal_status == "Success" and not dry_run else None
+			sync_stamp = run_started_at if terminal_status == "Success" and not dry_run else None
 			_update_doc_fields(
 				run_doc,
 				{
@@ -958,6 +960,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 			)
 			_validate_runtime_mapping(normalized_config)
 			return normalized_config
+	timestamp_buffer_ms = _coerce_timestamp_buffer_ms(getattr(config, "timestamp_buffer_ms", None))
 	normalized = SyncDefinitionConfig(
 		name=str(getattr(config, "name", "")),
 		doctype=str(getattr(config, "doctype", "")),
@@ -971,7 +974,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		one_way_match_mode=_clean_string(getattr(config, "one_way_match_mode", None)) or "first_match",
 		use_last_sync_date=_as_bool(getattr(config, "use_last_sync_date", 1)),
 		conflict_policy=str(getattr(config, "conflict_policy", "newest_wins")),
-		timestamp_buffer_seconds=cint(getattr(config, "timestamp_buffer_seconds", 15)) or 0,
+		timestamp_buffer_ms=timestamp_buffer_ms,
 		table_name=getattr(config, "table_name", None),
 		read_query=getattr(config, "read_query", None),
 		match_fields=list(getattr(config, "match_fields", []) or []),
@@ -1893,7 +1896,12 @@ def _sync_bidirectional(
 			assumed_time_zone=getattr(config, "partner_time_zone", None),
 			target_time_zone=mapping_context.site_time_zone,
 		)
-		if partner_latest and (not frappe_latest or partner_latest > frappe_latest):
+		timestamp_winner = _compare_modified_timestamps(
+			frappe_latest,
+			partner_latest,
+			buffer_ms=_config_timestamp_buffer_ms(config),
+		)
+		if timestamp_winner == "partner":
 			_apply_frappe_update(
 				run_doc=run_doc,
 				config=config,
@@ -1909,7 +1917,7 @@ def _sync_bidirectional(
 				message="Conflict resolved with newest_wins: partner won.",
 				commit=False,
 			)
-		elif frappe_latest and (not partner_latest or frappe_latest > partner_latest):
+		elif timestamp_winner == "frappe":
 			_apply_partner_update(
 				run_doc=run_doc,
 				config=config,
@@ -2399,7 +2407,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 	delete_missing = _as_bool(_first_value(sync_definition_doc, ["delete_missing"], default=0))
 	use_last_sync_date = _as_bool(_first_value(sync_definition_doc, ["use_last_sync_date"], default=1))
 	conflict_policy = str(_first_value(sync_definition_doc, ["conflict_policy"], default="newest_wins"))
-	timestamp_buffer_seconds = cint(_first_value(sync_definition_doc, ["timestamp_buffer_seconds"], default=15)) or 0
+	timestamp_buffer_ms = _coerce_timestamp_buffer_ms(_first_value(sync_definition_doc, ["timestamp_buffer_ms"]))
 
 	match_fields = _get_match_fields(sync_definition_doc)
 	mapping = _get_field_mapping(sync_definition_doc)
@@ -2431,7 +2439,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		one_way_match_mode=_clean_string(_first_value(sync_definition_doc, ["one_way_match_mode"])) or "first_match",
 		use_last_sync_date=use_last_sync_date,
 		conflict_policy=conflict_policy,
-		timestamp_buffer_seconds=timestamp_buffer_seconds,
+		timestamp_buffer_ms=timestamp_buffer_ms,
 		table_name=_clean_string(_first_value(sync_definition_doc, ["table_name"])),
 		read_query=_clean_string(_first_value(sync_definition_doc, ["read_query"])),
 		match_fields=match_fields,
@@ -3182,6 +3190,23 @@ def _latest_modified(
 	)
 
 
+def _compare_modified_timestamps(
+	frappe_latest: datetime | None,
+	partner_latest: datetime | None,
+	*,
+	buffer_ms: int,
+) -> str | None:
+	if partner_latest and not frappe_latest:
+		return "partner"
+	if frappe_latest and not partner_latest:
+		return "frappe"
+	if not frappe_latest or not partner_latest:
+		return None
+	if abs(partner_latest - frappe_latest) <= timedelta(milliseconds=max(0, buffer_ms)):
+		return None
+	return "partner" if partner_latest > frappe_latest else "frappe"
+
+
 def _effective_modified(
 	record: dict[str, Any],
 	*,
@@ -3508,6 +3533,10 @@ def _config_partner_creation_field(config: Any) -> str:
 
 def _config_timestamp_tie_breaker(config: Any) -> str:
 	return _clean_string(getattr(config, "timestamp_tie_breaker", None)) or TIMESTAMP_TIE_NO_WRITE
+
+
+def _config_timestamp_buffer_ms(config: Any) -> int:
+	return _coerce_timestamp_buffer_ms(getattr(config, "timestamp_buffer_ms", None))
 
 
 def _config_partner_identity_field(config: Any) -> str | None:
@@ -4377,6 +4406,12 @@ def _first_value_dict(doc: dict[str, Any], candidates: list[str], default: Any =
 		if value not in (None, ""):
 			return value
 	return default
+
+
+def _coerce_timestamp_buffer_ms(value: Any) -> int:
+	if value not in (None, ""):
+		return max(0, cint(value) or 0)
+	return DEFAULT_TIMESTAMP_BUFFER_MS
 
 
 def _as_bool(value: Any) -> bool:

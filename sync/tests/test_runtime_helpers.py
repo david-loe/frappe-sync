@@ -860,7 +860,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			create_new=True,
 			delete_missing=False,
 			use_last_sync_date=True,
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			conflict_policy="newest_wins",
 			table_name="tabTask",
 			read_query=None,
@@ -1198,7 +1198,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			create_new=True,
 			delete_missing=False,
 			use_last_sync_date=True,
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			conflict_policy="newest_wins",
 			table_name="tabTask",
 			read_query=None,
@@ -1595,7 +1595,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			create_new=True,
 			delete_missing=False,
 			use_last_sync_date=True,
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			conflict_policy="newest_wins",
 			table_name="tabTask",
 			read_query=None,
@@ -1659,7 +1659,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			create_new=True,
 			delete_missing=False,
 			use_last_sync_date=True,
-			timestamp_buffer_seconds=0,
+			timestamp_buffer_ms=0,
 			conflict_policy="newest_wins",
 			table_name="tabTask",
 			read_query=None,
@@ -1880,3 +1880,65 @@ class TestRuntimeHelpers(unittest.TestCase):
 			self.assertEqual(mock_frappe.called, expected == "frappe")
 			if expected == "log":
 				self.assertIn("no write", mock_log.call_args.kwargs["message"])
+
+	def test_sync_bidirectional_timestamp_buffer_treats_nearby_modified_values_as_equal(self):
+		base_config = {
+			"name": "SYNC-BUFFER",
+			"doctype": "Task",
+			"match_fields": ["name"],
+			"mapping": {
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <-> Partner"},
+			},
+			"value_mapping": {},
+			"conflict_policy": "newest_wins",
+			"frappe_modified_field": "modified",
+			"frappe_creation_field": "creation",
+			"partner_modified_field": "updated_at",
+			"partner_creation_field": "created_at",
+			"timestamp_tie_breaker": runtime.TIMESTAMP_TIE_NO_WRITE,
+			"table_name": "tabTask",
+			"read_query": None,
+		}
+		frappe_record = {"name": "TASK-1", "status": "Closed", "modified": "2026-03-17 10:00:00.000000"}
+		partner_record = {"id": "TASK-1", "state": "Open", "updated_at": "2026-03-17 10:00:00.050000"}
+
+		with (
+			patch("sync.sync.service.runtime._apply_partner_update") as mock_partner,
+			patch("sync.sync.service.runtime._apply_frappe_update") as mock_frappe,
+			patch("sync.sync.service.runtime._register_and_log") as mock_log,
+		):
+			runtime._sync_bidirectional(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=SimpleNamespace(**base_config, timestamp_buffer_ms=100),
+				connector=object(),
+				frappe_records=[frappe_record],
+				partner_records=[partner_record],
+				dry_run=True,
+				stats=runtime.SyncStats(),
+				last_successful_sync=None,
+			)
+
+		self.assertFalse(mock_partner.called)
+		self.assertFalse(mock_frappe.called)
+		self.assertIn("no write", mock_log.call_args.kwargs["message"])
+
+		with (
+			patch("sync.sync.service.runtime._apply_partner_update") as mock_partner,
+			patch("sync.sync.service.runtime._apply_frappe_update") as mock_frappe,
+			patch("sync.sync.service.runtime._register_and_log") as mock_log,
+		):
+			runtime._sync_bidirectional(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=SimpleNamespace(**base_config, timestamp_buffer_ms=10),
+				connector=object(),
+				frappe_records=[frappe_record],
+				partner_records=[partner_record],
+				dry_run=True,
+				stats=runtime.SyncStats(),
+				last_successful_sync=None,
+			)
+
+		self.assertFalse(mock_partner.called)
+		self.assertTrue(mock_frappe.called)
+		self.assertFalse(mock_log.called)
