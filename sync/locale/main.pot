@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sync VERSION\n"
 "Report-Msgid-Bugs-To: kontak@david-loe.de\n"
-"POT-Creation-Date: 2026-06-26 14:27+0000\n"
-"PO-Revision-Date: 2026-06-26 14:27+0000\n"
+"POT-Creation-Date: 2026-06-26 15:02+0000\n"
+"PO-Revision-Date: 2026-06-26 15:02+0000\n"
 "Last-Translator: kontak@david-loe.de\n"
 "Language-Team: kontak@david-loe.de\n"
 "MIME-Version: 1.0\n"
@@ -38,11 +38,11 @@ msgstr ""
 msgid "API key or access token provided by the upstream system."
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:21
+#: sync/public/js/sync_run_item.js:280
 msgid "Accept Frappe Changes"
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:22
+#: sync/public/js/sync_run_item.js:281
 msgid "Accept Partner Changes"
 msgstr ""
 
@@ -182,6 +182,12 @@ msgstr ""
 msgid "Conflict Policy"
 msgstr ""
 
+#. Label of the section_break_resolution (Section Break) field in DocType 'Sync
+#. Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Conflict Resolution"
+msgstr ""
+
 #: sync/public/js/sync_helpers.js:1022
 msgid "Conflict for {0}"
 msgstr ""
@@ -258,6 +264,14 @@ msgstr ""
 #. Label of the created_count (Int) field in DocType 'Sync Run'
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Created Count"
+msgstr ""
+
+#: sync/public/js/sync_run_item.js:104
+msgid "Current Frappe"
+msgstr ""
+
+#: sync/public/js/sync_run_item.js:105
+msgid "Current Partner"
 msgstr ""
 
 #. Label of the db_api_module (Data) field in DocType 'Sync Partner Type'
@@ -461,6 +475,10 @@ msgstr ""
 
 #: sync/public/js/sync_helpers.js:910
 msgid "Fallback review only"
+msgstr ""
+
+#: sync/public/js/sync_run_item.js:103
+msgid "Field"
 msgstr ""
 
 #. Label of the section_field_mapping (Section Break) field in DocType 'Sync
@@ -837,6 +855,10 @@ msgstr ""
 msgid "Loading partner columns…"
 msgstr ""
 
+#: sync/public/js/sync_run_item.js:34
+msgid "Loading resolution mapping..."
+msgstr ""
+
 #: sync/public/js/sync_run.js:104
 msgid "Loading run items…"
 msgstr ""
@@ -952,6 +974,14 @@ msgstr ""
 msgid "No field mapping configured."
 msgstr ""
 
+#: sync/public/js/sync_run_item.js:65
+msgid "No manual resolution payloads are available for this Sync Run Item."
+msgstr ""
+
+#: sync/public/js/sync_run_item.js:70
+msgid "No mapped resolution fields are available."
+msgstr ""
+
 #: sync/public/js/sync_run_item_list.js:33
 msgid "No message"
 msgstr ""
@@ -1012,6 +1042,7 @@ msgstr ""
 #. Partner'
 #: sync/public/js/sync_helpers.js:386 sync/public/js/sync_helpers.js:648
 #: sync/public/js/sync_helpers.js:862 sync/public/js/sync_helpers.js:1073
+#: sync/public/js/sync_run_item.js:267
 #: sync/sync/doctype/sync_partner/sync_partner.json
 msgid "None"
 msgstr ""
@@ -1069,7 +1100,7 @@ msgstr ""
 msgid "Open Latest Run"
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:80
+#: sync/public/js/sync_run_item.js:339
 msgid "Open related document {0}"
 msgstr ""
 
@@ -1480,11 +1511,16 @@ msgstr ""
 msgid "Request failed."
 msgstr ""
 
+#. Label of the resolution_preview (HTML) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Resolution Preview"
+msgstr ""
+
 #: sync/public/js/sync_run_item_list.js:53
 msgid "Resolve the Sync Definition target DocType and open {0}"
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:43
+#: sync/public/js/sync_run_item.js:302
 msgid "Resolving Sync Run Item..."
 msgstr ""
 
@@ -1687,6 +1723,10 @@ msgstr ""
 msgid "Skipped Count"
 msgstr ""
 
+#: sync/public/js/sync_run_item.js:93
+msgid "Some payloads could not be parsed as JSON and are shown as raw text."
+msgstr ""
+
 #. Label of the section_source_filters (Section Break) field in DocType 'Sync
 #. Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
@@ -1794,6 +1834,10 @@ msgstr ""
 msgid "Sync Definition"
 msgstr ""
 
+#: sync/public/js/sync_run_item.js:48
+msgid "Sync Definition field mapping could not be loaded."
+msgstr ""
+
 #. Name of a DocType
 #: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
 msgid "Sync Field Mapping"
@@ -1840,7 +1884,7 @@ msgstr ""
 msgid "Sync Run Item"
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:48
+#: sync/public/js/sync_run_item.js:307
 msgid "Sync Run Item resolved."
 msgstr ""
 
@@ -1896,7 +1940,7 @@ msgstr ""
 msgid "Table Name is required."
 msgstr ""
 
-#: sync/public/js/sync_run.js:204 sync/public/js/sync_run_item.js:72
+#: sync/public/js/sync_run.js:204 sync/public/js/sync_run_item.js:331
 msgid "Target DocType could not be resolved from the Sync Definition."
 msgstr ""
 
@@ -1948,7 +1992,7 @@ msgstr ""
 msgid "This active run can block new executions until it finishes or is recovered as stale."
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:28
+#: sync/public/js/sync_run_item.js:287
 msgid "This will write the selected changes for this Sync Run Item. Continue?"
 msgstr ""
 
@@ -2016,7 +2060,7 @@ msgstr ""
 msgid "Unable to recover stale runs."
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:90 sync/public/js/sync_run_item_list.js:68
+#: sync/public/js/sync_run_item.js:349 sync/public/js/sync_run_item_list.js:68
 msgid "Unable to resolve target DocType."
 msgstr ""
 
@@ -2143,6 +2187,14 @@ msgstr ""
 #: sync/public/js/sync_run.js:240 sync/public/js/sync_run.js:414
 #: sync/sync/doctype/sync_run_item/sync_run_item.json
 msgid "Write Direction"
+msgstr ""
+
+#: sync/public/js/sync_run_item.js:106
+msgid "Write to Frappe"
+msgstr ""
+
+#: sync/public/js/sync_run_item.js:107
+msgid "Write to Partner"
 msgstr ""
 
 #. Label of the written_after_payload (Long Text) field in DocType 'Sync Run

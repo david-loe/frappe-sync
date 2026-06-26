@@ -19,6 +19,8 @@
   "target_id",
   "change_count",
   "changed_fields",
+  "section_break_resolution",
+  "resolution_preview",
   "section_break_payloads",
   "frappe_before_payload",
   "column_break_payloads",
@@ -123,6 +125,17 @@
    "description": "Compact list of changed field names. Detailed values remain visible through the captured payloads."
   },
   {
+   "fieldname": "section_break_resolution",
+   "fieldtype": "Section Break",
+   "label": "Conflict Resolution"
+  },
+  {
+   "fieldname": "resolution_preview",
+   "fieldtype": "HTML",
+   "label": "Resolution Preview",
+   "read_only": 1
+  },
+  {
    "fieldname": "section_break_payloads",
    "fieldtype": "Section Break",
    "label": "Payloads"
@@ -153,6 +166,7 @@
    "description": "Payload written to Frappe when accepting partner changes for a manual conflict.",
    "fieldname": "frappe_resolution_payload",
    "fieldtype": "Long Text",
+   "hidden": 1,
    "label": "Frappe Resolution Payload",
    "read_only": 1
   },
@@ -160,6 +174,7 @@
    "description": "Payload written to the partner when accepting Frappe changes for a manual conflict.",
    "fieldname": "partner_resolution_payload",
    "fieldtype": "Long Text",
+   "hidden": 1,
    "label": "Partner Resolution Payload",
    "read_only": 1
   },
@@ -178,7 +193,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-26 16:30:00.000000",
+ "modified": "2026-06-26 17:15:00.000000",
  "module": "Sync",
  "name": "Sync Run Item",
  "permissions": [

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sync VERSION\n"
 "Report-Msgid-Bugs-To: kontak@david-loe.de\n"
-"POT-Creation-Date: 2026-06-26 14:27+0000\n"
+"POT-Creation-Date: 2026-06-26 15:02+0000\n"
 "PO-Revision-Date: 2026-05-21 07:35+0000\n"
 "Last-Translator: kontak@david-loe.de\n"
 "Language: de\n"
@@ -40,11 +40,11 @@ msgstr "API-Geheimnis"
 msgid "API key or access token provided by the upstream system."
 msgstr "API-Schlüssel oder Zugriffstoken, der vom vorgelagerten System bereitgestellt wird."
 
-#: sync/public/js/sync_run_item.js:21
+#: sync/public/js/sync_run_item.js:280
 msgid "Accept Frappe Changes"
 msgstr "Frappe-Änderungen übernehmen"
 
-#: sync/public/js/sync_run_item.js:22
+#: sync/public/js/sync_run_item.js:281
 msgid "Accept Partner Changes"
 msgstr "Partner-Änderungen übernehmen"
 
@@ -184,6 +184,12 @@ msgstr "Konflikt-Elemente"
 msgid "Conflict Policy"
 msgstr "Konfliktrichtlinie"
 
+#. Label of the section_break_resolution (Section Break) field in DocType 'Sync
+#. Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Conflict Resolution"
+msgstr "Konfliktauflösung"
+
 #: sync/public/js/sync_helpers.js:1022
 msgid "Conflict for {0}"
 msgstr "Konflikt für {0}"
@@ -261,6 +267,14 @@ msgstr "Erstellt"
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Created Count"
 msgstr "Anzahl erstellt"
+
+#: sync/public/js/sync_run_item.js:104
+msgid "Current Frappe"
+msgstr "Aktuell in Frappe"
+
+#: sync/public/js/sync_run_item.js:105
+msgid "Current Partner"
+msgstr "Aktuell beim Partner"
 
 #. Label of the db_api_module (Data) field in DocType 'Sync Partner Type'
 #: sync/sync/doctype/sync_partner_type/sync_partner_type.json
@@ -464,6 +478,10 @@ msgstr "Fallback für Werte, die keiner Wertzuordnungszeile entsprechen."
 #: sync/public/js/sync_helpers.js:910
 msgid "Fallback review only"
 msgstr "Nur Fallback-Prüfung"
+
+#: sync/public/js/sync_run_item.js:103
+msgid "Field"
+msgstr "Feld"
 
 #. Label of the section_field_mapping (Section Break) field in DocType 'Sync
 #. Definition'
@@ -839,6 +857,10 @@ msgstr "Partner-Spalten werden aus der konfigurierten Quelle geladen..."
 msgid "Loading partner columns…"
 msgstr "Partner-Spalten werden geladen…"
 
+#: sync/public/js/sync_run_item.js:34
+msgid "Loading resolution mapping..."
+msgstr "Auflösungs-Mapping wird geladen ..."
+
 #: sync/public/js/sync_run.js:104
 msgid "Loading run items…"
 msgstr "Lauf-Elemente werden geladen…"
@@ -954,6 +976,14 @@ msgstr "Es wurde noch kein Verbindungstest aufgezeichnet. Verwenden Sie „Verbi
 msgid "No field mapping configured."
 msgstr "Keine Feldzuordnung konfiguriert."
 
+#: sync/public/js/sync_run_item.js:65
+msgid "No manual resolution payloads are available for this Sync Run Item."
+msgstr "Für dieses Sync-Lauf-Element sind keine manuellen Auflösungspayloads verfügbar."
+
+#: sync/public/js/sync_run_item.js:70
+msgid "No mapped resolution fields are available."
+msgstr "Es sind keine gemappten Auflösungsfelder verfügbar."
+
 #: sync/public/js/sync_run_item_list.js:33
 msgid "No message"
 msgstr "Keine Nachricht"
@@ -1014,6 +1044,7 @@ msgstr "Kein Schreibvorgang"
 #. Partner'
 #: sync/public/js/sync_helpers.js:386 sync/public/js/sync_helpers.js:648
 #: sync/public/js/sync_helpers.js:862 sync/public/js/sync_helpers.js:1073
+#: sync/public/js/sync_run_item.js:267
 #: sync/sync/doctype/sync_partner/sync_partner.json
 msgid "None"
 msgstr "Keine"
@@ -1071,7 +1102,7 @@ msgstr "Elemente öffnen"
 msgid "Open Latest Run"
 msgstr "Letzten Lauf öffnen"
 
-#: sync/public/js/sync_run_item.js:80
+#: sync/public/js/sync_run_item.js:339
 msgid "Open related document {0}"
 msgstr "Zugehöriges Dokument {0} öffnen"
 
@@ -1482,11 +1513,16 @@ msgstr "Ersetzt die vorhandene Definition, wenn der Name bereits existiert."
 msgid "Request failed."
 msgstr "Anfrage fehlgeschlagen."
 
+#. Label of the resolution_preview (HTML) field in DocType 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Resolution Preview"
+msgstr "Auflösungsvorschau"
+
 #: sync/public/js/sync_run_item_list.js:53
 msgid "Resolve the Sync Definition target DocType and open {0}"
 msgstr "Ziel-DocType der Sync-Definition auflösen und {0} öffnen"
 
-#: sync/public/js/sync_run_item.js:43
+#: sync/public/js/sync_run_item.js:302
 msgid "Resolving Sync Run Item..."
 msgstr "Sync-Lauf-Element wird aufgelöst ..."
 
@@ -1688,6 +1724,10 @@ msgstr "Übersprungen"
 msgid "Skipped Count"
 msgstr "Anzahl übersprungen"
 
+#: sync/public/js/sync_run_item.js:93
+msgid "Some payloads could not be parsed as JSON and are shown as raw text."
+msgstr "Einige Payloads konnten nicht als JSON gelesen werden und werden als Rohtext angezeigt."
+
 #. Label of the section_source_filters (Section Break) field in DocType 'Sync
 #. Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
@@ -1795,6 +1835,10 @@ msgstr "Sync"
 msgid "Sync Definition"
 msgstr "Sync-Definition"
 
+#: sync/public/js/sync_run_item.js:48
+msgid "Sync Definition field mapping could not be loaded."
+msgstr "Das Feld-Mapping der Sync-Definition konnte nicht geladen werden."
+
 #. Name of a DocType
 #: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
 msgid "Sync Field Mapping"
@@ -1841,7 +1885,7 @@ msgstr "Sync-Lauf"
 msgid "Sync Run Item"
 msgstr "Sync-Lauf-Element"
 
-#: sync/public/js/sync_run_item.js:48
+#: sync/public/js/sync_run_item.js:307
 msgid "Sync Run Item resolved."
 msgstr "Sync-Lauf-Element aufgelöst."
 
@@ -1897,7 +1941,7 @@ msgstr "Tabellenname"
 msgid "Table Name is required."
 msgstr "Tabellenname ist erforderlich."
 
-#: sync/public/js/sync_run.js:204 sync/public/js/sync_run_item.js:72
+#: sync/public/js/sync_run.js:204 sync/public/js/sync_run_item.js:331
 msgid "Target DocType could not be resolved from the Sync Definition."
 msgstr "Der Ziel-DocType konnte nicht aus der Sync-Definition aufgelöst werden."
 
@@ -1949,7 +1993,7 @@ msgstr "Der zuletzt aufgezeichnete Verbindungstest war erfolgreich. Verwenden Si
 msgid "This active run can block new executions until it finishes or is recovered as stale."
 msgstr "Dieser aktive Run kann neue Ausführungen blockieren, bis er abgeschlossen oder als veraltet wiederhergestellt wurde."
 
-#: sync/public/js/sync_run_item.js:28
+#: sync/public/js/sync_run_item.js:287
 msgid "This will write the selected changes for this Sync Run Item. Continue?"
 msgstr "Dies schreibt die ausgewählten Änderungen für dieses Sync-Lauf-Element. Fortfahren?"
 
@@ -2017,7 +2061,7 @@ msgstr "Lauf-Elemente konnten nicht geladen werden."
 msgid "Unable to recover stale runs."
 msgstr "Veraltete Runs konnten nicht wiederhergestellt werden."
 
-#: sync/public/js/sync_run_item.js:90 sync/public/js/sync_run_item_list.js:68
+#: sync/public/js/sync_run_item.js:349 sync/public/js/sync_run_item_list.js:68
 msgid "Unable to resolve target DocType."
 msgstr "Ziel-DocType konnte nicht aufgelöst werden."
 
@@ -2145,6 +2189,14 @@ msgstr "Schreibverhalten"
 #: sync/sync/doctype/sync_run_item/sync_run_item.json
 msgid "Write Direction"
 msgstr "Schreibrichtung"
+
+#: sync/public/js/sync_run_item.js:106
+msgid "Write to Frappe"
+msgstr "Nach Frappe schreiben"
+
+#: sync/public/js/sync_run_item.js:107
+msgid "Write to Partner"
+msgstr "Zum Partner schreiben"
 
 #. Label of the written_after_payload (Long Text) field in DocType 'Sync Run
 #. Item'
@@ -2317,3 +2369,4 @@ msgstr "{0} eingereiht: {1}"
 #: sync/public/js/sync_run.js:424
 msgid "{0} successful"
 msgstr "{0} erfolgreich"
+
