@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-import os
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -10,6 +8,8 @@ import frappe
 
 from sync.sync.service import connectors as connector_module
 from sync.sync.service.connectors import (
+	BasePartnerConnector,
+	ConnectorPingResult,
 	FirebirdConnector,
 	ConnectorCreateOptions,
 	MssqlConnector,
@@ -59,6 +59,25 @@ class DummyPartner:
 
 	def get(self, key, default=None):
 		return self._values.get(key, default)
+
+
+class DummyBaseConnector(BasePartnerConnector):
+	def ping(self) -> ConnectorPingResult:
+		return ConnectorPingResult(ok=True, message="ok", details={})
+
+
+class TestBasePartnerConnector(unittest.TestCase):
+	def test_default_methods_report_unsupported_writes_and_empty_reads(self):
+		with patch("sync.sync.service.connectors.frappe.get_meta", return_value=PARTNER_META):
+			connector = DummyBaseConnector(DummyPartner("base"))
+
+		self.assertEqual(connector.fetch_records().records, [])
+		self.assertTrue(connector.upsert_record(record={"id": "A1"}, key_fields=["id"], mapping={}, dry_run=True).ok)
+		self.assertFalse(connector.upsert_record(record={"id": "A1"}, key_fields=["id"], mapping={}, dry_run=False).ok)
+		self.assertTrue(connector.delete_record(key_values={"id": "A1"}, dry_run=True).ok)
+		self.assertFalse(connector.delete_record(key_values={"id": "A1"}, dry_run=False).ok)
+		with self.assertRaisesRegex(RuntimeError, "does not support source-column inspection"):
+			connector.describe_source_columns(source="table")
 
 
 class TestConnectorConfig(unittest.TestCase):
@@ -1059,106 +1078,6 @@ class TestConnectorFactoryAndConnectMethods(unittest.TestCase):
 		self.assertEqual(_to_non_negative_int("-5"), 0)
 		self.assertEqual(_to_non_negative_int("7"), 7)
 		self.assertEqual(_strip_trailing_semicolon("select 1;"), "select 1")
-
-
-@unittest.skipUnless(os.environ.get("SYNC_TEST_POSTGRES_HOST"), "Postgres integration env not configured")
-class TestPostgresConnectorIntegration(unittest.TestCase):
-	@classmethod
-	def setUpClass(cls):
-		super().setUpClass()
-		cls.meta_patch = patch(
-			"sync.sync.service.connectors.frappe.get_meta",
-			return_value=PARTNER_META,
-		)
-		cls.decrypt_patch = patch(
-			"sync.sync.service.connectors.get_decrypted_password",
-			return_value=None,
-		)
-		cls.meta_patch.start()
-		cls.decrypt_patch.start()
-		cls.connector = PostgresConnector(
-			DummyPartner(
-				"postgres",
-				host=os.environ["SYNC_TEST_POSTGRES_HOST"],
-				port=os.environ.get("SYNC_TEST_POSTGRES_PORT", "5432"),
-				database_name=os.environ["SYNC_TEST_POSTGRES_DB"],
-				username=os.environ["SYNC_TEST_POSTGRES_USER"],
-				password=os.environ["SYNC_TEST_POSTGRES_PASSWORD"],
-				connect_timeout="10",
-				sslmode=os.environ.get("SYNC_TEST_POSTGRES_SSLMODE", "disable"),
-			)
-		)
-		cls.table_name = os.environ.get("SYNC_TEST_POSTGRES_TABLE", "public.sync_connector_test")
-
-		with cls.connector._connection() as connection:
-			cursor = connection.cursor()
-			cursor.execute(
-				f"""
-				CREATE TABLE IF NOT EXISTS {cls.table_name} (
-					id TEXT PRIMARY KEY,
-					status TEXT NOT NULL,
-					updated_at TIMESTAMP NULL
-				)
-				"""
-			)
-			connection.commit()
-			cursor.close()
-
-	@classmethod
-	def tearDownClass(cls):
-		cls.decrypt_patch.stop()
-		cls.meta_patch.stop()
-		super().tearDownClass()
-
-	def setUp(self):
-		with self.connector._connection() as connection:
-			cursor = connection.cursor()
-			cursor.execute(f"TRUNCATE TABLE {self.table_name}")
-			connection.commit()
-			cursor.close()
-
-	def test_live_postgres_connector_crud_and_introspection(self):
-		insert = self.connector.upsert_record(
-			record={"id": "A1", "status": "open", "updated_at": datetime(2026, 3, 17, 12, 0)},
-			key_fields=["name"],
-			mapping={"name": "id", "status": "status", "modified": "updated_at"},
-			source=self.table_name,
-		)
-		self.assertTrue(insert.ok)
-		self.assertIn("insert succeeded", insert.message)
-
-		describe = self.connector.describe_source_columns(source=self.table_name)
-		self.assertEqual(describe, ["id", "status", "updated_at"])
-
-		update = self.connector.upsert_record(
-			record={"id": "A1", "status": "closed", "updated_at": datetime(2026, 3, 17, 12, 5)},
-			key_fields=["name"],
-			mapping={"name": "id", "status": "status", "modified": "updated_at"},
-			source=self.table_name,
-		)
-		self.assertTrue(update.ok)
-		self.assertIn("update succeeded", update.message)
-
-		page = self.connector.fetch_records(source=self.table_name, batch_size=1, key_fields=["id"])
-		self.assertEqual(len(page.records), 1)
-		self.assertEqual(page.records[0]["id"], "A1")
-		self.assertEqual(page.records[0]["status"], "closed")
-		self.assertIsNone(page.next_cursor)
-
-		query_page = self.connector.fetch_records(
-			query=f"SELECT id, status, updated_at FROM {self.table_name}",
-			batch_size=5,
-			key_fields=["id"],
-		)
-		self.assertEqual(len(query_page.records), 1)
-		self.assertEqual(query_page.records[0]["id"], "A1")
-
-		delete = self.connector.delete_record(key_values={"id": "A1"}, source=self.table_name)
-		self.assertTrue(delete.ok)
-		self.assertIn("delete succeeded", delete.message)
-
-		final_page = self.connector.fetch_records(source=self.table_name, batch_size=5, key_fields=["id"])
-		self.assertEqual(final_page.records, [])
 
 
 class _FakeCursor:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+import unittest
 from unittest.mock import patch
 
 import frappe
@@ -12,6 +13,14 @@ from frappe.utils import now_datetime
 from sync.sync.service import runtime
 
 
+def _has_frappe_site_context() -> bool:
+	try:
+		return bool(getattr(frappe.local, "site", None))
+	except Exception:
+		return False
+
+
+@unittest.skipUnless(_has_frappe_site_context(), "requires Frappe site context")
 class TestRuntimeExecution(IntegrationTestCase):
 	def _make_partner(self) -> Any:
 		suffix = frappe.generate_hash(length=8)
