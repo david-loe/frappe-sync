@@ -273,12 +273,12 @@
    "reqd": 1
   },
   {
-   "default": "No Write",
+   "default": "Manual",
    "description": "Controls conflict resolution when both effective timestamps are equal or unavailable.",
    "fieldname": "timestamp_tie_breaker",
    "fieldtype": "Select",
    "label": "Timestamp Tie Breaker",
-   "options": "No Write\nFrappe Wins\nPartner Wins",
+   "options": "Manual\nFrappe Wins\nPartner Wins",
    "reqd": 1
   },
   {
@@ -474,7 +474,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-26 12:00:00.000000",
+ "modified": "2026-06-26 16:30:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

@@ -62,7 +62,7 @@ class TestRuntimeExecution(IntegrationTestCase):
 				"frappe_creation_field": "creation",
 				"partner_modified_field": "updated_at",
 				"partner_creation_field": "created_at",
-				"timestamp_tie_breaker": "No Write",
+				"timestamp_tie_breaker": "Manual",
 			}
 		).insert(ignore_permissions=True)
 

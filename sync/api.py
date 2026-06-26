@@ -14,6 +14,7 @@ from sync.sync.service import (
 	import_sync_definition_yaml as service_import_sync_definition_yaml,
 	list_due_sync_definitions as service_list_due_sync_definitions,
 	recover_stale_runs as service_recover_stale_runs,
+	resolve_sync_run_item as service_resolve_sync_run_item,
 	run_due_sync_definitions as service_run_due_sync_definitions,
 )
 from sync.sync.service.connectors import get_connector_for_partner
@@ -27,6 +28,7 @@ SYSTEM_MANAGER_ROLE = "System Manager"
 SYNC_DEFINITION_DOCTYPE = "Sync Definition"
 SYNC_PARTNER_DOCTYPE = "Sync Partner"
 SYNC_PARTNER_TYPE_DOCTYPE = "Sync Partner Type"
+SYNC_RUN_ITEM_DOCTYPE = "Sync Run Item"
 
 
 def _as_bool(value: Any) -> bool:
@@ -246,6 +248,21 @@ def run_sync_definition(sync_definition_name: str, trigger: str = "manual", queu
 		queue=_as_bool(queue),
 		dry_run=_as_bool(dry_run),
 	)
+
+
+@frappe.whitelist()
+def resolve_sync_run_item(sync_run_item_name: str, direction: str) -> dict[str, Any]:
+	_require_system_manager()
+	item_doc = _require_doc_permission(SYNC_RUN_ITEM_DOCTYPE, sync_run_item_name, permtype="write")
+	sync_definition_name = _clean_string(_get_doc_value(item_doc, "sync_definition"))
+	if sync_definition_name:
+		_require_sync_definition_permission(
+			sync_definition_name,
+			permtype="write",
+			check_partner=True,
+			check_target_doctype=True,
+		)
+	return service_resolve_sync_run_item(sync_run_item_name, direction)
 
 
 @frappe.whitelist()

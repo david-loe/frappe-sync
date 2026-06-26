@@ -22,7 +22,7 @@ class FakeSyncDefinitionDoc:
 		self.frappe_creation_field = values.get("frappe_creation_field", "creation")
 		self.partner_modified_field = values.get("partner_modified_field", "updated_at")
 		self.partner_creation_field = values.get("partner_creation_field", "created_at")
-		self.timestamp_tie_breaker = values.get("timestamp_tie_breaker", "No Write")
+		self.timestamp_tie_breaker = values.get("timestamp_tie_breaker", "Manual")
 		self.preview_limit = values.get("preview_limit", 50)
 		self.delete_missing = values.get("delete_missing", 0)
 		self.read_query = values.get("read_query")

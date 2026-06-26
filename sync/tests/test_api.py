@@ -500,6 +500,20 @@ class ApiContractTests(ApiTestCase):
 
 		mock_enqueue.assert_not_called()
 
+	def test_resolve_sync_run_item_checks_permissions_and_delegates(self):
+		item = _doc_stub("Sync Run Item", "ITEM-1", sync_definition="SYNC-1")
+		definition = _doc_stub("Sync Definition", "SYNC-1", partner="PARTNER-1", doctype_name="Task")
+		partner = _doc_stub("Sync Partner", "PARTNER-1")
+
+		with (
+			patch.object(self.api.frappe, "get_doc", side_effect=[item, definition, partner]),
+			patch("sync.api.service_resolve_sync_run_item", return_value={"ok": True}) as mock_resolve,
+		):
+			response = self.api.resolve_sync_run_item("ITEM-1", "Frappe <- Partner")
+
+		self.assertEqual(response, {"ok": True})
+		mock_resolve.assert_called_once_with("ITEM-1", "Frappe <- Partner")
+
 	def test_run_due_sync_definitions_coerces_limit_and_queue(self):
 		with patch("sync.api.service_run_due_sync_definitions", return_value=[{"status": "queued"}]) as mock_run_due:
 			response = self.api.run_due_sync_definitions(limit="3", queue="0")

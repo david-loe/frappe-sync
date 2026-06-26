@@ -24,6 +24,8 @@
   "column_break_payloads",
   "partner_before_payload",
   "written_after_payload",
+  "frappe_resolution_payload",
+  "partner_resolution_payload",
   "section_break_message",
   "message"
  ],
@@ -148,6 +150,20 @@
    "read_only": 1
   },
   {
+   "description": "Payload written to Frappe when accepting partner changes for a manual conflict.",
+   "fieldname": "frappe_resolution_payload",
+   "fieldtype": "Long Text",
+   "label": "Frappe Resolution Payload",
+   "read_only": 1
+  },
+  {
+   "description": "Payload written to the partner when accepting Frappe changes for a manual conflict.",
+   "fieldname": "partner_resolution_payload",
+   "fieldtype": "Long Text",
+   "label": "Partner Resolution Payload",
+   "read_only": 1
+  },
+  {
    "fieldname": "section_break_message",
    "fieldtype": "Section Break",
    "label": "Message"
@@ -162,7 +178,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-21 13:00:00.000000",
+ "modified": "2026-06-26 16:30:00.000000",
  "module": "Sync",
  "name": "Sync Run Item",
  "permissions": [

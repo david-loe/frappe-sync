@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -1748,6 +1749,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 		mock_f2p.assert_called_once()
 		mock_p2f.assert_called_once()
 		self.assertEqual(mock_apply_frappe.call_count, 2)
+		self.assertTrue(all(call.kwargs["action"] == "updated" for call in mock_apply_frappe.call_args_list))
+		self.assertTrue(all(call.kwargs["status"] == "success" for call in mock_apply_frappe.call_args_list))
 		mock_apply_partner.assert_not_called()
 
 		with patch("sync.sync.service.runtime._register_and_log") as mock_log:
@@ -1856,7 +1859,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		partner_record = {"id": "TASK-1", "state": "Open", "updated_at": "2026-03-17 10:00:00"}
 
 		for tie_breaker, expected in (
-			(runtime.TIMESTAMP_TIE_NO_WRITE, "log"),
+			(runtime.TIMESTAMP_TIE_MANUAL, "log"),
 			(runtime.TIMESTAMP_TIE_FRAPPE_WINS, "partner"),
 			(runtime.TIMESTAMP_TIE_PARTNER_WINS, "frappe"),
 		):
@@ -1880,6 +1883,98 @@ class TestRuntimeHelpers(unittest.TestCase):
 			self.assertEqual(mock_frappe.called, expected == "frappe")
 			if expected == "log":
 				self.assertIn("no write", mock_log.call_args.kwargs["message"])
+			if expected in {"partner", "frappe"}:
+				applied = mock_partner if expected == "partner" else mock_frappe
+				self.assertEqual(applied.call_args.kwargs["action"], "updated")
+				self.assertEqual(applied.call_args.kwargs["status"], "success")
+
+	def test_sync_bidirectional_manual_conflict_stores_resolution_payloads(self):
+		config = SimpleNamespace(
+			name="SYNC-MANUAL",
+			doctype="Task",
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <-> Partner"},
+			},
+			value_mapping={},
+			conflict_policy="newest_wins",
+			timestamp_tie_breaker=runtime.TIMESTAMP_TIE_MANUAL,
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+			partner_modified_field="updated_at",
+			partner_creation_field="created_at",
+			table_name="tabTask",
+			read_query=None,
+			partner_time_zone="UTC",
+		)
+		frappe_record = {"name": "TASK-1", "status": "Closed", "modified": "2026-03-17 10:00:00"}
+		partner_record = {"id": "TASK-1", "state": "Open", "updated_at": "2026-03-17 10:00:00"}
+
+		with (
+			patch("sync.sync.service.runtime._apply_partner_update") as mock_partner,
+			patch("sync.sync.service.runtime._apply_frappe_update") as mock_frappe,
+			patch("sync.sync.service.runtime._register_and_log") as mock_log,
+			patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+		):
+			runtime._sync_bidirectional(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=object(),
+				frappe_records=[frappe_record],
+				partner_records=[partner_record],
+				dry_run=True,
+				stats=runtime.SyncStats(),
+				last_successful_sync=None,
+			)
+
+		mock_partner.assert_not_called()
+		mock_frappe.assert_not_called()
+		self.assertEqual(mock_log.call_args.kwargs["action"], "conflict")
+		frappe_payload = mock_log.call_args.kwargs["frappe_resolution_payload"]
+		partner_payload = mock_log.call_args.kwargs["partner_resolution_payload"]
+		self.assertEqual(frappe_payload["name"], "TASK-1")
+		self.assertEqual(frappe_payload["status"], "Open")
+		self.assertEqual(partner_payload["id"], "TASK-1")
+		self.assertEqual(partner_payload["state"], "Closed")
+
+	def test_resolve_sync_run_item_accepts_partner_changes_to_frappe(self):
+		item = SimpleNamespace(
+			doctype=runtime.SYNC_RUN_ITEM,
+			name="ITEM-1",
+			sync_run="RUN-1",
+			sync_definition="SYNC-1",
+			document_name="TASK-1",
+			status="conflict",
+			action="conflict",
+			write_direction=None,
+			frappe_resolution_payload=json.dumps({"name": "TASK-1", "status": "Open"}),
+		)
+		run = SimpleNamespace(doctype=runtime.SYNC_RUN, name="RUN-1", dry_run=0, sync_definition="SYNC-1")
+		definition = SimpleNamespace(doctype=runtime.SYNC_DEFINITION, name="SYNC-1")
+		config = SimpleNamespace(doctype="Task")
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=[item, run, definition]),
+			patch("sync.sync.service.runtime._build_definition_config", return_value=config),
+			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-1") as mock_upsert,
+			patch("sync.sync.service.runtime._update_doc_fields") as mock_update,
+		):
+			response = runtime.resolve_sync_run_item("ITEM-1", runtime.SYNC_TYPE_PARTNER_TO_FRAPPE)
+
+		self.assertEqual(response["status"], "success")
+		mock_upsert.assert_called_once_with(
+			doctype="Task",
+			existing_name="TASK-1",
+			payload={"name": "TASK-1", "status": "Open"},
+			dry_run=False,
+		)
+		updated_fields = mock_update.call_args.args[1]
+		self.assertEqual(updated_fields["action"], "updated")
+		self.assertEqual(updated_fields["status"], "success")
+		self.assertEqual(updated_fields["write_direction"], runtime.SYNC_TYPE_PARTNER_TO_FRAPPE)
 
 	def test_sync_bidirectional_timestamp_buffer_treats_nearby_modified_values_as_equal(self):
 		base_config = {
@@ -1896,7 +1991,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			"frappe_creation_field": "creation",
 			"partner_modified_field": "updated_at",
 			"partner_creation_field": "created_at",
-			"timestamp_tie_breaker": runtime.TIMESTAMP_TIE_NO_WRITE,
+			"timestamp_tie_breaker": runtime.TIMESTAMP_TIE_MANUAL,
 			"table_name": "tabTask",
 			"read_query": None,
 		}

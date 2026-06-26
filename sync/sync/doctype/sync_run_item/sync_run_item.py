@@ -18,8 +18,10 @@ class SyncRunItem(Document):
 		changed_fields: DF.SmallText | None
 		document_name: DF.Data | None
 		frappe_before_payload: DF.LongText | None
+		frappe_resolution_payload: DF.LongText | None
 		message: DF.SmallText | None
 		partner_before_payload: DF.LongText | None
+		partner_resolution_payload: DF.LongText | None
 		record_key: DF.Data
 		source_id: DF.Data | None
 		status: DF.Literal["success", "skipped", "conflict", "error"]

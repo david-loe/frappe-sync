@@ -3,6 +3,7 @@ frappe.provide("sync.run_item");
 frappe.ui.form.on("Sync Run Item", {
 	refresh(frm) {
 		sync.run_item.renderDocumentNameLink(frm);
+		sync.run_item.setupResolutionButtons(frm);
 	},
 	sync_definition(frm) {
 		sync.run_item.renderDocumentNameLink(frm);
@@ -11,6 +12,44 @@ frappe.ui.form.on("Sync Run Item", {
 		sync.run_item.renderDocumentNameLink(frm);
 	},
 });
+
+sync.run_item.setupResolutionButtons = function (frm) {
+	if (frm.is_new() || frm.doc.status !== "conflict" || frm.doc.action !== "conflict" || frm.doc.write_direction) {
+		return;
+	}
+
+	sync.run_item.addResolutionButton(frm, __("Accept Frappe Changes"), "Frappe -> Partner");
+	sync.run_item.addResolutionButton(frm, __("Accept Partner Changes"), "Frappe <- Partner");
+};
+
+sync.run_item.addResolutionButton = function (frm, label, direction) {
+	frm.add_custom_button(label, () => {
+		frappe.confirm(
+			__("This will write the selected changes for this Sync Run Item. Continue?"),
+			() => sync.run_item.resolve(frm, direction)
+		);
+	});
+};
+
+sync.run_item.resolve = function (frm, direction) {
+	return frappe
+		.call({
+			method: "sync.api.resolve_sync_run_item",
+			args: {
+				sync_run_item_name: frm.doc.name,
+				direction,
+			},
+			freeze: true,
+			freeze_message: __("Resolving Sync Run Item..."),
+		})
+		.then((response) => {
+			const result = response?.message || {};
+			if (result.ok) {
+				frappe.show_alert({ message: __("Sync Run Item resolved."), indicator: "green" });
+			}
+			return frm.reload_doc();
+		});
+};
 
 sync.run_item.renderDocumentNameLink = function (frm) {
 	if (!frm.doc.document_name) {

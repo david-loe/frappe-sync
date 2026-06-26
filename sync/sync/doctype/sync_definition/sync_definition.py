@@ -72,7 +72,7 @@ class SyncDefinition(Document):
 		sync_type: DF.Literal["Frappe -> Partner", "Frappe <-> Partner", "Frappe <- Partner"]
 		table_name: DF.Data | None
 		timestamp_buffer_ms: DF.Int
-		timestamp_tie_breaker: DF.Literal["No Write", "Frappe Wins", "Partner Wins"]
+		timestamp_tie_breaker: DF.Literal["Manual", "Frappe Wins", "Partner Wins"]
 		title: DF.Data
 		use_last_sync_date: DF.Check
 		value_mapping: DF.Table[SyncValueMapping]
@@ -155,7 +155,7 @@ class SyncDefinition(Document):
 		self.frappe_modified_field = _clean_value(getattr(self, "frappe_modified_field", None)) or "modified"
 		self.partner_modified_field = _clean_value(getattr(self, "partner_modified_field", None))
 		self.partner_creation_field = _clean_value(getattr(self, "partner_creation_field", None))
-		self.timestamp_tie_breaker = _clean_value(getattr(self, "timestamp_tie_breaker", None)) or "No Write"
+		self.timestamp_tie_breaker = _clean_value(getattr(self, "timestamp_tie_breaker", None)) or "Manual"
 
 		if not self.partner_modified_field:
 			frappe.throw("Partner Modified Field is required.")
@@ -165,8 +165,8 @@ class SyncDefinition(Document):
 			frappe.throw("Frappe Modified Field and Frappe Creation Field must be different.")
 		if self.partner_modified_field == self.partner_creation_field:
 			frappe.throw("Partner Modified Field and Partner Creation Field must be different.")
-		if self.timestamp_tie_breaker not in {"No Write", "Frappe Wins", "Partner Wins"}:
-			frappe.throw("Timestamp Tie Breaker must be one of: No Write, Frappe Wins, Partner Wins.")
+		if self.timestamp_tie_breaker not in {"Manual", "Frappe Wins", "Partner Wins"}:
+			frappe.throw("Timestamp Tie Breaker must be one of: Manual, Frappe Wins, Partner Wins.")
 
 		doctype_name = _clean_value(getattr(self, "doctype_name", None))
 		if doctype_name:
@@ -328,7 +328,7 @@ class SyncDefinition(Document):
 			"frappe_creation_field": "creation",
 			"partner_modified_field": getattr(self, "partner_modified_field", None),
 			"partner_creation_field": getattr(self, "partner_creation_field", None),
-			"timestamp_tie_breaker": getattr(self, "timestamp_tie_breaker", "No Write"),
+			"timestamp_tie_breaker": getattr(self, "timestamp_tie_breaker", "Manual"),
 			"match_fields": SyncDefinition.get_match_fields(self),
 			"field_mapping": SyncDefinition.get_field_mapping(self),
 			"value_mapping": SyncDefinition.get_value_mapping(self),

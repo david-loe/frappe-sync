@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sync VERSION\n"
 "Report-Msgid-Bugs-To: kontak@david-loe.de\n"
-"POT-Creation-Date: 2026-06-26 09:05+0000\n"
-"PO-Revision-Date: 2026-06-26 09:05+0000\n"
+"POT-Creation-Date: 2026-06-26 14:27+0000\n"
+"PO-Revision-Date: 2026-06-26 14:27+0000\n"
 "Last-Translator: kontak@david-loe.de\n"
 "Language-Team: kontak@david-loe.de\n"
 "MIME-Version: 1.0\n"
@@ -16,7 +16,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.16.0\n"
 
-#: sync/public/js/sync_helpers.js:480
+#: sync/public/js/sync_helpers.js:485
 msgid "A sync run is already active for {0}."
 msgstr ""
 
@@ -38,14 +38,22 @@ msgstr ""
 msgid "API key or access token provided by the upstream system."
 msgstr ""
 
+#: sync/public/js/sync_run_item.js:21
+msgid "Accept Frappe Changes"
+msgstr ""
+
+#: sync/public/js/sync_run_item.js:22
+msgid "Accept Partner Changes"
+msgstr ""
+
 #. Label of the action (Select) field in DocType 'Sync Run Item'
-#: sync/public/js/sync_helpers.js:1082 sync/public/js/sync_run.js:240
+#: sync/public/js/sync_helpers.js:1087 sync/public/js/sync_run.js:240
 #: sync/public/js/sync_run.js:414
 #: sync/sync/doctype/sync_run_item/sync_run_item.json
 msgid "Action"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:593
+#: sync/public/js/sync_helpers.js:598
 msgid "Actions"
 msgstr ""
 
@@ -53,11 +61,11 @@ msgstr ""
 msgid "Active"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:289
+#: sync/public/js/sync_helpers.js:294
 msgid "Additional strategy input such as a database sequence name or allocation source."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1140
+#: sync/public/js/sync_helpers.js:1145
 msgid "Adjust YAML"
 msgstr ""
 
@@ -78,7 +86,7 @@ msgstr ""
 msgid "Authentication Type"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:905
+#: sync/public/js/sync_helpers.js:910
 msgid "Available"
 msgstr ""
 
@@ -140,7 +148,7 @@ msgstr ""
 msgid "Choose the Frappe fields that define a logical match between Frappe and partner records."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:887
+#: sync/public/js/sync_helpers.js:892
 msgid "Close"
 msgstr ""
 
@@ -161,7 +169,7 @@ msgstr ""
 msgid "Conflict Count"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:950
+#: sync/public/js/sync_helpers.js:955
 msgid "Conflict Hints"
 msgstr ""
 
@@ -174,7 +182,7 @@ msgstr ""
 msgid "Conflict Policy"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1017
+#: sync/public/js/sync_helpers.js:1022
 msgid "Conflict for {0}"
 msgstr ""
 
@@ -208,7 +216,7 @@ msgstr ""
 msgid "Connection Options"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1225
+#: sync/public/js/sync_helpers.js:1230
 msgid "Connection Test"
 msgstr ""
 
@@ -218,7 +226,7 @@ msgstr ""
 msgid "Controls conflict resolution when both effective timestamps are equal or unavailable."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:274
+#: sync/public/js/sync_helpers.js:279
 msgid "Controls how a new partner identity is produced when the partner does not generate it from the payload."
 msgstr ""
 
@@ -227,7 +235,7 @@ msgstr ""
 msgid "Controls how many records the Preview action requests."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:878
+#: sync/public/js/sync_helpers.js:883
 msgid "Copy the YAML below to archive or share."
 msgstr ""
 
@@ -288,15 +296,15 @@ msgstr ""
 msgid "Delete Missing"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:540
+#: sync/public/js/sync_definition.js:541
 msgid "Delete Missing cannot be enabled when Read Query is used."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:587
+#: sync/public/js/sync_definition.js:588
 msgid "Delete Missing is enabled. A full sync can delete target records that are absent from the source load. Continue saving this Sync Definition?"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:548
+#: sync/public/js/sync_definition.js:549
 msgid "Delete Missing is enabled. Target records absent from a complete source load may be deleted."
 msgstr ""
 
@@ -321,7 +329,7 @@ msgid "Description"
 msgstr ""
 
 #. Label of the direction (Select) field in DocType 'Sync Field Mapping'
-#: sync/public/js/sync_helpers.js:754 sync/public/js/sync_helpers.js:787
+#: sync/public/js/sync_helpers.js:759 sync/public/js/sync_helpers.js:792
 #: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
 msgid "Direction"
 msgstr ""
@@ -331,7 +339,7 @@ msgstr ""
 msgid "DocType"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1066 sync/public/js/sync_helpers.js:1080
+#: sync/public/js/sync_helpers.js:1071 sync/public/js/sync_helpers.js:1085
 #: sync/public/js/sync_run.js:240 sync/public/js/sync_run.js:414
 msgid "Document"
 msgstr ""
@@ -358,16 +366,16 @@ msgid "Driver Options"
 msgstr ""
 
 #. Label of the dry_run (Check) field in DocType 'Sync Run'
-#: sync/public/js/sync_definition.js:89 sync/public/js/sync_run.js:143
+#: sync/public/js/sync_definition.js:90 sync/public/js/sync_run.js:143
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Dry Run"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:477
+#: sync/public/js/sync_helpers.js:482
 msgid "Dry run"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:494
+#: sync/public/js/sync_helpers.js:499
 msgid "Dry run started."
 msgstr ""
 
@@ -388,7 +396,7 @@ msgstr ""
 #. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
 #. Option for the 'Status' (Select) field in DocType 'Sync Partner'
 #. Option for the 'Status' (Select) field in DocType 'Sync Run'
-#: sync/public/js/sync_helpers.js:565
+#: sync/public/js/sync_helpers.js:570
 #: sync/sync/doctype/sync_definition/sync_definition.json
 #: sync/sync/doctype/sync_partner/sync_partner.json
 #: sync/sync/doctype/sync_run/sync_run.json
@@ -436,7 +444,7 @@ msgstr ""
 msgid "Execution Timing"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:95
+#: sync/public/js/sync_definition.js:96
 msgid "Export YAML"
 msgstr ""
 
@@ -451,7 +459,7 @@ msgstr ""
 msgid "Fallback for values that do not match a Value Mapping row."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:905
+#: sync/public/js/sync_helpers.js:910
 msgid "Fallback review only"
 msgstr ""
 
@@ -467,7 +475,7 @@ msgstr ""
 msgid "Field Name"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:232
+#: sync/public/js/sync_definition.js:233
 msgid "Field choices loaded from {0}."
 msgstr ""
 
@@ -477,7 +485,7 @@ msgstr ""
 msgid "Field names or connection option keys to mask when exporting, one per line."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:578
+#: sync/public/js/sync_helpers.js:583
 msgid "Fields"
 msgstr ""
 
@@ -516,7 +524,7 @@ msgstr ""
 msgid "Firebird usually expects an explicit charset. UTF8 is a safe default."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1252
+#: sync/public/js/sync_helpers.js:1257
 msgid "For Frappe -> Partner and Frappe <- Partner only: choose whether one source record updates only one matched target or all matched targets."
 msgstr ""
 
@@ -571,7 +579,7 @@ msgstr ""
 #. Label of the frappe_field (Select) field in DocType 'Sync Field Mapping'
 #. Label of the frappe_field (Select) field in DocType 'Sync Key Field'
 #. Label of the frappe_field (Select) field in DocType 'Sync Value Mapping'
-#: sync/public/js/sync_helpers.js:752
+#: sync/public/js/sync_helpers.js:757
 #: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
 #: sync/sync/doctype/sync_key_field/sync_key_field.json
 #: sync/sync/doctype/sync_value_mapping/sync_value_mapping.json
@@ -584,7 +592,7 @@ msgstr ""
 msgid "Frappe Modified Field"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:238
+#: sync/public/js/sync_helpers.js:243
 msgid "Frappe Partner ID Field"
 msgstr ""
 
@@ -592,6 +600,12 @@ msgstr ""
 #. Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Frappe Partner Identity Field"
+msgstr ""
+
+#. Label of the frappe_resolution_payload (Long Text) field in DocType 'Sync
+#. Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Frappe Resolution Payload"
 msgstr ""
 
 #. Label of the frappe_value (Data) field in DocType 'Sync Value Mapping'
@@ -634,7 +648,7 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1083
+#: sync/public/js/sync_helpers.js:1088
 msgid "Hint"
 msgstr ""
 
@@ -676,31 +690,31 @@ msgstr ""
 msgid "Identity"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1129
+#: sync/public/js/sync_helpers.js:1134
 msgid "Import"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1129
+#: sync/public/js/sync_helpers.js:1134
 msgid "Import Blocked"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1127
+#: sync/public/js/sync_helpers.js:1132
 msgid "Import Preview"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1197
+#: sync/public/js/sync_helpers.js:1202
 msgid "Import Sync Definition"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:98
+#: sync/public/js/sync_definition.js:99
 msgid "Import YAML"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1105
+#: sync/public/js/sync_helpers.js:1110
 msgid "Import complete"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1034
+#: sync/public/js/sync_helpers.js:1039
 msgid "Import issue for {0}"
 msgstr ""
 
@@ -766,7 +780,7 @@ msgstr ""
 msgid "Last Sync At"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:443
+#: sync/public/js/sync_helpers.js:448
 msgid "Last refresh: {0}"
 msgstr ""
 
@@ -785,7 +799,7 @@ msgstr ""
 msgid "Latest {0} items loaded for quick inspection."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:369
+#: sync/public/js/sync_helpers.js:374
 msgid "Length {0}"
 msgstr ""
 
@@ -795,19 +809,19 @@ msgstr ""
 msgid "Literal value used when Unmapped Action is Use Fallback Value."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:400
+#: sync/public/js/sync_helpers.js:405
 msgid "Load Columns"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:372 sync/public/js/sync_helpers.js:442
+#: sync/public/js/sync_definition.js:373 sync/public/js/sync_helpers.js:447
 msgid "Load partner columns from {0} to get guided partner-side field selection."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:441
+#: sync/public/js/sync_helpers.js:446
 msgid "Loaded {0} partner columns from {1}."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:483
+#: sync/public/js/sync_definition.js:484
 msgid "Loaded {0} partner columns."
 msgstr ""
 
@@ -815,11 +829,11 @@ msgstr ""
 msgid "Loading monitoring summary…"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:427
+#: sync/public/js/sync_helpers.js:432
 msgid "Loading partner columns from the configured source..."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:463
+#: sync/public/js/sync_definition.js:464
 msgid "Loading partner columns…"
 msgstr ""
 
@@ -827,13 +841,19 @@ msgstr ""
 msgid "Loading run items…"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:210
+#: sync/public/js/sync_helpers.js:215
 msgid "Logical fields used to match source and partner records. These are not the partner's technical identity field."
 msgstr ""
 
 #. Description of the 'Username' (Data) field in DocType 'Sync Partner'
 #: sync/sync/doctype/sync_partner/sync_partner.json
 msgid "Login name used for database or API authentication when the selected auth type requires it."
+msgstr ""
+
+#. Option for the 'Timestamp Tie Breaker' (Select) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Manual"
 msgstr ""
 
 #. Description of the 'Field Mapping' (Table) field in DocType 'Sync
@@ -843,7 +863,7 @@ msgid "Map Frappe fields to partner-side columns. Load partner columns above to 
 msgstr ""
 
 #. Label of the tab_mapping (Tab Break) field in DocType 'Sync Definition'
-#: sync/public/js/sync_helpers.js:587
+#: sync/public/js/sync_helpers.js:592
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Mapping"
 msgstr ""
@@ -855,7 +875,7 @@ msgid "Mask Credentials in Export"
 msgstr ""
 
 #. Label of the match_fields (Table) field in DocType 'Sync Definition'
-#: sync/public/js/sync_helpers.js:204 sync/public/js/sync_helpers.js:580
+#: sync/public/js/sync_helpers.js:209 sync/public/js/sync_helpers.js:585
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Match Fields"
 msgstr ""
@@ -868,7 +888,7 @@ msgstr ""
 msgid "Message"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1030
+#: sync/public/js/sync_helpers.js:1035
 msgid "Missing payload section: {0}"
 msgstr ""
 
@@ -900,25 +920,19 @@ msgstr ""
 msgid "Next Run At"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:916 sync/public/js/sync_run.js:143
+#: sync/public/js/sync_helpers.js:921 sync/public/js/sync_run.js:143
 msgid "No"
 msgstr ""
 
-#. Option for the 'Timestamp Tie Breaker' (Select) field in DocType 'Sync
-#. Definition'
-#: sync/sync/doctype/sync_definition/sync_definition.json
-msgid "No Write"
-msgstr ""
-
-#: sync/public/js/sync_helpers.js:870
+#: sync/public/js/sync_helpers.js:875
 msgid "No YAML returned."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:779
+#: sync/public/js/sync_helpers.js:784
 msgid "No actions available."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:951
+#: sync/public/js/sync_helpers.js:956
 msgid "No conflicts reported."
 msgstr ""
 
@@ -934,7 +948,7 @@ msgstr ""
 msgid "No connection test has been recorded yet. Use Test Connection to record one."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:730
+#: sync/public/js/sync_helpers.js:735
 msgid "No field mapping configured."
 msgstr ""
 
@@ -942,7 +956,7 @@ msgstr ""
 msgid "No message"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1058
+#: sync/public/js/sync_helpers.js:1063
 msgid "No planned changes returned."
 msgstr ""
 
@@ -962,15 +976,15 @@ msgstr ""
 msgid "No run items found yet."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1288
+#: sync/public/js/sync_helpers.js:1300
 msgid "No runs found yet."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:799
+#: sync/public/js/sync_helpers.js:804
 msgid "No sample records returned."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:628
+#: sync/public/js/sync_helpers.js:633
 msgid "No summary available."
 msgstr ""
 
@@ -986,7 +1000,7 @@ msgstr ""
 msgid "No target DocType configured on the Sync Definition."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:957
+#: sync/public/js/sync_helpers.js:962
 msgid "No warnings reported."
 msgstr ""
 
@@ -996,13 +1010,13 @@ msgstr ""
 
 #. Option for the 'Authentication Type' (Select) field in DocType 'Sync
 #. Partner'
-#: sync/public/js/sync_helpers.js:381 sync/public/js/sync_helpers.js:643
-#: sync/public/js/sync_helpers.js:857 sync/public/js/sync_helpers.js:1068
+#: sync/public/js/sync_helpers.js:386 sync/public/js/sync_helpers.js:648
+#: sync/public/js/sync_helpers.js:862 sync/public/js/sync_helpers.js:1073
 #: sync/sync/doctype/sync_partner/sync_partner.json
 msgid "None"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:368
+#: sync/public/js/sync_helpers.js:373
 msgid "Not Null"
 msgstr ""
 
@@ -1024,7 +1038,7 @@ msgstr ""
 msgid "Number of field-level differences captured on this run item."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:565
+#: sync/public/js/sync_helpers.js:570
 msgid "OK"
 msgstr ""
 
@@ -1051,11 +1065,11 @@ msgstr ""
 msgid "Open Items"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:104
+#: sync/public/js/sync_definition.js:105
 msgid "Open Latest Run"
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:41
+#: sync/public/js/sync_run_item.js:80
 msgid "Open related document {0}"
 msgstr ""
 
@@ -1067,7 +1081,7 @@ msgstr ""
 msgid "Optional Firebird driver options, one per line or JSON."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:244
+#: sync/public/js/sync_helpers.js:249
 msgid "Optional Frappe field that stores the partner-generated identity after create."
 msgstr ""
 
@@ -1110,11 +1124,11 @@ msgstr ""
 msgid "Optional driver-specific connection options, one per line or JSON. Add sensitive option keys to Secret Fields so exports mask them."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:259
+#: sync/public/js/sync_helpers.js:264
 msgid "Optional partner field that stores the Frappe document name for traceability."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:184 sync/public/js/sync_helpers.js:1246
+#: sync/public/js/sync_helpers.js:189 sync/public/js/sync_helpers.js:1251
 msgid "Optional partner table for column introspection."
 msgstr ""
 
@@ -1124,11 +1138,11 @@ msgstr ""
 msgid "Optional partner-side column that receives the Frappe document name for a symmetric cross-link."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:198
+#: sync/public/js/sync_helpers.js:203
 msgid "Optional query used to load partner rows. Leave blank to read from Table Name."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1189
+#: sync/public/js/sync_helpers.js:1194
 msgid "Overwrite existing"
 msgstr ""
 
@@ -1140,7 +1154,7 @@ msgid "Partial Error"
 msgstr ""
 
 #. Label of the partner (Link) field in DocType 'Sync Definition'
-#: sync/public/js/sync_definition.js:413
+#: sync/public/js/sync_definition.js:414
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Partner"
 msgstr ""
@@ -1153,13 +1167,13 @@ msgstr ""
 
 #. Label of the partner_columns_status (HTML) field in DocType 'Sync
 #. Definition'
-#: sync/public/js/sync_helpers.js:413 sync/public/js/sync_helpers.js:426
-#: sync/public/js/sync_helpers.js:456
+#: sync/public/js/sync_helpers.js:418 sync/public/js/sync_helpers.js:431
+#: sync/public/js/sync_helpers.js:461
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Partner Columns"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:298
+#: sync/public/js/sync_helpers.js:303
 msgid "Partner Create ID Scope"
 msgstr ""
 
@@ -1171,14 +1185,14 @@ msgstr ""
 
 #. Label of the partner_create_id_source (Data) field in DocType 'Sync
 #. Definition'
-#: sync/public/js/sync_helpers.js:283
+#: sync/public/js/sync_helpers.js:288
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Partner Create ID Source"
 msgstr ""
 
 #. Label of the partner_create_id_strategy (Select) field in DocType 'Sync
 #. Definition'
-#: sync/public/js/sync_helpers.js:268
+#: sync/public/js/sync_helpers.js:273
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Partner Create ID Strategy"
 msgstr ""
@@ -1190,12 +1204,12 @@ msgid "Partner Creation Field"
 msgstr ""
 
 #. Label of the partner_field (Select) field in DocType 'Sync Field Mapping'
-#: sync/public/js/sync_helpers.js:753
+#: sync/public/js/sync_helpers.js:758
 #: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
 msgid "Partner Field"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:253
+#: sync/public/js/sync_helpers.js:258
 msgid "Partner Frappe ID Field"
 msgstr ""
 
@@ -1207,7 +1221,7 @@ msgstr ""
 
 #. Label of the partner_identity_field (Select) field in DocType 'Sync
 #. Definition'
-#: sync/public/js/sync_helpers.js:223
+#: sync/public/js/sync_helpers.js:228
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Partner Identity Field"
 msgstr ""
@@ -1221,6 +1235,12 @@ msgstr ""
 #. Label of the partner_name (Data) field in DocType 'Sync Partner'
 #: sync/sync/doctype/sync_partner/sync_partner.json
 msgid "Partner Name"
+msgstr ""
+
+#. Label of the partner_resolution_payload (Long Text) field in DocType 'Sync
+#. Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Partner Resolution Payload"
 msgstr ""
 
 #. Label of the section_partner_source (Section Break) field in DocType 'Sync
@@ -1256,7 +1276,7 @@ msgstr ""
 msgid "Partner Wins"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:408
+#: sync/public/js/sync_helpers.js:413
 msgid "Partner column loading is only available after a partner and table name are set."
 msgstr ""
 
@@ -1266,7 +1286,7 @@ msgstr ""
 msgid "Partner creation timestamp used as fallback and written only when creating partner records."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:370
+#: sync/public/js/sync_definition.js:371
 msgid "Partner field choices loaded from the stored partner columns."
 msgstr ""
 
@@ -1276,21 +1296,21 @@ msgstr ""
 msgid "Partner field used to detect changes. Falls back to the creation field when NULL."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:426
+#: sync/public/js/sync_definition.js:427
 msgid "Partner rows are loaded directly from Table Name."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:425
+#: sync/public/js/sync_definition.js:426
 msgid "Partner rows are loaded from the Read Query."
 msgstr ""
 
 #. Description of the 'Table Name' (Data) field in DocType 'Sync Definition'
-#: sync/public/js/sync_helpers.js:183 sync/public/js/sync_helpers.js:1245
+#: sync/public/js/sync_helpers.js:188 sync/public/js/sync_helpers.js:1250
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Partner table used for writes and as the default read source when Read Query is blank."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:492
+#: sync/public/js/sync_definition.js:493
 msgid "Partner-column loading is not available yet. Partner field selections require stored partner columns."
 msgstr ""
 
@@ -1309,8 +1329,20 @@ msgstr ""
 msgid "Password used by the connector for password-based authentication."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1179
+#: sync/public/js/sync_helpers.js:1184
 msgid "Paste a YAML export of a sync definition to import."
+msgstr ""
+
+#. Description of the 'Frappe Resolution Payload' (Long Text) field in DocType
+#. 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Payload written to Frappe when accepting partner changes for a manual conflict."
+msgstr ""
+
+#. Description of the 'Partner Resolution Payload' (Long Text) field in DocType
+#. 'Sync Run Item'
+#: sync/sync/doctype/sync_run_item/sync_run_item.json
+msgid "Payload written to the partner when accepting Frappe changes for a manual conflict."
 msgstr ""
 
 #. Label of the section_break_payloads (Section Break) field in DocType 'Sync
@@ -1319,7 +1351,7 @@ msgstr ""
 msgid "Payloads"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:962
+#: sync/public/js/sync_helpers.js:967
 msgid "Planned Changes"
 msgstr ""
 
@@ -1330,7 +1362,7 @@ msgstr ""
 
 #. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
 #. Option for the 'Status' (Select) field in DocType 'Sync Run'
-#: sync/public/js/sync_definition.js:92 sync/public/js/sync_helpers.js:1198
+#: sync/public/js/sync_definition.js:93 sync/public/js/sync_helpers.js:1203
 #: sync/sync/doctype/sync_definition/sync_definition.json
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Preview"
@@ -1369,24 +1401,24 @@ msgstr ""
 msgid "Queued or Running Sync Runs older than this timeout can be recovered by the scheduler or operator action."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:520
+#: sync/public/js/sync_helpers.js:525
 msgid "Queueing dry run…"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:520
+#: sync/public/js/sync_helpers.js:525
 msgid "Queueing sync run…"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:605
+#: sync/public/js/sync_helpers.js:610
 msgid "Raw JSON"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:968
+#: sync/public/js/sync_helpers.js:973
 msgid "Raw Preview Data"
 msgstr ""
 
 #. Label of the read_query (Code) field in DocType 'Sync Definition'
-#: sync/public/js/sync_definition.js:423 sync/public/js/sync_helpers.js:192
+#: sync/public/js/sync_definition.js:424 sync/public/js/sync_helpers.js:197
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Read Query"
 msgstr ""
@@ -1410,15 +1442,15 @@ msgstr ""
 msgid "Record Matching"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:101
+#: sync/public/js/sync_definition.js:102
 msgid "Recover Stale Runs"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:616
+#: sync/public/js/sync_definition.js:617
 msgid "Recovered {0} stale runs."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:611
+#: sync/public/js/sync_definition.js:612
 msgid "Recovering stale runs…"
 msgstr ""
 
@@ -1428,7 +1460,7 @@ msgstr ""
 msgid "Recovery"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:400
+#: sync/public/js/sync_helpers.js:405
 msgid "Refresh Columns"
 msgstr ""
 
@@ -1440,7 +1472,7 @@ msgstr ""
 msgid "Related Run Items"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1190
+#: sync/public/js/sync_helpers.js:1195
 msgid "Replace the existing definition if the name already exists."
 msgstr ""
 
@@ -1452,7 +1484,11 @@ msgstr ""
 msgid "Resolve the Sync Definition target DocType and open {0}"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:788
+#: sync/public/js/sync_run_item.js:43
+msgid "Resolving Sync Run Item..."
+msgstr ""
+
+#: sync/public/js/sync_helpers.js:793
 msgid "Result"
 msgstr ""
 
@@ -1462,7 +1498,7 @@ msgstr ""
 msgid "Retention"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:477
+#: sync/public/js/sync_helpers.js:482
 msgid "Run"
 msgstr ""
 
@@ -1492,7 +1528,7 @@ msgstr ""
 msgid "Run Notes"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:86
+#: sync/public/js/sync_definition.js:87
 msgid "Run Now"
 msgstr ""
 
@@ -1526,7 +1562,7 @@ msgstr ""
 msgid "SQL Server port. Leave blank to use the connector default."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:304
+#: sync/public/js/sync_helpers.js:309
 msgid "SQL WHERE condition that limits the rows considered when generating the next partner ID, for example `NR BETWEEN 1 AND 89999`."
 msgstr ""
 
@@ -1534,7 +1570,7 @@ msgstr ""
 msgid "SQL login or database user used for password-based authentication."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:599
+#: sync/public/js/sync_helpers.js:604
 msgid "Sample Records"
 msgstr ""
 
@@ -1546,7 +1582,7 @@ msgstr ""
 msgid "Save the run to load related items."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:604
+#: sync/public/js/sync_definition.js:605
 msgid "Save this Sync Definition before recovering stale runs."
 msgstr ""
 
@@ -1575,7 +1611,7 @@ msgstr ""
 msgid "Security Notes"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:233
+#: sync/public/js/sync_definition.js:234
 msgid "Select a DocType to load guided field choices."
 msgstr ""
 
@@ -1593,7 +1629,7 @@ msgstr ""
 msgid "Select a field from the chosen DocType."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:375
+#: sync/public/js/sync_definition.js:376
 msgid "Select a partner-side timestamp field from the loaded partner source columns."
 msgstr ""
 
@@ -1622,19 +1658,19 @@ msgstr ""
 msgid "Server"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:944
+#: sync/public/js/sync_helpers.js:949
 msgid "Server-side import preview is not available yet. You can still import, but conflict hints are limited to this client-side review step."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:449
+#: sync/public/js/sync_definition.js:450
 msgid "Set Partner and Table Name or Read Query first."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:407
+#: sync/public/js/sync_helpers.js:412
 msgid "Set {0} first."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:817
+#: sync/public/js/sync_helpers.js:822
 msgid "Showing first {0} of {1} sample records."
 msgstr ""
 
@@ -1662,7 +1698,7 @@ msgstr ""
 msgid "Source ID"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:439
+#: sync/public/js/sync_helpers.js:444
 msgid "Source settings changed. Refresh the column list before editing partner-side mappings."
 msgstr ""
 
@@ -1685,7 +1721,7 @@ msgstr ""
 #. Label of the last_connection_status (Select) field in DocType 'Sync Partner'
 #. Label of the status (Select) field in DocType 'Sync Run'
 #. Label of the status (Select) field in DocType 'Sync Run Item'
-#: sync/public/js/sync_helpers.js:1081 sync/public/js/sync_partner.js:209
+#: sync/public/js/sync_helpers.js:1086 sync/public/js/sync_partner.js:209
 #: sync/public/js/sync_run.js:240 sync/public/js/sync_run.js:414
 #: sync/sync/doctype/sync_definition/sync_definition.json
 #: sync/sync/doctype/sync_partner/sync_partner.json
@@ -1726,7 +1762,7 @@ msgid "Successful Sync Runs and their Sync Run Items are deleted after this many
 msgstr ""
 
 #. Label of the summary (Small Text) field in DocType 'Sync Run'
-#: sync/public/js/sync_helpers.js:572 sync/public/js/sync_helpers.js:937
+#: sync/public/js/sync_helpers.js:577 sync/public/js/sync_helpers.js:942
 #: sync/public/js/sync_run.js:177 sync/sync/doctype/sync_run/sync_run.json
 msgid "Summary"
 msgstr ""
@@ -1786,7 +1822,7 @@ msgstr ""
 msgid "Sync Partner Type"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:542
+#: sync/public/js/sync_helpers.js:547
 msgid "Sync Preview"
 msgstr ""
 
@@ -1802,6 +1838,10 @@ msgstr ""
 #. Name of a DocType
 #: sync/sync/doctype/sync_run_item/sync_run_item.json
 msgid "Sync Run Item"
+msgstr ""
+
+#: sync/public/js/sync_run_item.js:48
+msgid "Sync Run Item resolved."
 msgstr ""
 
 #. Name of a DocType
@@ -1823,15 +1863,15 @@ msgstr ""
 msgid "Sync Value Mapping"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1108
+#: sync/public/js/sync_helpers.js:1113
 msgid "Sync definition imported as {0}."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1109
+#: sync/public/js/sync_helpers.js:1114
 msgid "Sync definition imported."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:494
+#: sync/public/js/sync_helpers.js:499
 msgid "Sync started."
 msgstr ""
 
@@ -1846,17 +1886,17 @@ msgid "System Manager"
 msgstr ""
 
 #. Label of the table_name (Data) field in DocType 'Sync Definition'
-#: sync/public/js/sync_definition.js:416 sync/public/js/sync_definition.js:423
-#: sync/public/js/sync_helpers.js:176
+#: sync/public/js/sync_definition.js:417 sync/public/js/sync_definition.js:424
+#: sync/public/js/sync_helpers.js:181
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Table Name"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:537
+#: sync/public/js/sync_definition.js:538
 msgid "Table Name is required."
 msgstr ""
 
-#: sync/public/js/sync_run.js:204 sync/public/js/sync_run_item.js:33
+#: sync/public/js/sync_run.js:204 sync/public/js/sync_run_item.js:72
 msgid "Target DocType could not be resolved from the Sync Definition."
 msgstr ""
 
@@ -1873,7 +1913,7 @@ msgstr ""
 msgid "Target ID"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:229
+#: sync/public/js/sync_helpers.js:234
 msgid "Technical partner key column used when a new partner row is created."
 msgstr ""
 
@@ -1887,7 +1927,7 @@ msgstr ""
 msgid "Test Connection"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:551
+#: sync/public/js/sync_definition.js:552
 msgid "The latest Sync Run is {0}. Stale active runs can block new executions."
 msgstr ""
 
@@ -1906,6 +1946,10 @@ msgstr ""
 
 #: sync/public/js/sync_run.js:153
 msgid "This active run can block new executions until it finishes or is recovered as stale."
+msgstr ""
+
+#: sync/public/js/sync_run_item.js:28
+msgid "This will write the selected changes for this Sync Run Item. Continue?"
 msgstr ""
 
 #. Label of the time_zone (Data) field in DocType 'Sync Partner'
@@ -1956,7 +2000,7 @@ msgstr ""
 msgid "Trust Server Certificate"
 msgstr ""
 
-#: sync/public/js/sync_definition.js:526
+#: sync/public/js/sync_definition.js:527
 msgid "Unable to load field choices."
 msgstr ""
 
@@ -1968,20 +2012,20 @@ msgstr ""
 msgid "Unable to load run items."
 msgstr ""
 
-#: sync/public/js/sync_definition.js:622
+#: sync/public/js/sync_definition.js:623
 msgid "Unable to recover stale runs."
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:51 sync/public/js/sync_run_item_list.js:68
+#: sync/public/js/sync_run_item.js:90 sync/public/js/sync_run_item_list.js:68
 msgid "Unable to resolve target DocType."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:533
+#: sync/public/js/sync_helpers.js:538
 msgid "Unable to run sync definition"
 msgstr ""
 
 #. Option for the 'Status' (Select) field in DocType 'Sync Partner'
-#: sync/public/js/sync_helpers.js:1067 sync/public/js/sync_run.js:142
+#: sync/public/js/sync_helpers.js:1072 sync/public/js/sync_run.js:142
 #: sync/public/js/sync_run.js:161 sync/public/js/sync_run.js:323
 #: sync/public/js/sync_run.js:432 sync/public/js/sync_run_item_list.js:20
 #: sync/public/js/sync_run_list.js:29
@@ -2064,12 +2108,12 @@ msgid "Username used by the connector for password-based authentication."
 msgstr ""
 
 #. Label of the value_mapping (Table) field in DocType 'Sync Definition'
-#: sync/public/js/sync_helpers.js:581
+#: sync/public/js/sync_helpers.js:586
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Value Mapping"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:956
+#: sync/public/js/sync_helpers.js:961
 msgid "Warnings"
 msgstr ""
 
@@ -2085,7 +2129,7 @@ msgstr ""
 msgid "When enabled, partner secrets are redacted in YAML exports."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:429
+#: sync/public/js/sync_helpers.js:434
 msgid "Working"
 msgstr ""
 
@@ -2107,15 +2151,15 @@ msgstr ""
 msgid "Written After Payload"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:1178
+#: sync/public/js/sync_helpers.js:1183
 msgid "YAML Definition"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:877 sync/public/js/sync_helpers.js:886
+#: sync/public/js/sync_helpers.js:882 sync/public/js/sync_helpers.js:891
 msgid "YAML Export"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:916 sync/public/js/sync_run.js:143
+#: sync/public/js/sync_helpers.js:921 sync/public/js/sync_run.js:143
 msgid "Yes"
 msgstr ""
 
@@ -2147,7 +2191,7 @@ msgstr ""
 msgid "created"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:397
+#: sync/public/js/sync_helpers.js:402
 msgid "current source"
 msgstr ""
 
@@ -2179,7 +2223,7 @@ msgstr ""
 msgid "max_plus_one"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:450
+#: sync/public/js/sync_helpers.js:455
 msgid "more"
 msgstr ""
 
@@ -2221,27 +2265,27 @@ msgstr ""
 msgid "updated"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:489
+#: sync/public/js/sync_helpers.js:494
 msgid "{0} completed with conflicts."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:489
+#: sync/public/js/sync_helpers.js:494
 msgid "{0} completed with conflicts: {1}"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:486
+#: sync/public/js/sync_helpers.js:491
 msgid "{0} completed with errors."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:486
+#: sync/public/js/sync_helpers.js:491
 msgid "{0} completed with errors: {1}"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:483
+#: sync/public/js/sync_helpers.js:488
 msgid "{0} completed."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:483
+#: sync/public/js/sync_helpers.js:488
 msgid "{0} completed: {1}"
 msgstr ""
 
@@ -2261,11 +2305,11 @@ msgstr ""
 msgid "{0} processed"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:492
+#: sync/public/js/sync_helpers.js:497
 msgid "{0} queued."
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:492
+#: sync/public/js/sync_helpers.js:497
 msgid "{0} queued: {1}"
 msgstr ""
 

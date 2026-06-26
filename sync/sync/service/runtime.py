@@ -69,11 +69,11 @@ DEFAULT_RUN_RETENTION_DAYS_ERROR = 365
 RUN_DOC_PENDING_WRITES_ATTR = "_sync_pending_write_count"
 AUDIT_RECORD_UNSET = object()
 VALUE_MAPPING_UNSET = object()
-TIMESTAMP_TIE_NO_WRITE = "No Write"
+TIMESTAMP_TIE_MANUAL = "Manual"
 TIMESTAMP_TIE_FRAPPE_WINS = "Frappe Wins"
 TIMESTAMP_TIE_PARTNER_WINS = "Partner Wins"
 TIMESTAMP_TIE_BREAKERS = {
-	TIMESTAMP_TIE_NO_WRITE,
+	TIMESTAMP_TIE_MANUAL,
 	TIMESTAMP_TIE_FRAPPE_WINS,
 	TIMESTAMP_TIE_PARTNER_WINS,
 }
@@ -103,7 +103,7 @@ class SyncDefinitionConfig:
 	frappe_creation_field: str = "creation"
 	partner_modified_field: str = "modified"
 	partner_creation_field: str = "creation"
-	timestamp_tie_breaker: str = TIMESTAMP_TIE_NO_WRITE
+	timestamp_tie_breaker: str = TIMESTAMP_TIE_MANUAL
 	value_mapping_fallbacks: dict[str, dict[str, Any]] | None = None
 	partner_identity_field: str | None = None
 	frappe_partner_identity_field: str | None = None
@@ -442,6 +442,56 @@ def run_sync_definition_job(
 	dry_run: bool = False,
 ):
 	return execute_sync_definition(sync_definition_name, trigger=trigger, dry_run=dry_run, run_name=run_name)
+
+
+def resolve_sync_run_item(sync_run_item_name: str, direction: str) -> dict[str, Any]:
+	direction = _clean_string(direction) or ""
+	if direction not in {SYNC_TYPE_FRAPPE_TO_PARTNER, SYNC_TYPE_PARTNER_TO_FRAPPE}:
+		raise frappe.ValidationError("Resolution direction must be Frappe -> Partner or Frappe <- Partner.")
+
+	item_doc = frappe.get_doc(SYNC_RUN_ITEM, sync_run_item_name)
+	run_doc = frappe.get_doc(SYNC_RUN, item_doc.sync_run)
+	if cint(getattr(run_doc, "dry_run", 0)):
+		raise frappe.ValidationError("Dry run items cannot be manually resolved.")
+	if getattr(item_doc, "status", None) != "conflict" or getattr(item_doc, "action", None) != "conflict":
+		raise frappe.ValidationError("Only open conflict Sync Run Items can be manually resolved.")
+	if getattr(item_doc, "write_direction", None):
+		raise frappe.ValidationError("Sync Run Item already has a write direction.")
+
+	sync_definition_name = getattr(item_doc, "sync_definition", None) or getattr(run_doc, "sync_definition", None)
+	if not sync_definition_name:
+		raise frappe.ValidationError("Sync Run Item is missing Sync Definition.")
+	config = _build_definition_config(frappe.get_doc(SYNC_DEFINITION, sync_definition_name))
+
+	try:
+		if direction == SYNC_TYPE_PARTNER_TO_FRAPPE:
+			written_after = _resolve_item_to_frappe(item_doc, config)
+			message = "Manually accepted partner changes."
+		else:
+			written_after = _resolve_item_to_partner(item_doc, config)
+			message = "Manually accepted frappe changes."
+		_update_doc_fields(
+			item_doc,
+			{
+				"action": "updated",
+				"status": "success",
+				"write_direction": direction,
+				"message": message,
+				"written_after_payload": _json_payload(written_after),
+			},
+		)
+		return {"ok": True, "sync_run_item": item_doc.name, "write_direction": direction, "status": "success"}
+	except Exception as exc:
+		_update_doc_fields(
+			item_doc,
+			{
+				"action": "error",
+				"status": "error",
+				"write_direction": direction,
+				"message": str(exc),
+			},
+		)
+		raise
 
 
 def execute_sync_definition(
@@ -957,6 +1007,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 				config,
 				delete_missing=_delete_missing_enabled(config.sync_type, config.delete_missing),
 				partner_time_zone=_normalize_time_zone_name(config.partner_time_zone),
+				timestamp_tie_breaker=_normalize_timestamp_tie_breaker(config.timestamp_tie_breaker),
 				value_mapping_fallbacks=_normalize_value_mapping_fallbacks(config.value_mapping_fallbacks),
 			)
 			_validate_runtime_mapping(normalized_config)
@@ -990,8 +1041,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		partner_modified_field=_clean_string(getattr(config, "partner_modified_field", None))
 		or _first_configured_field(getattr(config, "partner_modified_fields", None), "modified"),
 		partner_creation_field=_clean_string(getattr(config, "partner_creation_field", None)) or "creation",
-		timestamp_tie_breaker=_clean_string(getattr(config, "timestamp_tie_breaker", None))
-		or TIMESTAMP_TIE_NO_WRITE,
+		timestamp_tie_breaker=_normalize_timestamp_tie_breaker(getattr(config, "timestamp_tie_breaker", None)),
 		value_mapping_fallbacks=_normalize_value_mapping_fallbacks(
 			getattr(config, "value_mapping_fallbacks", {}) or {}
 		),
@@ -1916,9 +1966,9 @@ def _sync_bidirectional(
 				frappe_payload=frappe_payload,
 				changes=to_frappe_changes,
 				direction="Frappe <-> Partner",
-				action="conflict",
-				status="conflict",
-				message="Conflict resolved with newest_wins: partner won.",
+				action="updated",
+				status="success",
+				message="Updated frappe from partner with newest_wins.",
 				commit=False,
 			)
 		elif timestamp_winner == "frappe":
@@ -1933,9 +1983,9 @@ def _sync_bidirectional(
 				partner_payload=partner_payload,
 				changes=to_partner_changes,
 				direction="Frappe <-> Partner",
-				action="conflict",
-				status="conflict",
-				message="Conflict resolved with newest_wins: frappe won.",
+				action="updated",
+				status="success",
+				message="Updated partner from frappe with newest_wins.",
 				commit=False,
 				mapping_context=mapping_context,
 			)
@@ -1950,9 +2000,9 @@ def _sync_bidirectional(
 				frappe_payload=frappe_payload,
 				changes=to_frappe_changes,
 				direction="Frappe <-> Partner",
-				action="conflict",
-				status="conflict",
-				message="Conflict resolved by timestamp tie breaker: partner won.",
+				action="updated",
+				status="success",
+				message="Updated frappe from partner by timestamp tie breaker.",
 				commit=False,
 			)
 		elif _config_timestamp_tie_breaker(config) == TIMESTAMP_TIE_FRAPPE_WINS:
@@ -1967,13 +2017,21 @@ def _sync_bidirectional(
 				partner_payload=partner_payload,
 				changes=to_partner_changes,
 				direction="Frappe <-> Partner",
-				action="conflict",
-				status="conflict",
-				message="Conflict resolved by timestamp tie breaker: frappe won.",
+				action="updated",
+				status="success",
+				message="Updated partner from frappe by timestamp tie breaker.",
 				commit=False,
 				mapping_context=mapping_context,
 			)
 		else:
+			frappe_resolution_payload, partner_resolution_payload = _manual_conflict_resolution_payloads(
+				config=config,
+				frappe_record=frappe_record,
+				partner_record=partner_record,
+				frappe_payload=frappe_payload,
+				partner_payload=partner_payload,
+				mapping_context=mapping_context,
+			)
 			conflict_changes = _canonical_conflict_changes(
 				config,
 				to_frappe_changes=to_frappe_changes,
@@ -1985,15 +2043,46 @@ def _sync_bidirectional(
 				config=config,
 				action="conflict",
 				status="conflict",
-				message="Conflict has equal or unavailable timestamps; no write performed.",
+				message="Manual conflict requires review; no write performed.",
 				direction="Frappe <-> Partner",
 				frappe_record=frappe_record,
 				partner_record=partner_record,
 				changes=conflict_changes,
+				frappe_before_record=frappe_record,
+				partner_before_record=partner_record,
+				frappe_resolution_payload=frappe_resolution_payload,
+				partner_resolution_payload=partner_resolution_payload,
 				write_direction=None,
 				commit=False,
 			)
 	_flush_pending_run_writes(run_doc)
+
+
+def _manual_conflict_resolution_payloads(
+	*,
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any],
+	partner_record: dict[str, Any],
+	frappe_payload: dict[str, Any],
+	partner_payload: dict[str, Any],
+	mapping_context: RuntimeMappingContext,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+	frappe_resolution_payload = _with_frappe_modified_timestamp(
+		config,
+		partner_record,
+		frappe_payload,
+		mapping_context=mapping_context,
+	)
+	if frappe_record.get("name"):
+		frappe_resolution_payload["name"] = frappe_record.get("name")
+	partner_resolution_payload = _with_partner_timestamps(
+		config,
+		frappe_record,
+		_apply_partner_link_fields(config, frappe_record, partner_payload),
+		create=False,
+		mapping_context=mapping_context,
+	)
+	return frappe_resolution_payload, partner_resolution_payload
 
 
 def _canonical_conflict_changes(
@@ -2382,6 +2471,70 @@ def _upsert_frappe_record(
 	return doc.name
 
 
+def _resolve_item_to_frappe(item_doc: Any, config: SyncDefinitionConfig) -> dict[str, Any]:
+	payload = _json_field_payload(item_doc, "frappe_resolution_payload")
+	existing_name = _clean_string(getattr(item_doc, "document_name", None)) or _clean_string(payload.get("name"))
+	if not existing_name:
+		raise frappe.ValidationError("Sync Run Item is missing the Frappe document name.")
+	doc_name = _upsert_frappe_record(
+		doctype=config.doctype,
+		existing_name=existing_name,
+		payload=payload,
+		dry_run=False,
+	)
+	result = dict(payload)
+	if doc_name:
+		result["name"] = doc_name
+	return result
+
+
+def _resolve_item_to_partner(item_doc: Any, config: SyncDefinitionConfig) -> dict[str, Any]:
+	payload = _json_field_payload(item_doc, "partner_resolution_payload")
+	key_values = _manual_partner_key_values(config, payload)
+	mapping_context = _build_runtime_mapping_context(config)
+	connector = get_connector_for_partner(frappe.get_doc(SYNC_PARTNER, config.partner))
+	write = connector.upsert_record(
+		record=payload,
+		key_values=key_values,
+		mapping=mapping_context.connector_mapping,
+		dry_run=False,
+		source=config.table_name,
+		create_options=_build_partner_create_options(config),
+	)
+	if not getattr(write, "ok", False):
+		raise RuntimeError(getattr(write, "message", None) or "Partner upsert failed.")
+	return dict(getattr(write, "record", None) or payload)
+
+
+def _json_field_payload(doc: Any, fieldname: str) -> dict[str, Any]:
+	raw = getattr(doc, fieldname, None)
+	if not raw:
+		raise frappe.ValidationError(f"Sync Run Item is missing {fieldname}.")
+	try:
+		payload = json.loads(raw)
+	except Exception as exc:
+		raise frappe.ValidationError(f"Sync Run Item has invalid {fieldname}.") from exc
+	if not isinstance(payload, dict) or not payload:
+		raise frappe.ValidationError(f"Sync Run Item has no usable {fieldname}.")
+	return payload
+
+
+def _manual_partner_key_values(config: SyncDefinitionConfig, payload: dict[str, Any]) -> dict[str, Any]:
+	partner_identity_field = _config_partner_identity_field(config)
+	if partner_identity_field and payload.get(partner_identity_field) not in (None, ""):
+		return {partner_identity_field: payload.get(partner_identity_field)}
+	key_values = {}
+	for frappe_field in _config_match_fields(config):
+		partner_field = _partner_field_for_mapping(config.mapping, frappe_field, frappe_field)
+		value = payload.get(partner_field)
+		if value in (None, ""):
+			raise frappe.ValidationError(f"Manual resolution payload is missing partner key field {partner_field}.")
+		key_values[partner_field] = value
+	if not key_values:
+		raise frappe.ValidationError("Manual resolution payload has no partner key values.")
+	return key_values
+
+
 def _set_mapped_frappe_modified(doctype: str, name: str | None, value: Any) -> None:
 	if value is AUDIT_RECORD_UNSET or not name:
 		return
@@ -2430,8 +2583,8 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 	frappe_creation_field = _clean_string(_first_value(sync_definition_doc, ["frappe_creation_field"])) or "creation"
 	partner_modified_field = _clean_string(_first_value(sync_definition_doc, ["partner_modified_field"])) or "modified"
 	partner_creation_field = _clean_string(_first_value(sync_definition_doc, ["partner_creation_field"])) or "creation"
-	timestamp_tie_breaker = (
-		_clean_string(_first_value(sync_definition_doc, ["timestamp_tie_breaker"])) or TIMESTAMP_TIE_NO_WRITE
+	timestamp_tie_breaker = _normalize_timestamp_tie_breaker(
+		_clean_string(_first_value(sync_definition_doc, ["timestamp_tie_breaker"]))
 	)
 	config = SyncDefinitionConfig(
 		name=sync_definition_doc.name,
@@ -3543,7 +3696,14 @@ def _config_partner_creation_field(config: Any) -> str:
 
 
 def _config_timestamp_tie_breaker(config: Any) -> str:
-	return _clean_string(getattr(config, "timestamp_tie_breaker", None)) or TIMESTAMP_TIE_NO_WRITE
+	return _normalize_timestamp_tie_breaker(getattr(config, "timestamp_tie_breaker", None))
+
+
+def _normalize_timestamp_tie_breaker(value: Any) -> str:
+	normalized = _clean_string(value)
+	if not normalized:
+		return TIMESTAMP_TIE_MANUAL
+	return normalized
 
 
 def _config_timestamp_buffer_ms(config: Any) -> int:
@@ -3857,6 +4017,8 @@ def _register_and_log(
 	frappe_before_record: dict[str, Any] | None | object = AUDIT_RECORD_UNSET,
 	partner_before_record: dict[str, Any] | None | object = AUDIT_RECORD_UNSET,
 	written_after_record: dict[str, Any] | None = None,
+	frappe_resolution_payload: dict[str, Any] | None = None,
+	partner_resolution_payload: dict[str, Any] | None = None,
 	changes: list[tuple[str, Any, Any]] | None = None,
 	commit: bool = True,
 ):
@@ -3876,6 +4038,8 @@ def _register_and_log(
 		frappe_before_record=frappe_before_record,
 		partner_before_record=partner_before_record,
 		written_after_record=written_after_record,
+		frappe_resolution_payload=frappe_resolution_payload,
+		partner_resolution_payload=partner_resolution_payload,
 		changes=changes,
 		commit=False,
 	)
@@ -3935,6 +4099,8 @@ def _create_run_item(
 	frappe_before_record: dict[str, Any] | None | object = AUDIT_RECORD_UNSET,
 	partner_before_record: dict[str, Any] | None | object = AUDIT_RECORD_UNSET,
 	written_after_record: dict[str, Any] | None = None,
+	frappe_resolution_payload: dict[str, Any] | None = None,
+	partner_resolution_payload: dict[str, Any] | None = None,
 	changes: list[tuple[str, Any, Any]] | None = None,
 	commit: bool = True,
 ) -> Any:
@@ -3967,6 +4133,10 @@ def _create_run_item(
 	_set_first_existing(payload, meta, ["target_id"], _fit_data_value(target_id))
 	_set_first_existing(payload, meta, ["change_count"], len(changes or []))
 	_set_first_existing(payload, meta, ["changed_fields"], _summarize_changed_fields(changes))
+	if frappe_resolution_payload is not None:
+		_set_first_existing(payload, meta, ["frappe_resolution_payload"], _json_payload(frappe_resolution_payload))
+	if partner_resolution_payload is not None:
+		_set_first_existing(payload, meta, ["partner_resolution_payload"], _json_payload(partner_resolution_payload))
 	if _capture_audit_payloads(config):
 		frappe_before_record = frappe_record if frappe_before_record is AUDIT_RECORD_UNSET else frappe_before_record
 		partner_before_record = partner_record if partner_before_record is AUDIT_RECORD_UNSET else partner_before_record
