@@ -316,6 +316,19 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_source_settings(doc)
 
+	def test_validate_source_settings_clears_delete_missing_for_bidirectional_sync(self):
+		doc = FakeSyncDefinitionDoc(
+			sync_type="Frappe <-> Partner",
+			table_name="people",
+			read_query="select * from people where active = 1",
+			delete_missing=1,
+		)
+
+		sync_definition_module.SyncDefinition.validate_source_settings(doc)
+
+		self.assertEqual(doc.delete_missing, 0)
+		self.assertEqual(doc.read_query, "select * from people where active = 1")
+
 	def test_validate_filter_expression_accepts_valid_values_during_validate(self):
 		string_doc = FakeSyncDefinitionDoc(
 			table_name="tabTask",

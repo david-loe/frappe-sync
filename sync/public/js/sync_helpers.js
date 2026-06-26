@@ -136,6 +136,11 @@ sync.helpers.isDefinitionPartnerToFrappe = function (frm) {
 	return direction === "frappe <- partner" || direction === "a<-b";
 };
 
+sync.helpers.isDefinitionOneWaySync = function (frm) {
+	const direction = String(frm.doc?.sync_type || "").toLowerCase();
+	return direction === "frappe -> partner" || direction === "frappe <- partner";
+};
+
 sync.helpers.canDefinitionReadQueryReplaceTableName = function (frm) {
 	return sync.helpers.isDefinitionPartnerToFrappe(frm) && Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
 };
@@ -1258,9 +1263,16 @@ sync.helpers.toggleSourceFields = function (frm) {
 };
 
 sync.helpers.toggleSyncTypeSections = function (frm) {
-	const direction = (frm.doc.sync_type || "").toLowerCase();
-	const oneWayVisible = direction === "frappe -> partner" || direction === "frappe <- partner";
+	const oneWayVisible = sync.helpers.isDefinitionOneWaySync(frm);
+	frm.toggle_display("delete_missing", oneWayVisible);
 	frm.toggle_display("one_way_match_mode", oneWayVisible);
+};
+
+sync.helpers.normalizeDefinitionDeleteMissing = function (frm) {
+	if (sync.helpers.isDefinitionOneWaySync(frm) || !frm.doc.delete_missing) {
+		return;
+	}
+	frappe.model.set_value(frm.doctype, frm.docname, "delete_missing", 0);
 };
 
 sync.helpers.togglePartnerFields = function (frm) {

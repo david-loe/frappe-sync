@@ -479,6 +479,22 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertEqual(coerced.timestamp_buffer_ms, 3)
 		self.assertEqual(coerced.mapping, {"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}})
 
+	def test_coerce_config_clears_delete_missing_for_bidirectional_sync(self):
+		coerced = runtime._coerce_config(
+			SimpleNamespace(
+				name="SYNC-1",
+				doctype="Task",
+				partner="PARTNER-1",
+				sync_type="Frappe <-> Partner",
+				delete_missing="1",
+				match_fields=("name",),
+				mapping={"name": "id"},
+				value_mapping={},
+			)
+		)
+
+		self.assertFalse(coerced.delete_missing)
+
 	def test_mapping_helpers_support_top_level_string_payloads_and_value_reversal(self):
 		doc = SimpleNamespace(
 			doctype="Sync Definition",

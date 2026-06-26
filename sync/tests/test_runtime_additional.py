@@ -705,6 +705,44 @@ class TestRuntimeAdditional(unittest.TestCase):
 			{("TASK-1",): {"id": "TASK-1"}, ("TASK-3",): {"id": "TASK-3"}},
 		)
 
+	def test_run_engine_clears_delete_missing_before_bidirectional_sync(self):
+		config = SimpleNamespace(
+			name="SYNC-BI",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe <-> Partner",
+			cron=None,
+			filters=None,
+			batch_size=2,
+			create_new=True,
+			delete_missing=True,
+			use_last_sync_date=False,
+			conflict_policy="newest_wins",
+			timestamp_buffer_ms=0,
+			table_name="tabTask",
+			read_query=None,
+			match_fields=["name"],
+			mapping={"name": "id"},
+			value_mapping={},
+			frappe_modified_fields=["modified"],
+			partner_modified_fields=["updated_at"],
+		)
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace()),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
+			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1"}]])),
+			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-1"}]])),
+			patch("sync.sync.service.runtime._delete_missing_partner_records") as mock_delete_partner,
+			patch("sync.sync.service.runtime._delete_missing_frappe_records") as mock_delete_frappe,
+			patch("sync.sync.service.runtime._sync_bidirectional") as mock_sync,
+		):
+			runtime._run_engine(SimpleNamespace(name="SYNC-BI"), SimpleNamespace(name="RUN-1"), config=config)
+
+		self.assertFalse(mock_sync.call_args.kwargs["config"].delete_missing)
+		mock_delete_partner.assert_not_called()
+		mock_delete_frappe.assert_not_called()
+
 	def test_apply_update_helpers_cover_success_and_error_paths(self):
 		config = SimpleNamespace(doctype="Task", match_fields=["name"], mapping={"name": "id"}, table_name="tabTask", read_query=None)
 		logged = []

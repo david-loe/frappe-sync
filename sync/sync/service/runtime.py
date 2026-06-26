@@ -955,6 +955,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		if mapping == config.mapping:
 			normalized_config = replace(
 				config,
+				delete_missing=_delete_missing_enabled(config.sync_type, config.delete_missing),
 				partner_time_zone=_normalize_time_zone_name(config.partner_time_zone),
 				value_mapping_fallbacks=_normalize_value_mapping_fallbacks(config.value_mapping_fallbacks),
 			)
@@ -970,7 +971,10 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		filters=getattr(config, "filters", None),
 		batch_size=cint(getattr(config, "batch_size", 100)) or 100,
 		create_new=_as_bool(getattr(config, "create_new", 1)),
-		delete_missing=_as_bool(getattr(config, "delete_missing", 0)),
+		delete_missing=_delete_missing_enabled(
+			getattr(config, "sync_type", "Frappe -> Partner"),
+			getattr(config, "delete_missing", 0),
+		),
 		one_way_match_mode=_clean_string(getattr(config, "one_way_match_mode", None)) or "first_match",
 		use_last_sync_date=_as_bool(getattr(config, "use_last_sync_date", 1)),
 		conflict_policy=str(getattr(config, "conflict_policy", "newest_wins")),
@@ -2404,7 +2408,10 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 	filters = _parse_filter_expression(_first_value(sync_definition_doc, ["filter_expression"]))
 	batch_size = cint(_first_value(sync_definition_doc, ["batch_size"], default=100)) or 100
 	create_new = _as_bool(_first_value(sync_definition_doc, ["create_new"], default=1))
-	delete_missing = _as_bool(_first_value(sync_definition_doc, ["delete_missing"], default=0))
+	delete_missing = _delete_missing_enabled(
+		sync_type,
+		_first_value(sync_definition_doc, ["delete_missing"], default=0),
+	)
 	use_last_sync_date = _as_bool(_first_value(sync_definition_doc, ["use_last_sync_date"], default=1))
 	conflict_policy = str(_first_value(sync_definition_doc, ["conflict_policy"], default="newest_wins"))
 	timestamp_buffer_ms = _coerce_timestamp_buffer_ms(_first_value(sync_definition_doc, ["timestamp_buffer_ms"]))
@@ -2537,6 +2544,10 @@ def _one_way_mapping_direction(sync_type: Any) -> str | None:
 
 def _read_query_can_replace_table_name(sync_type: Any, read_query: Any) -> bool:
 	return _one_way_mapping_direction(sync_type) == MAPPING_DIRECTION_PARTNER_TO_FRAPPE and bool(_clean_string(read_query))
+
+
+def _delete_missing_enabled(sync_type: Any, value: Any) -> bool:
+	return bool(_one_way_mapping_direction(sync_type)) and _as_bool(value)
 
 
 def _normalize_field_mapping_entry(raw_entry: Any, *, sync_type: str | None = None) -> dict[str, str] | None:

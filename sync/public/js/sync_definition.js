@@ -21,6 +21,7 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
 	},
 	sync_type(frm) {
+		sync.helpers.normalizeDefinitionDeleteMissing(frm);
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
 		sync.helpers.toggleSyncTypeSections(frm);

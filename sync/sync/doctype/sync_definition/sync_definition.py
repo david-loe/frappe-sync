@@ -141,6 +141,8 @@ class SyncDefinition(Document):
 	def validate_source_settings(self):
 		table_name = _clean_value(self.table_name)
 		read_query = _clean_value(getattr(self, "read_query", None))
+		if not _one_way_mapping_direction(getattr(self, "sync_type", None)):
+			self.delete_missing = 0
 		if not table_name and not _read_query_can_replace_table_name(getattr(self, "sync_type", None), read_query):
 			frappe.throw("Table Name is required.")
 		if read_query and getattr(self, "delete_missing", None):
