@@ -534,6 +534,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			{"action": "fallback", "value": "UNKNOWN"},
 		)
 		self.assertEqual(exported["one_way_match_mode"], "all_matches")
+		self.assertNotIn("next_run_at", exported)
+		self.assertNotIn("last_run_status", exported)
+		self.assertNotIn("last_run_summary", exported)
 		payload = sync_definition_module.SyncDefinition.get_export_payload(doc)
 		self.assertIn("sync_definition", payload)
 		self.assertTrue(payload["mask_credentials"])

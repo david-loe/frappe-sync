@@ -318,7 +318,6 @@ class SyncDefinition(Document):
 			"sync_type": self.sync_type,
 			"doctype_name": self.doctype_name,
 			"frequency_cron": self.frequency_cron,
-			"next_run_at": self.next_run_at,
 			"filter_expression": self.filter_expression,
 			"batch_size": self.batch_size,
 			"use_last_sync_date": self.use_last_sync_date,
@@ -346,8 +345,6 @@ class SyncDefinition(Document):
 			"partner_create_id_strategy": getattr(self, "partner_create_id_strategy", "payload"),
 			"partner_create_id_source": getattr(self, "partner_create_id_source", None),
 			"partner_create_id_scope_where": getattr(self, "partner_create_id_scope_where", None),
-			"last_run_status": self.last_run_status,
-			"last_run_summary": self.last_run_summary,
 		}
 
 	def get_preview_limit(self) -> int:

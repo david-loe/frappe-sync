@@ -427,6 +427,87 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertEqual(payload["sync_partner"]["name"], "PARTNER-1")
 		self.assertEqual(payload["sync_partner_type"]["name"], "postgres")
 
+	def test_export_sync_definition_yaml_omits_runtime_state_fields(self):
+		definition = DummyDoc(
+			{
+				"doctype": "Sync Definition",
+				"name": "SYNC-1",
+				"title": "Sync 1",
+				"partner": None,
+				"frequency_cron": "*/15 * * * *",
+				"next_run_at": "2026-03-17 13:00:00",
+				"last_sync_at": "2026-03-17 12:00:00",
+				"last_successful_sync": "2026-03-17 12:00:00",
+				"last_run": "RUN-1",
+				"last_run_status": "Success",
+				"last_run_summary": "created=1",
+			},
+			doctype="Sync Definition",
+		)
+		meta = DummyMeta(
+			[
+				_field("title"),
+				_field("partner"),
+				_field("frequency_cron"),
+				_field("next_run_at", "Datetime"),
+				_field("last_sync_at", "Datetime"),
+				_field("last_successful_sync", "Datetime"),
+				_field("last_run", "Link", "Sync Run"),
+				_field("last_run_status"),
+				_field("last_run_summary"),
+			]
+		)
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				new=_runtime_frappe_stub(
+					get_doc=lambda doctype, name=None: definition,
+					get_meta=lambda doctype: meta,
+				),
+			),
+			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0, 0)),
+		):
+			payload = yaml.safe_load(runtime.export_sync_definition_yaml("SYNC-1"))
+
+		sync_definition = payload["sync_definition"]
+		self.assertEqual(sync_definition["frequency_cron"], "*/15 * * * *")
+		for fieldname in runtime.SYNC_DEFINITION_RUNTIME_STATE_FIELDS:
+			self.assertNotIn(fieldname, sync_definition)
+
+	def test_normalize_sync_definition_payload_omits_runtime_state_fields(self):
+		meta = DummyMeta(
+			[
+				_field("title"),
+				_field("frequency_cron"),
+				_field("next_run_at", "Datetime"),
+				_field("last_sync_at", "Datetime"),
+				_field("last_successful_sync", "Datetime"),
+				_field("last_run", "Link", "Sync Run"),
+				_field("last_run_status"),
+				_field("last_run_summary"),
+			]
+		)
+		payload = {
+			"name": "SYNC-1",
+			"title": "Sync 1",
+			"frequency_cron": "*/15 * * * *",
+			"next_run_at": "2026-03-17 13:00:00",
+			"last_sync_at": "2026-03-17 12:00:00",
+			"last_successful_sync": "2026-03-17 12:00:00",
+			"last_run": "RUN-1",
+			"last_run_status": "Success",
+			"last_run_summary": "created=1",
+		}
+
+		with patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_meta=lambda doctype: meta)):
+			normalized = runtime._normalize_doc_payload("Sync Definition", payload)
+
+		self.assertEqual(normalized["name"], "SYNC-1")
+		self.assertEqual(normalized["frequency_cron"], "*/15 * * * *")
+		for fieldname in runtime.SYNC_DEFINITION_RUNTIME_STATE_FIELDS:
+			self.assertNotIn(fieldname, normalized)
+
 	def test_preview_import_sync_definition_yaml_rejects_invalid_yaml_and_top_level_type(self):
 		invalid = runtime.preview_import_sync_definition_yaml(":\n  bad", overwrite=True)
 		not_mapping = runtime.preview_import_sync_definition_yaml("- item", overwrite=False)

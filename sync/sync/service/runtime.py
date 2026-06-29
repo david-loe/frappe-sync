@@ -44,6 +44,14 @@ SYSTEM_KEYS = {
 	"_assign",
 	"_liked_by",
 }
+SYNC_DEFINITION_RUNTIME_STATE_FIELDS = {
+	"last_run",
+	"last_run_status",
+	"last_run_summary",
+	"last_sync_at",
+	"last_successful_sync",
+	"next_run_at",
+}
 
 MAPPING_DIRECTION_BOTH = "Frappe <-> Partner"
 MAPPING_DIRECTION_FRAPPE_TO_PARTNER = "Frappe -> Partner"
@@ -4822,11 +4830,12 @@ def _sanitize_document_dict(data: dict[str, Any], *, mask_credentials: bool = Fa
 	meta = frappe.get_meta(data["doctype"])
 	child_fields = {field.fieldname: field.options for field in meta.fields if field.fieldtype == "Table"}
 	secret_fields = set(_collect_secret_fieldnames(meta, data))
+	excluded_fields = _portable_excluded_fields(data["doctype"])
 	result: dict[str, Any] = {"doctype": data["doctype"]}
 	if data.get("name"):
 		result["name"] = data["name"]
 	for key, value in data.items():
-		if key in SYSTEM_KEYS or key.startswith("_"):
+		if key in SYSTEM_KEYS or key in excluded_fields or key.startswith("_"):
 			continue
 		if key == "doctype":
 			continue
@@ -4868,12 +4877,15 @@ def _sanitize_child_row(child_doctype: str, row: dict[str, Any]) -> dict[str, An
 def _normalize_doc_payload(doctype: str, payload: dict[str, Any]) -> dict[str, Any]:
 	meta = frappe.get_meta(doctype)
 	table_fields = {field.fieldname: field.options for field in meta.fields if field.fieldtype == "Table"}
+	excluded_fields = _portable_excluded_fields(doctype)
 	result: dict[str, Any] = {"doctype": doctype}
 	if payload.get("name"):
 		result["name"] = payload["name"]
 
 	for field in meta.fields:
 		if field.fieldname in table_fields:
+			continue
+		if field.fieldname in excluded_fields:
 			continue
 		if field.fieldname in payload:
 			result[field.fieldname] = payload[field.fieldname]
@@ -4894,6 +4906,12 @@ def _normalize_doc_payload(doctype: str, payload: dict[str, Any]) -> dict[str, A
 			child_rows.append(child_row)
 		result[table_field] = child_rows
 	return result
+
+
+def _portable_excluded_fields(doctype: str) -> set[str]:
+	if doctype == SYNC_DEFINITION:
+		return SYNC_DEFINITION_RUNTIME_STATE_FIELDS
+	return set()
 
 
 def _upsert_document_from_payload(doctype: str, payload: dict[str, Any], *, overwrite: bool) -> str:

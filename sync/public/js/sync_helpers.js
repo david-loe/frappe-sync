@@ -73,6 +73,29 @@ sync.helpers.persistDocValues = function (doctype, name, values) {
 };
 
 sync.helpers.extractApiErrorMessage = function (error) {
+	const stringifyMessage = (value) => {
+		if (value === undefined || value === null || value === "") {
+			return "";
+		}
+		if (typeof value === "string") {
+			return value;
+		}
+		if (Array.isArray(value)) {
+			return value.map(stringifyMessage).filter(Boolean).join("\n");
+		}
+		if (typeof value === "object") {
+			if (value.message) {
+				return stringifyMessage(value.message);
+			}
+			try {
+				return JSON.stringify(value);
+			} catch (jsonError) {
+				return String(value);
+			}
+		}
+		return String(value);
+	};
+
 	const directMessage =
 		error?.message ||
 		error?.exc ||
@@ -80,7 +103,7 @@ sync.helpers.extractApiErrorMessage = function (error) {
 		error?.responseJSON?.message ||
 		error?.responseJSON?.exc;
 	if (directMessage) {
-		return directMessage;
+		return stringifyMessage(directMessage) || __("Request failed.");
 	}
 
 	const serverMessages = error?._server_messages || error?.responseJSON?._server_messages;
@@ -98,7 +121,7 @@ sync.helpers.extractApiErrorMessage = function (error) {
 				try {
 					const nested = JSON.parse(entry);
 					if (nested?.message) {
-						return nested.message;
+						return stringifyMessage(nested.message) || __("Request failed.");
 					}
 				} catch (nestedError) {
 					return entry;
@@ -106,11 +129,11 @@ sync.helpers.extractApiErrorMessage = function (error) {
 				return entry;
 			}
 			if (entry.message) {
-				return entry.message;
+				return stringifyMessage(entry.message) || __("Request failed.");
 			}
 		}
 	} catch (parseError) {
-		return serverMessages;
+		return stringifyMessage(serverMessages) || __("Request failed.");
 	}
 
 	return __("Request failed.");
@@ -1106,16 +1129,17 @@ sync.helpers.executeDefinitionYamlImport = function (frm, values) {
 		)
 		.then((response) => {
 			const message = response?.message;
+			const importedDefinition =
+				typeof message === "string" ? message : message?.sync_definition || message?.documents?.["Sync Definition"] || "";
 			frappe.msgprint({
 				title: __("Import complete"),
-				message:
-					typeof message === "string" && message
-						? __("Sync definition imported as {0}.", [message])
-						: message || __("Sync definition imported."),
+				message: importedDefinition
+					? __("Sync definition imported as {0}.", [importedDefinition])
+					: __("Sync definition imported."),
 				indicator: "green",
 			});
-			if (typeof message === "string" && message && message !== frm.doc.name) {
-				frappe.set_route("Form", "Sync Definition", message);
+			if (importedDefinition && importedDefinition !== frm.doc.name) {
+				frappe.set_route("Form", "Sync Definition", importedDefinition);
 				return;
 			}
 			frm.reload_doc();
