@@ -472,6 +472,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			match_fields=["name"],
 			value_mapping={"status": {"Open": "1"}},
 			filters=[["status", "=", "Open"]],
+			use_last_sync_date=False,
 		)
 		connector = SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={"db": "x"}))
 
@@ -488,10 +489,19 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertEqual(preview["mapping"], {"subject": {"partner_field": "title", "direction": "Frappe <-> Partner"}})
 		self.assertEqual(preview["value_mapping_fields"], ["status"])
 
-		coerced = runtime._coerce_config(SimpleNamespace(name="SYNC-2", doctype="Task", partner="PARTNER-1", sync_type="Frappe <- Partner"))
+		coerced = runtime._coerce_config(
+			SimpleNamespace(
+				name="SYNC-2",
+				doctype="Task",
+				partner="PARTNER-1",
+				sync_type="Frappe <- Partner",
+				use_last_sync_date=False,
+			)
+		)
 		self.assertEqual(coerced.sync_type, "Frappe <- Partner")
 		self.assertEqual(coerced.batch_size, 100)
 		self.assertEqual(coerced.frappe_modified_field, "modified")
+		self.assertIsNone(coerced.partner_modified_field)
 		self.assertEqual(coerced.mapping, {})
 
 	def test_run_engine_routes_partner_to_frappe_branch(self):
@@ -515,6 +525,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 
 		with (
@@ -550,6 +561,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 		recorded_batches = []
 
@@ -596,6 +608,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 		meta = MetaWithFields(
 			[
@@ -641,6 +654,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 		meta = MetaWithFields(
 			[
@@ -683,6 +697,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 
 		with (
@@ -726,6 +741,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 
 		with (

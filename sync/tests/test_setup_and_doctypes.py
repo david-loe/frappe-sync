@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, call, patch
@@ -297,6 +299,62 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 				)
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_preview_limit(FakeSyncDefinitionDoc(preview_limit=0))
+
+	def test_validate_modified_fields_allows_blank_partner_timestamps_for_one_way_full_sync(self):
+		doc = FakeSyncDefinitionDoc(
+			sync_type="Frappe -> Partner",
+			use_last_sync_date=0,
+			partner_modified_field="",
+			partner_creation_field="",
+			timestamp_tie_breaker="invalid hidden value",
+		)
+
+		meta = SimpleNamespace(fields=[], has_field=lambda fieldname: fieldname in {"modified", "creation"})
+		with patch.object(sync_definition_module.frappe, "get_meta", return_value=meta):
+			sync_definition_module.SyncDefinition.validate_modified_fields(doc)
+
+		self.assertIsNone(doc.partner_modified_field)
+		self.assertIsNone(doc.partner_creation_field)
+		self.assertEqual(doc.timestamp_tie_breaker, "Manual")
+
+	def test_validate_modified_fields_requires_partner_timestamps_for_bidirectional_or_delta_sync(self):
+		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_modified_fields(
+					FakeSyncDefinitionDoc(
+						sync_type="Frappe <-> Partner",
+						use_last_sync_date=0,
+						partner_modified_field="",
+						partner_creation_field="created_at",
+					)
+				)
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_modified_fields(
+					FakeSyncDefinitionDoc(
+						sync_type="Frappe -> Partner",
+						use_last_sync_date=1,
+						partner_modified_field="updated_at",
+						partner_creation_field="",
+					)
+				)
+
+	def test_sync_definition_timestamp_field_metadata_is_conditional(self):
+		doctype_path = Path(sync_definition_module.__file__).with_suffix(".json")
+		fields = {
+			field["fieldname"]: field
+			for field in json.loads(doctype_path.read_text(encoding="utf-8"))["fields"]
+			if field.get("fieldname")
+		}
+
+		self.assertEqual(
+			fields["partner_modified_field"]["mandatory_depends_on"],
+			"eval:doc.sync_type == 'Frappe <-> Partner' || doc.use_last_sync_date",
+		)
+		self.assertEqual(fields["partner_creation_field"]["reqd"], 0)
+		self.assertEqual(fields["timestamp_buffer_ms"]["depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'")
+		self.assertEqual(fields["conflict_policy"]["mandatory_depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'")
+		self.assertEqual(fields["timestamp_tie_breaker"]["depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'")
+		self.assertEqual(fields["one_way_match_mode"]["depends_on"], "eval:doc.sync_type != 'Frappe <-> Partner'")
 
 	def test_validate_one_way_match_mode_normalizes_and_rejects_invalid_values(self):
 		doc = FakeSyncDefinitionDoc(one_way_match_mode=" all_matches ")

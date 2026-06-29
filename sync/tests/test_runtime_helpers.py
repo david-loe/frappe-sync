@@ -200,6 +200,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			{
 				"name": "SYNC-QUERY",
 				"sync_type": "Frappe <- Partner",
+				"use_last_sync_date": 0,
 				"partner": "PARTNER-1",
 				"doctype_name": "Task",
 				"read_query": "select id from remote_tasks",
@@ -220,6 +221,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				"name": "SYNC-DEFAULT-KEY",
 				"partner": "PARTNER-1",
 				"doctype_name": "Task",
+				"use_last_sync_date": 0,
 				"table_name": "tabTask",
 				"field_mapping": {"subject": "title"},
 			}
@@ -490,6 +492,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			batch_size=50,
 			match_fields=["name"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 		context = SimpleNamespace(is_delta_sync=True, delta_since=datetime(2026, 3, 17, 9, 0))
 		records = [
@@ -509,6 +512,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			batch_size=50,
 			match_fields=["name"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 		context = SimpleNamespace(is_delta_sync=True, delta_since=datetime(2026, 3, 17, 9, 0))
 		records = [
@@ -873,6 +877,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 
 		runtime._run_engine(
@@ -1212,6 +1217,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 		existing_frappe = {"name": "TASK-1", "status": "Closed", "modified": "2026-03-17 09:00:00"}
 		changed_partner = {"id": "TASK-1", "state": "Open", "updated_at": "2026-03-17 10:00:00"}
@@ -1496,6 +1502,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			conflict_policy="newest_wins",
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 			table_name="contacts",
 			read_query=None,
 		)
@@ -1648,6 +1655,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 		existing_frappe = {"name": "TASK-1", "status": "Closed", "modified": "2026-03-17 09:00:00"}
 		changed_partner = {"id": "TASK-1", "state": "Open", "updated_at": "2026-03-17 10:00:00"}
@@ -1712,6 +1720,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			value_mapping={},
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 		)
 		changed_frappe = {"name": "TASK-1", "status": "Open", "modified": "2026-03-17 10:00:00"}
 		existing_partner = {"id": "TASK-1", "state": "Closed", "updated_at": "2026-03-17 09:00:00"}
@@ -1754,6 +1763,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			conflict_policy="newest_wins",
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 			table_name="tabTask",
 			read_query=None,
 		)
@@ -1864,6 +1874,33 @@ class TestRuntimeHelpers(unittest.TestCase):
 		)
 		self.assertEqual(frappe_payload["changed_at"], datetime(2026, 3, 18, 8, 0))
 		self.assertNotIn("creation", frappe_payload)
+
+	def test_timestamp_payload_helpers_skip_blank_optional_partner_timestamp_fields(self):
+		config = SimpleNamespace(
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+			partner_modified_field=None,
+			partner_creation_field=None,
+			partner_time_zone="UTC",
+		)
+		context = SimpleNamespace(site_time_zone="UTC")
+
+		partner_payload = runtime._with_partner_timestamps(
+			config,
+			{"modified": "2026-03-17 09:00:00", "creation": "2026-03-16 09:00:00"},
+			{"state": "Open"},
+			create=True,
+			mapping_context=context,
+		)
+		frappe_payload = runtime._with_frappe_modified_timestamp(
+			config,
+			{"modified": "2026-03-18 08:00:00", "creation": "2026-03-17 08:00:00"},
+			{"status": "Open", "creation": "2000-01-01 00:00:00"},
+			mapping_context=context,
+		)
+
+		self.assertEqual(partner_payload, {"state": "Open"})
+		self.assertEqual(frappe_payload, {"status": "Open"})
 
 	def test_diff_target_values_excludes_dedicated_timestamp_fields(self):
 		changes = runtime._diff_target_values(

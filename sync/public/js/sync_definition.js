@@ -8,7 +8,6 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
 		sync.forms.setupButtons(frm);
 		sync.helpers.toggleSourceFields(frm);
-		sync.helpers.toggleSyncTypeSections(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 		sync.helpers.refreshDefinitionFieldChoices(frm);
 		sync.helpers.refreshDefinitionPartnerColumnState(frm);
@@ -24,7 +23,6 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.normalizeDefinitionDeleteMissing(frm);
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
-		sync.helpers.toggleSyncTypeSections(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 	},
 	doctype_name(frm) {

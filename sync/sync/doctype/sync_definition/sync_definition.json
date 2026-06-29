@@ -148,6 +148,7 @@
   {
    "default": "100",
    "description": "Tolerance in milliseconds for considering Frappe and partner modified timestamps equal during conflict resolution.",
+   "depends_on": "eval:doc.sync_type == 'Frappe <-> Partner'",
    "fieldname": "timestamp_buffer_ms",
    "fieldtype": "Int",
    "label": "Timestamp Buffer (ms)"
@@ -167,19 +168,22 @@
   },
   {
    "default": "first_match",
+   "depends_on": "eval:doc.sync_type != 'Frappe <-> Partner'",
    "fieldname": "one_way_match_mode",
    "fieldtype": "Select",
    "label": "One-Way Match Mode",
    "options": "first_match\nall_matches",
-   "description": "For Frappe -> Partner and Frappe <- Partner only: update only one matched target or all matched targets when multiple records share the same logical match."
+   "description": "For one-way sync only: choose whether one source record updates only one matched target or all matched targets."
   },
   {
    "default": "newest_wins",
+   "depends_on": "eval:doc.sync_type == 'Frappe <-> Partner'",
    "fieldname": "conflict_policy",
    "fieldtype": "Select",
    "label": "Conflict Policy",
+   "mandatory_depends_on": "eval:doc.sync_type == 'Frappe <-> Partner'",
    "options": "newest_wins",
-   "reqd": 1
+   "reqd": 0
   },
   {
    "fieldname": "section_partner_source",
@@ -263,23 +267,27 @@
    "fieldname": "partner_modified_field",
    "fieldtype": "Select",
    "label": "Partner Modified Field",
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.sync_type == 'Frappe <-> Partner' || doc.use_last_sync_date",
+   "reqd": 0
   },
   {
    "description": "Partner creation timestamp used as fallback and written only when creating partner records.",
    "fieldname": "partner_creation_field",
    "fieldtype": "Select",
    "label": "Partner Creation Field",
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.sync_type == 'Frappe <-> Partner' || doc.use_last_sync_date",
+   "reqd": 0
   },
   {
    "default": "Manual",
    "description": "Controls conflict resolution when both effective timestamps are equal or unavailable.",
+   "depends_on": "eval:doc.sync_type == 'Frappe <-> Partner'",
    "fieldname": "timestamp_tie_breaker",
    "fieldtype": "Select",
    "label": "Timestamp Tie Breaker",
+   "mandatory_depends_on": "eval:doc.sync_type == 'Frappe <-> Partner'",
    "options": "Manual\nFrappe Wins\nPartner Wins",
-   "reqd": 1
+   "reqd": 0
   },
   {
    "fieldname": "section_write_behavior",
@@ -470,11 +478,11 @@
    "label": "Last Run Summary",
    "read_only": 1
   }
-],
+ ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-26 16:30:00.000000",
+ "modified": "2026-06-29 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

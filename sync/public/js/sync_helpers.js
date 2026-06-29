@@ -1250,22 +1250,8 @@ sync.helpers.toggleSourceFields = function (frm) {
 			? __("Partner table used for writes and as the default read source when Read Query is blank.")
 			: __("Optional partner table for column introspection.")
 	);
-	sync.helpers.setDefinitionFieldProperty(
-		frm,
-		"one_way_match_mode",
-		"description",
-		__(
-			"For Frappe -> Partner and Frappe <- Partner only: choose whether one source record updates only one matched target or all matched targets."
-		)
-	);
 
 	sync.helpers.toggleDefinitionField(frm, "match_fields", true, true);
-};
-
-sync.helpers.toggleSyncTypeSections = function (frm) {
-	const oneWayVisible = sync.helpers.isDefinitionOneWaySync(frm);
-	frm.toggle_display("delete_missing", oneWayVisible);
-	frm.toggle_display("one_way_match_mode", oneWayVisible);
 };
 
 sync.helpers.normalizeDefinitionDeleteMissing = function (frm) {

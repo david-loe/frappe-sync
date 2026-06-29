@@ -101,8 +101,8 @@ class SyncDefinitionConfig:
 	value_mapping: dict[str, dict[Any, Any]]
 	frappe_modified_field: str = "modified"
 	frappe_creation_field: str = "creation"
-	partner_modified_field: str = "modified"
-	partner_creation_field: str = "creation"
+	partner_modified_field: str | None = None
+	partner_creation_field: str | None = None
 	timestamp_tie_breaker: str = TIMESTAMP_TIE_MANUAL
 	value_mapping_fallbacks: dict[str, dict[str, Any]] | None = None
 	partner_identity_field: str | None = None
@@ -1039,8 +1039,8 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		or _first_configured_field(getattr(config, "frappe_modified_fields", None), "modified"),
 		frappe_creation_field=_clean_string(getattr(config, "frappe_creation_field", None)) or "creation",
 		partner_modified_field=_clean_string(getattr(config, "partner_modified_field", None))
-		or _first_configured_field(getattr(config, "partner_modified_fields", None), "modified"),
-		partner_creation_field=_clean_string(getattr(config, "partner_creation_field", None)) or "creation",
+		or _first_configured_field(getattr(config, "partner_modified_fields", None), None),
+		partner_creation_field=_clean_string(getattr(config, "partner_creation_field", None)),
 		timestamp_tie_breaker=_normalize_timestamp_tie_breaker(getattr(config, "timestamp_tie_breaker", None)),
 		value_mapping_fallbacks=_normalize_value_mapping_fallbacks(
 			getattr(config, "value_mapping_fallbacks", {}) or {}
@@ -2581,8 +2581,8 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 
 	frappe_modified_field = _clean_string(_first_value(sync_definition_doc, ["frappe_modified_field"])) or "modified"
 	frappe_creation_field = _clean_string(_first_value(sync_definition_doc, ["frappe_creation_field"])) or "creation"
-	partner_modified_field = _clean_string(_first_value(sync_definition_doc, ["partner_modified_field"])) or "modified"
-	partner_creation_field = _clean_string(_first_value(sync_definition_doc, ["partner_creation_field"])) or "creation"
+	partner_modified_field = _clean_string(_first_value(sync_definition_doc, ["partner_modified_field"]))
+	partner_creation_field = _clean_string(_first_value(sync_definition_doc, ["partner_creation_field"]))
 	timestamp_tie_breaker = _normalize_timestamp_tie_breaker(
 		_clean_string(_first_value(sync_definition_doc, ["timestamp_tie_breaker"]))
 	)
@@ -2817,23 +2817,34 @@ def _validate_runtime_mapping(config: SyncDefinitionConfig) -> None:
 	frappe_creation_field = _config_frappe_creation_field(config)
 	partner_modified_field = _config_partner_modified_field(config)
 	partner_creation_field = _config_partner_creation_field(config)
-	if not partner_modified_field or not partner_creation_field:
+	partner_timestamps_required = _partner_timestamps_required(config)
+	if partner_timestamps_required and not partner_modified_field:
+		raise frappe.ValidationError("Partner Modified Field is required.")
+	if partner_timestamps_required and not partner_creation_field:
+		raise frappe.ValidationError("Partner Creation Field is required.")
+	if not partner_modified_field and not partner_creation_field:
+		partner_timestamp_fields = set()
+	elif not partner_modified_field or not partner_creation_field:
+		partner_timestamp_fields = {field for field in (partner_modified_field, partner_creation_field) if field}
+	else:
+		partner_timestamp_fields = {partner_modified_field, partner_creation_field}
+	if partner_timestamps_required and not partner_timestamp_fields:
 		raise frappe.ValidationError("Partner Modified Field and Partner Creation Field are required.")
 	if frappe_modified_field == frappe_creation_field:
 		raise frappe.ValidationError("Frappe Modified Field and Frappe Creation Field must be different.")
-	if partner_modified_field == partner_creation_field:
+	if partner_modified_field and partner_creation_field and partner_modified_field == partner_creation_field:
 		raise frappe.ValidationError("Partner Modified Field and Partner Creation Field must be different.")
 	if _config_timestamp_tie_breaker(config) not in TIMESTAMP_TIE_BREAKERS:
 		raise frappe.ValidationError("Unsupported Timestamp Tie Breaker.")
 	mapped_frappe_fields = set(mapping)
 	mapped_partner_fields = {entry["partner_field"] for entry in mapping.values()}
 	duplicate_frappe = {frappe_modified_field, frappe_creation_field} & mapped_frappe_fields
-	duplicate_partner = {partner_modified_field, partner_creation_field} & mapped_partner_fields
+	duplicate_partner = partner_timestamp_fields & mapped_partner_fields
 	if duplicate_frappe or duplicate_partner:
 		raise frappe.ValidationError("Dedicated timestamp fields must not also exist in Field Mapping.")
 
 
-def _first_configured_field(values: Any, default: str) -> str:
+def _first_configured_field(values: Any, default: str | None) -> str | None:
 	for value in values or []:
 		cleaned = _clean_string(value)
 		if cleaned:
@@ -2976,8 +2987,12 @@ def _build_runtime_mapping_context(config: SyncDefinitionConfig | Any) -> Runtim
 	}
 	frappe_datetime_fields = _get_frappe_datetime_fields(getattr(config, "doctype", None), frappe_fields)
 	partner_datetime_fields = {
-		_config_partner_modified_field(config),
-		_config_partner_creation_field(config),
+		field
+		for field in (
+			_config_partner_modified_field(config),
+			_config_partner_creation_field(config),
+		)
+		if field
 	}
 	for frappe_field in frappe_datetime_fields:
 		partner_field = _partner_field_for_mapping(mapping, frappe_field, frappe_field)
@@ -3144,25 +3159,27 @@ def _with_partner_timestamps(
 	mapping_context: RuntimeMappingContext,
 ) -> dict[str, Any]:
 	result = dict(payload)
+	partner_modified_field = _config_partner_modified_field(config)
+	partner_creation_field = _config_partner_creation_field(config)
 	effective_modified = _effective_modified(
 		frappe_record,
 		modified_field=_config_frappe_modified_field(config),
 		creation_field=_config_frappe_creation_field(config),
 		target_time_zone=mapping_context.site_time_zone,
 	)
-	if effective_modified is not None:
-		result[_config_partner_modified_field(config)] = _convert_datetime_between_time_zones(
+	if partner_modified_field and effective_modified is not None:
+		result[partner_modified_field] = _convert_datetime_between_time_zones(
 			effective_modified,
 			source_time_zone=mapping_context.site_time_zone,
 			target_time_zone=getattr(config, "partner_time_zone", None) or mapping_context.site_time_zone,
 		)
-	if create:
+	if create and partner_creation_field:
 		creation_value = _parse_datetime(
 			frappe_record.get(_config_frappe_creation_field(config)),
 			target_time_zone=mapping_context.site_time_zone,
 		)
 		if creation_value is not None:
-			result[_config_partner_creation_field(config)] = _convert_datetime_between_time_zones(
+			result[partner_creation_field] = _convert_datetime_between_time_zones(
 				creation_value,
 				source_time_zone=mapping_context.site_time_zone,
 				target_time_zone=getattr(config, "partner_time_zone", None) or mapping_context.site_time_zone,
@@ -3178,9 +3195,13 @@ def _with_frappe_modified_timestamp(
 	mapping_context: RuntimeMappingContext,
 ) -> dict[str, Any]:
 	result = dict(payload)
+	partner_modified_field = _config_partner_modified_field(config)
+	if not partner_modified_field:
+		result.pop(_config_frappe_creation_field(config), None)
+		return result
 	effective_modified = _effective_modified(
 		partner_record,
-		modified_field=_config_partner_modified_field(config),
+		modified_field=partner_modified_field,
 		creation_field=_config_partner_creation_field(config),
 		assumed_time_zone=getattr(config, "partner_time_zone", None),
 		target_time_zone=mapping_context.site_time_zone,
@@ -3312,7 +3333,7 @@ def _finite_decimal_from_string(value: str) -> Decimal | None:
 
 def _record_changed_since(
 	record: dict[str, Any],
-	modified_fields: list[str] | str,
+	modified_fields: list[str] | str | None,
 	last_successful_sync: datetime | None,
 	*,
 	creation_field: str | None = None,
@@ -3321,12 +3342,15 @@ def _record_changed_since(
 ) -> bool:
 	if not last_successful_sync:
 		return True
+	modified_field = _first_configured_field(
+		[modified_fields] if isinstance(modified_fields, str) else modified_fields,
+		None,
+	)
+	if not modified_field:
+		return False
 	effective = _effective_modified(
 		record,
-		modified_field=_first_configured_field(
-			[modified_fields] if isinstance(modified_fields, str) else modified_fields,
-			"modified",
-		),
+		modified_field=modified_field,
 		creation_field=creation_field,
 		assumed_time_zone=assumed_time_zone,
 		target_time_zone=target_time_zone,
@@ -3336,18 +3360,21 @@ def _record_changed_since(
 
 def _latest_modified(
 	record: dict[str, Any],
-	modified_fields: list[str] | str,
+	modified_fields: list[str] | str | None,
 	*,
 	creation_field: str | None = None,
 	assumed_time_zone: str | None = None,
 	target_time_zone: str | None = None,
 ) -> datetime | None:
+	modified_field = _first_configured_field(
+		[modified_fields] if isinstance(modified_fields, str) else modified_fields,
+		None,
+	)
+	if not modified_field:
+		return None
 	return _effective_modified(
 		record,
-		modified_field=_first_configured_field(
-			[modified_fields] if isinstance(modified_fields, str) else modified_fields,
-			"modified",
-		),
+		modified_field=modified_field,
 		creation_field=creation_field,
 		assumed_time_zone=assumed_time_zone,
 		target_time_zone=target_time_zone,
@@ -3684,15 +3711,21 @@ def _config_frappe_creation_field(config: Any) -> str:
 	return _clean_string(getattr(config, "frappe_creation_field", None)) or "creation"
 
 
-def _config_partner_modified_field(config: Any) -> str:
+def _config_partner_modified_field(config: Any) -> str | None:
 	return _clean_string(getattr(config, "partner_modified_field", None)) or _first_configured_field(
 		getattr(config, "partner_modified_fields", None),
-		"modified",
+		None,
 	)
 
 
-def _config_partner_creation_field(config: Any) -> str:
-	return _clean_string(getattr(config, "partner_creation_field", None)) or "creation"
+def _config_partner_creation_field(config: Any) -> str | None:
+	return _clean_string(getattr(config, "partner_creation_field", None))
+
+
+def _partner_timestamps_required(config: Any) -> bool:
+	return str(getattr(config, "sync_type", "") or "") == SYNC_TYPE_BIDIRECTIONAL or _as_bool(
+		getattr(config, "use_last_sync_date", 0)
+	)
 
 
 def _config_timestamp_tie_breaker(config: Any) -> str:
@@ -4273,8 +4306,12 @@ def _frappe_datetime_fields(config: SyncDefinitionConfig) -> set[str]:
 
 def _partner_datetime_fields(config: SyncDefinitionConfig) -> set[str]:
 	partner_fields = {
-		_config_partner_modified_field(config),
-		_config_partner_creation_field(config),
+		field
+		for field in (
+			_config_partner_modified_field(config),
+			_config_partner_creation_field(config),
+		)
+		if field
 	}
 	for frappe_field in _frappe_datetime_fields(config):
 		partner_field = _partner_field_for_mapping(getattr(config, "mapping", {}), frappe_field, frappe_field)

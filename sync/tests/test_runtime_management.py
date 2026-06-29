@@ -361,6 +361,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			match_fields=["name"],
 			value_mapping={"status": {"Open": "1"}},
 			filters=[["status", "=", "Open"]],
+			use_last_sync_date=False,
 		)
 		connector = SimpleNamespace(ping=lambda: SimpleNamespace(ok=True, message="ok", details={"driver": "x"}))
 
@@ -537,6 +538,9 @@ class TestRuntimeManagement(unittest.TestCase):
 				partner="PARTNER-1",
 				sync_type="Frappe <-> Partner",
 				delete_missing="1",
+				use_last_sync_date=False,
+				partner_modified_field="updated_at",
+				partner_creation_field="created_at",
 				match_fields=("name",),
 				mapping={"name": "id"},
 				value_mapping={},
@@ -941,6 +945,7 @@ class TestRuntimeManagement(unittest.TestCase):
 			conflict_policy="newest_wins",
 			frappe_modified_fields=["modified"],
 			partner_modified_fields=["updated_at"],
+			partner_creation_field="created_at",
 			table_name="tabTask",
 			read_query=None,
 		)

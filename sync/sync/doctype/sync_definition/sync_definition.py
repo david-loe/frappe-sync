@@ -157,14 +157,21 @@ class SyncDefinition(Document):
 		self.partner_creation_field = _clean_value(getattr(self, "partner_creation_field", None))
 		self.timestamp_tie_breaker = _clean_value(getattr(self, "timestamp_tie_breaker", None)) or "Manual"
 
-		if not self.partner_modified_field:
+		partner_timestamps_required = _partner_timestamps_required(self)
+		if partner_timestamps_required and not self.partner_modified_field:
 			frappe.throw("Partner Modified Field is required.")
-		if not self.partner_creation_field:
+		if partner_timestamps_required and not self.partner_creation_field:
 			frappe.throw("Partner Creation Field is required.")
 		if self.frappe_modified_field == self.frappe_creation_field:
 			frappe.throw("Frappe Modified Field and Frappe Creation Field must be different.")
-		if self.partner_modified_field == self.partner_creation_field:
+		if (
+			self.partner_modified_field
+			and self.partner_creation_field
+			and self.partner_modified_field == self.partner_creation_field
+		):
 			frappe.throw("Partner Modified Field and Partner Creation Field must be different.")
+		if _clean_value(getattr(self, "sync_type", None)) != "Frappe <-> Partner":
+			self.timestamp_tie_breaker = "Manual"
 		if self.timestamp_tie_breaker not in {"Manual", "Frappe Wins", "Partner Wins"}:
 			frappe.throw("Timestamp Tie Breaker must be one of: Manual, Frappe Wins, Partner Wins.")
 
@@ -187,7 +194,7 @@ class SyncDefinition(Document):
 				"Dedicated timestamp fields must not also exist in Field Mapping: "
 				+ ", ".join(sorted(mapped_timestamp_fields))
 			)
-		partner_timestamp_fields = {self.partner_modified_field, self.partner_creation_field}
+		partner_timestamp_fields = {self.partner_modified_field, self.partner_creation_field} - {None}
 		mapped_partner_timestamp_fields = partner_timestamp_fields & {
 			entry["partner_field"] for entry in self.get_field_mapping().values()
 		}
@@ -432,6 +439,20 @@ def _one_way_mapping_direction(sync_type) -> str | None:
 
 def _read_query_can_replace_table_name(sync_type, read_query) -> bool:
 	return _one_way_mapping_direction(sync_type) == "Frappe <- Partner" and bool(_clean_value(read_query))
+
+
+def _partner_timestamps_required(doc) -> bool:
+	return _clean_value(getattr(doc, "sync_type", None)) == "Frappe <-> Partner" or _truthy(
+		getattr(doc, "use_last_sync_date", None)
+	)
+
+
+def _truthy(value) -> bool:
+	if isinstance(value, bool):
+		return value
+	if isinstance(value, int | float):
+		return bool(value)
+	return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _normalize_unmapped_action(value) -> str:
