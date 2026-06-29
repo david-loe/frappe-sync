@@ -305,10 +305,32 @@ sync.helpers.getDefinitionPartnerColumnState = function (frm) {
 	return frm.__sync_partner_columns;
 };
 
+sync.helpers.getDefinitionPartnerColumnSignatureSource = function (frm) {
+	return [
+		String(frm.doc?.partner || ""),
+		String(frm.doc?.table_name || ""),
+		String(frm.doc?.read_query || ""),
+	];
+};
+
+sync.helpers.hashDefinitionPartnerColumnSignatureSource = function (source) {
+	const value = JSON.stringify(Array.isArray(source) ? source : []);
+	let hashA = 0x811c9dc5;
+	let hashB = 0x45d9f3b;
+	for (let i = 0; i < value.length; i += 1) {
+		const code = value.charCodeAt(i);
+		hashA ^= code;
+		hashA = Math.imul(hashA, 0x01000193);
+		hashB ^= code;
+		hashB = Math.imul(hashB, 0x85ebca6b);
+	}
+	return `v1:${value.length}:${(hashA >>> 0).toString(36)}-${(hashB >>> 0).toString(36)}`;
+};
+
 sync.helpers.getDefinitionPartnerColumnSignature = function (frm) {
-	return [frm.doc.partner, frm.doc.table_name, sync.helpers.getDefinitionSourceReadQuery(frm)]
-		.map((value) => String(value || "").trim())
-		.join("::");
+	return sync.helpers.hashDefinitionPartnerColumnSignatureSource(
+		sync.helpers.getDefinitionPartnerColumnSignatureSource(frm)
+	);
 };
 
 sync.helpers.isDefinitionPartnerColumnReady = function (frm) {
