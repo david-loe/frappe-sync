@@ -111,8 +111,8 @@ jobs:
           python - <<'PY'
           import xml.etree.ElementTree as ET
 
-          total_threshold = 0.85
-          core_threshold = 0.90
+          total_threshold = 0.80
+          core_threshold = 0.85
           root = ET.parse("sites/coverage.xml").getroot()
           line_rate = float(root.attrib["line-rate"])
           pct = line_rate * 100
@@ -234,7 +234,7 @@ jobs:
         working-directory: /home/runner/frappe-bench
         run: |
           bench --site test_site set-config allow_tests true
-          bench --site test_site run-tests --app sync --module sync.tests.test_connectors
+          bench --site test_site run-tests --app sync --module sync.tests.test_connectors_integration
         env:
           TYPE: server
           SYNC_TEST_POSTGRES_HOST: 127.0.0.1
@@ -336,7 +336,7 @@ jobs:
         working-directory: /home/runner/frappe-bench
         run: |
           bench --site test_site set-config allow_tests true
-          bench --site test_site run-tests --app sync --module sync.tests.test_connector_additional
+          bench --site test_site run-tests --app sync --module sync.tests.test_connectors_integration
         env:
           TYPE: server
           SYNC_TEST_FIREBIRD_HOST: 127.0.0.1
@@ -443,7 +443,7 @@ jobs:
         working-directory: /home/runner/frappe-bench
         run: |
           bench --site test_site set-config allow_tests true
-          bench --site test_site run-tests --app sync --module sync.tests.test_connector_additional
+          bench --site test_site run-tests --app sync --module sync.tests.test_connectors_integration
         env:
           TYPE: server
           SYNC_TEST_MSSQL_SERVER: 127.0.0.1

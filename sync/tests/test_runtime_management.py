@@ -124,6 +124,56 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertEqual(context.delta_since, datetime(2026, 3, 17, 12, 0))
 		self.assertFalse(context.is_full_sync)
 
+	def test_run_engine_partner_to_frappe_full_sync_passes_complete_partner_load_once(self):
+		config = runtime.SyncDefinitionConfig(
+			name="SYNC-P2F-FULL",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe <- Partner",
+			cron=None,
+			filters=None,
+			batch_size=2,
+			create_new=True,
+			delete_missing=True,
+			use_last_sync_date=False,
+			conflict_policy="newest_wins",
+			timestamp_buffer_ms=0,
+			table_name="dbo.Task",
+			read_query=None,
+			match_fields=["name"],
+			mapping={"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}},
+			value_mapping={},
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+			partner_modified_field="updated_at",
+			partner_creation_field="created_at",
+		)
+		frappe_records = [{"name": "TASK-1"}, {"name": "TASK-STALE"}]
+		partner_batches = [[{"id": "TASK-1"}], [{"id": "TASK-2"}, {"id": "TASK-3"}]]
+		mapping_context = SimpleNamespace(connector_mapping={"name": "id"})
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(name="PARTNER-1")),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: SimpleNamespace(ok=True, message="ok"))),
+			patch("sync.sync.service.runtime._build_runtime_mapping_context", return_value=mapping_context),
+			patch("sync.sync.service.runtime._get_frappe_source_records", return_value=frappe_records),
+			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter(partner_batches)),
+			patch("sync.sync.service.runtime._sync_partner_to_frappe") as mock_sync,
+		):
+			runtime._run_engine(
+				SimpleNamespace(name="SYNC-P2F-FULL"),
+				SimpleNamespace(name="RUN-1"),
+				context=runtime.SyncContext(config=config, dry_run=False, last_successful_sync=None),
+			)
+
+		mock_sync.assert_called_once()
+		call = mock_sync.call_args.kwargs
+		self.assertEqual(call["partner_records"], [{"id": "TASK-1"}, {"id": "TASK-2"}, {"id": "TASK-3"}])
+		self.assertEqual(call["frappe_records"], frappe_records)
+		self.assertIsInstance(call["frappe_lookup"], runtime.FrappeMatchLookup)
+		self.assertEqual(call["frappe_lookup"].latest_by_key[("TASK-STALE",)]["name"], "TASK-STALE")
+		self.assertTrue(call["full_sync"])
+
 	def test_list_due_sync_definitions_uses_next_run_and_cron(self):
 		now = datetime(2026, 3, 17, 12, 0, 0)
 		meta = DummyMeta([_field("enabled"), _field("next_run_at"), _field("frequency_cron")])

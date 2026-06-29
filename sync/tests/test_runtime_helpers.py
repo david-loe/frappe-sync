@@ -1112,6 +1112,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		self.assertEqual(upsert_calls[0]["record"]["frappe_name"], "TASK-1")
 		self.assertEqual(upsert_calls[0]["key_values"], {"code": "CUST-1"})
+		self.assertEqual(upsert_calls[0]["source"], "dbo.Person")
 		self.assertEqual(upsert_calls[0]["create_options"].identity_field, "NR")
 		self.assertEqual(mutable_doc.values["partner_nr"], 101)
 		self.assertTrue(mutable_doc.saved)
@@ -1280,6 +1281,45 @@ class TestRuntimeHelpers(unittest.TestCase):
 			mock_upsert.call_args.kwargs["payload"],
 			{"name": "TASK-LOCAL", "customer_code": "DIFFERENT", "status": "Open", "partner_nr": 77},
 		)
+
+	def test_sync_partner_to_frappe_update_payload_preserves_existing_document_identity(self):
+		config = SimpleNamespace(
+			name="SYNC-P2F-UPDATE-ID",
+			doctype="Task",
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <- Partner"},
+			},
+			value_mapping={},
+			create_new=True,
+			delete_missing=False,
+		)
+		logged = []
+
+		with (
+			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
+			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-1") as mock_upsert,
+		):
+			runtime._sync_partner_to_frappe(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=object(),
+				partner_records=[{"id": "TASK-1", "state": "Open"}],
+				frappe_records=[{"name": "TASK-1", "status": "Closed"}],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="Frappe <- Partner",
+				full_sync=False,
+			)
+
+		mock_upsert.assert_called_once_with(
+			doctype="Task",
+			existing_name="TASK-1",
+			payload={"name": "TASK-1", "status": "Open"},
+			dry_run=False,
+		)
+		self.assertEqual(logged[0]["written_after_record"], {"name": "TASK-1", "status": "Open"})
 
 	def test_sync_partner_to_frappe_all_matches_updates_all_matching_docs(self):
 		config = SimpleNamespace(
@@ -1975,6 +2015,216 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(updated_fields["action"], "updated")
 		self.assertEqual(updated_fields["status"], "success")
 		self.assertEqual(updated_fields["write_direction"], runtime.SYNC_TYPE_PARTNER_TO_FRAPPE)
+
+	def test_resolve_sync_run_item_accepts_frappe_changes_to_partner(self):
+		item = SimpleNamespace(
+			doctype=runtime.SYNC_RUN_ITEM,
+			name="ITEM-1",
+			sync_run="RUN-1",
+			sync_definition="SYNC-1",
+			document_name="TASK-1",
+			status="conflict",
+			action="conflict",
+			write_direction=None,
+			partner_resolution_payload=json.dumps({"id": "TASK-1", "state": "Closed"}),
+		)
+		run = SimpleNamespace(doctype=runtime.SYNC_RUN, name="RUN-1", dry_run=0, sync_definition="SYNC-1")
+		definition = SimpleNamespace(doctype=runtime.SYNC_DEFINITION, name="SYNC-1")
+		partner = SimpleNamespace(doctype=runtime.SYNC_PARTNER, name="PARTNER-1")
+		config = SimpleNamespace(
+			name="SYNC-1",
+			doctype="Task",
+			partner="PARTNER-1",
+			table_name="dbo.Task",
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <-> Partner"},
+			},
+			value_mapping={},
+		)
+		upsert_calls = []
+
+		def upsert_record(**kwargs):
+			upsert_calls.append(kwargs)
+			return ConnectorWriteResult(ok=True, message="ok", record={"id": "TASK-1", "state": "Closed"})
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=[item, run, definition, partner]),
+			patch("sync.sync.service.runtime._build_definition_config", return_value=config),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(upsert_record=upsert_record)),
+			patch("sync.sync.service.runtime._update_doc_fields") as mock_update,
+		):
+			response = runtime.resolve_sync_run_item("ITEM-1", runtime.SYNC_TYPE_FRAPPE_TO_PARTNER)
+
+		self.assertEqual(response["status"], "success")
+		self.assertEqual(upsert_calls[0]["record"], {"id": "TASK-1", "state": "Closed"})
+		self.assertEqual(upsert_calls[0]["key_values"], {"id": "TASK-1"})
+		self.assertEqual(upsert_calls[0]["mapping"], {"name": "id", "status": "state"})
+		self.assertEqual(upsert_calls[0]["source"], "dbo.Task")
+		updated_fields = mock_update.call_args.args[1]
+		self.assertEqual(updated_fields["action"], "updated")
+		self.assertEqual(updated_fields["status"], "success")
+		self.assertEqual(updated_fields["write_direction"], runtime.SYNC_TYPE_FRAPPE_TO_PARTNER)
+		self.assertEqual(json.loads(updated_fields["written_after_payload"]), {"id": "TASK-1", "state": "Closed"})
+
+	def test_json_field_payload_rejects_missing_invalid_and_non_object_payloads(self):
+		for value in (None, "", "{broken", "[]", '"string"'):
+			with self.subTest(value=value):
+				with self.assertRaises(frappe.ValidationError):
+					runtime._json_field_payload(SimpleNamespace(partner_resolution_payload=value), "partner_resolution_payload")
+
+	def test_delete_missing_frappe_records_logs_failed_delete_and_continues(self):
+		config = SimpleNamespace(
+			name="SYNC-DELETE-FRAPPE",
+			doctype="Task",
+			match_fields=["name"],
+			mapping={"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}},
+			value_mapping={},
+		)
+		logged = []
+
+		def delete_doc(_doctype, name, **_kwargs):
+			if name == "TASK-2":
+				raise RuntimeError("delete failed")
+
+		with (
+			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
+			patch("sync.sync.service.runtime.frappe.delete_doc", side_effect=delete_doc) as mock_delete,
+		):
+			runtime._delete_missing_frappe_records(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				frappe_records=[
+					{"name": "TASK-1"},
+					{"name": "TASK-2"},
+					{"name": "TASK-3"},
+				],
+				source_keys=set(),
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="Frappe <- Partner",
+			)
+
+		self.assertEqual([call.args[1] for call in mock_delete.call_args_list], ["TASK-1", "TASK-2", "TASK-3"])
+		self.assertEqual([entry["action"] for entry in logged], ["deleted", "error", "deleted"])
+		self.assertEqual(logged[1]["frappe_record"]["name"], "TASK-2")
+		self.assertEqual(logged[1]["message"], "delete failed")
+
+	def test_create_run_item_records_partner_to_frappe_source_target_and_resolution_payloads(self):
+		run_item_meta = DummyMeta(
+			[
+				"sync_run",
+				"sync_definition",
+				"action",
+				"status",
+				"message",
+				"write_direction",
+				"document_name",
+				"record_key",
+				"source_id",
+				"target_id",
+				"change_count",
+				"changed_fields",
+				"frappe_resolution_payload",
+				"partner_resolution_payload",
+			]
+		)
+		inserted_docs = []
+
+		class InsertDoc:
+			def __init__(self, payload):
+				self.payload = payload
+				self.name = "ITEM-1"
+
+			def insert(self, **_kwargs):
+				inserted_docs.append(self)
+				return self
+
+		with patch(
+			"sync.sync.service.runtime.frappe",
+			new=_runtime_frappe_stub(
+				get_meta=lambda *_args, **_kwargs: run_item_meta,
+				get_doc=lambda payload: InsertDoc(payload),
+			),
+		):
+			runtime._create_run_item(
+				run_doc=SimpleNamespace(name="RUN-1", sync_type="Frappe <- Partner"),
+				config=SimpleNamespace(match_fields=["name"], mapping={"name": "id"}),
+				sync_definition_name="SYNC-1",
+				action="updated",
+				status="success",
+				frappe_record={"name": "TASK-1", "status": "Open"},
+				partner_record={"id": "PARTNER-1", "state": "Open"},
+				message="updated",
+				direction="Frappe <- Partner",
+				write_direction="Frappe <- Partner",
+				frappe_resolution_payload={"name": "TASK-1", "status": "Open"},
+				partner_resolution_payload={"id": "PARTNER-1", "state": "Closed"},
+				changes=[("status", "Closed", "Open")],
+			)
+
+		payload = inserted_docs[0].payload
+		self.assertEqual(payload["source_id"], "id=PARTNER-1")
+		self.assertEqual(payload["target_id"], "TASK-1")
+		self.assertEqual(json.loads(payload["frappe_resolution_payload"]), {"name": "TASK-1", "status": "Open"})
+		self.assertEqual(json.loads(payload["partner_resolution_payload"]), {"id": "PARTNER-1", "state": "Closed"})
+
+	def test_get_frappe_keyset_page_filters_repeated_cursor_rows_and_advances_start(self):
+		pages = [
+			[
+				{"modified": "2026-03-17 10:00:00", "name": "TASK-1"},
+				{"modified": "2026-03-17 10:00:00", "name": "TASK-2"},
+			],
+			[
+				{"modified": "2026-03-17 10:00:00", "name": "TASK-1"},
+				{"modified": "2026-03-17 10:00:00", "name": "TASK-3"},
+			],
+			[
+				{"modified": "2026-03-17 10:00:00", "name": "TASK-4"},
+				{"modified": "2026-03-17 10:00:00", "name": "TASK-5"},
+			],
+		]
+
+		with patch("sync.sync.service.runtime.frappe.get_all", side_effect=pages) as mock_get_all:
+			page = runtime._get_frappe_keyset_page(
+				"Task",
+				fields=["name", "modified"],
+				filters=None,
+				or_filters=None,
+				batch_size=2,
+				cursor=("2026-03-17 10:00:00", "TASK-2"),
+			)
+
+		self.assertEqual([record["name"] for record in page], ["TASK-3", "TASK-4"])
+		self.assertEqual([call.kwargs["limit_start"] for call in mock_get_all.call_args_list], [0, 2, 4])
+
+	def test_merge_partner_runtime_settings_copies_only_valid_time_zone(self):
+		base = runtime.SyncDefinitionConfig(
+			name="SYNC-TZ",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe -> Partner",
+			cron=None,
+			filters=None,
+			batch_size=10,
+			create_new=True,
+			delete_missing=False,
+			use_last_sync_date=False,
+			conflict_policy="newest_wins",
+			timestamp_buffer_ms=0,
+			table_name="tabTask",
+			read_query=None,
+			match_fields=["name"],
+			mapping={"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}},
+			value_mapping={},
+		)
+
+		valid = runtime._merge_partner_runtime_settings(base, FakeDoc({"time_zone": "Europe/Berlin"}))
+		invalid = runtime._merge_partner_runtime_settings(base, FakeDoc({"time_zone": "No/Such_Zone"}))
+
+		self.assertEqual(valid.partner_time_zone, "Europe/Berlin")
+		self.assertIsNone(invalid.partner_time_zone)
 
 	def test_sync_bidirectional_timestamp_buffer_treats_nearby_modified_values_as_equal(self):
 		base_config = {
