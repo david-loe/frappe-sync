@@ -11,9 +11,9 @@ Sync anything from and to Frappe, allowing a single `Sync Definition` to describ
 
 | Database | ⚠️ Manual system installation required | Debian/Ubuntu command |
 | --- | --- | --- |
-| MSSQL | [Add the Microsoft repository](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server), then install UnixODBC and Microsoft ODBC Driver 18 | `sudo ACCEPT_EULA=Y apt install msodbcsql18 unixodbc unixodbc-dev` |
+| MSSQL | [Add the Microsoft repository](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server), then install UnixODBC and Microsoft ODBC Driver 18 | `sudo ACCEPT_EULA=Y apt install msodbcsql18 unixodbc-dev` |
 | PostgreSQL | Nothing | - |
-| Firebird | Firebird client library | `sudo apt install firebird3.0-dev` |
+| Firebird | Firebird client library | `sudo apt install libfbclient2` |
 
 ### Installation
 
