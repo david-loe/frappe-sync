@@ -15,6 +15,8 @@ Sync anything from and to Frappe, allowing a single `Sync Definition` to describ
 | PostgreSQL | Nothing | - |
 | Firebird | Firebird client library | `sudo apt install libfbclient2` |
 
+For debian the [install-requirments.sh](/install-requirements.sh) can be used.
+
 ### Installation
 
 Install the required system driver for the database you intend to use before
