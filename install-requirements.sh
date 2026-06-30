@@ -19,6 +19,6 @@ apt-get update
 ACCEPT_EULA=Y apt-get install --no-install-recommends -y \
   msodbcsql18 \
   unixodbc-dev \
-  libfbclient2 \
+  libfbclient2
 
 rm -rf /var/lib/apt/lists/*
