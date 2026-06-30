@@ -48,6 +48,7 @@ doctype_js = {
 	"Sync Partner": "public/js/sync_partner.js",
 	"Sync Run": "public/js/sync_run.js",
 	"Sync Run Item": "public/js/sync_run_item.js",
+	"Sync Settings": "public/js/sync_settings.js",
 }
 doctype_list_js = {
 	"Sync Run": "public/js/sync_run_list.js",

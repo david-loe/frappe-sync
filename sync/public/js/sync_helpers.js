@@ -890,34 +890,60 @@ sync.helpers.renderPreviewValue = function (value) {
 	return frappe.utils.escape_html(String(value));
 };
 
-sync.helpers.exportDefinitionYaml = function (frm) {
-	sync.helpers.callApi("export_sync_definition_yaml", { sync_definition_name: frm.doc.name }, { freeze_message: "Generating YAML…" })
+sync.helpers.showDefinitionYamlExport = function (yaml) {
+	const dialog = frappe.prompt(
+		{
+			fieldtype: "Code",
+			fieldname: "yaml",
+			label: __("YAML Export"),
+			description: __("Copy the YAML below to archive or share."),
+			read_only: 1,
+			wrap: true,
+			min_lines: 16,
+			max_lines: 30,
+			default: yaml,
+		},
+		() => {},
+		__("YAML Export"),
+		__("Close")
+	);
+	dialog.set_value("yaml", yaml);
+	dialog.fields_dict.yaml?.set_focus?.();
+};
+
+sync.helpers.exportDefinitionYamlByName = function (syncDefinitionName) {
+	sync.helpers
+		.callApi("export_sync_definition_yaml", { sync_definition_name: syncDefinitionName }, { freeze_message: "Generating YAML…" })
 		.then((response) => {
 			const yaml = response?.message || "";
 			if (!yaml) {
 				frappe.msgprint(__("No YAML returned."));
 				return;
 			}
-			const dialog = frappe.prompt(
-				{
-					fieldtype: "Code",
-					fieldname: "yaml",
-					label: __("YAML Export"),
-					description: __("Copy the YAML below to archive or share."),
-					read_only: 1,
-					wrap: true,
-					min_lines: 16,
-					max_lines: 30,
-					default: yaml,
-				},
-				() => {},
-				__("YAML Export"),
-				__("Close")
-			);
-			dialog.set_value("yaml", yaml);
-			dialog.fields_dict.yaml?.set_focus?.();
-	})
+			sync.helpers.showDefinitionYamlExport(yaml);
+		})
 		.catch((error) => frappe.msgprint(error?.message ?? "Unable to export YAML"));
+};
+
+sync.helpers.exportDefinitionYaml = function (frm) {
+	sync.helpers.exportDefinitionYamlByName(frm.doc.name);
+};
+
+sync.helpers.promptDefinitionYamlExport = function () {
+	frappe.prompt(
+		{
+			fieldtype: "Link",
+			fieldname: "sync_definition_name",
+			label: __("Sync Definition"),
+			options: "Sync Definition",
+			reqd: 1,
+		},
+		(values) => {
+			sync.helpers.exportDefinitionYamlByName(values.sync_definition_name);
+		},
+		__("Export YAML"),
+		__("Export")
+	);
 };
 
 sync.helpers.getImportPreviewSummaryRows = function (payload, values, options = {}) {

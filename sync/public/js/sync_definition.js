@@ -91,12 +91,6 @@ sync.forms.setupButtons = function (frm) {
 	frm.add_custom_button(__("Preview"), () => {
 		sync.helpers.previewSyncDefinition(frm);
 	});
-	frm.add_custom_button(__("Export YAML"), () => {
-		sync.helpers.exportDefinitionYaml(frm);
-	});
-	frm.add_custom_button(__("Import YAML"), () => {
-		sync.helpers.importDefinitionYaml(frm);
-	});
 	frm.add_custom_button(__("Recover Stale Runs"), () => {
 		sync.helpers.recoverDefinitionStaleRuns(frm);
 	});
