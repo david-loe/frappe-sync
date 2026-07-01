@@ -164,6 +164,10 @@ sync.helpers.isDefinitionOneWaySync = function (frm) {
 	return direction === "frappe -> partner" || direction === "frappe <- partner";
 };
 
+sync.helpers.isDefinitionIdentityMatchMode = function (frm) {
+	return String(frm.doc?.match_mode || "Match Fields").trim() === "Identity Fields";
+};
+
 sync.helpers.canDefinitionReadQueryReplaceTableName = function (frm) {
 	return sync.helpers.isDefinitionPartnerToFrappe(frm) && Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
 };
@@ -188,6 +192,8 @@ sync.helpers.toggleDefinitionField = function (frm, fieldname, visible, reqd) {
 sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 	const tableNameRequired = !sync.helpers.canDefinitionReadQueryReplaceTableName(frm);
 	const canWritePartner = !sync.helpers.isDefinitionPartnerToFrappe(frm);
+	const isIdentityMode = sync.helpers.isDefinitionIdentityMatchMode(frm);
+	const identityRequired = String(frm.doc?.sync_type || "") === "Frappe <-> Partner" && isIdentityMode;
 	const identityFieldNames = [
 		"partner_identity_field",
 		"frappe_partner_identity_field",
@@ -235,8 +241,11 @@ sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 		frm,
 		"match_fields",
 		"description",
-		__("Logical fields used to match source and partner records. These are not the partner's technical identity field.")
+		isIdentityMode
+			? __("Not used in Identity Fields mode.")
+			: __("Logical fields used to match source and partner records. These are not the partner's technical identity field.")
 	);
+	sync.helpers.toggleDefinitionField(frm, "match_fields", !isIdentityMode, !isIdentityMode);
 
 	identityFieldNames.forEach((fieldname) => {
 		if (!frm?.fields_dict?.[fieldname]) {
@@ -256,7 +265,7 @@ sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 					"description",
 					__("Technical partner key column used when a new partner row is created.")
 				);
-				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner, false);
+				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner || identityRequired, identityRequired);
 				break;
 			case "frappe_partner_identity_field":
 				sync.helpers.setDefinitionFieldProperty(
@@ -271,7 +280,7 @@ sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 					"description",
 					__("Optional Frappe field that stores the partner-generated identity after create.")
 				);
-				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner, false);
+				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner || identityRequired, identityRequired);
 				break;
 			case "partner_frappe_identity_field":
 				sync.helpers.setDefinitionFieldProperty(
@@ -286,7 +295,7 @@ sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 					"description",
 					__("Optional partner field that stores the Frappe document name for traceability.")
 				);
-				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner, false);
+				sync.helpers.toggleDefinitionField(frm, fieldname, canWritePartner || identityRequired, identityRequired);
 				break;
 			case "partner_create_id_strategy":
 				sync.helpers.setDefinitionFieldProperty(
@@ -1301,11 +1310,20 @@ sync.helpers.toggleSourceFields = function (frm) {
 			: __("Optional partner table for column introspection.")
 	);
 
-	sync.helpers.toggleDefinitionField(frm, "match_fields", true, true);
+	sync.helpers.toggleDefinitionField(
+		frm,
+		"match_fields",
+		!sync.helpers.isDefinitionIdentityMatchMode(frm),
+		!sync.helpers.isDefinitionIdentityMatchMode(frm)
+	);
 };
 
 sync.helpers.normalizeDefinitionDeleteMissing = function (frm) {
-	if (sync.helpers.isDefinitionOneWaySync(frm) || !frm.doc.delete_missing) {
+	if (
+		sync.helpers.isDefinitionOneWaySync(frm) ||
+		(sync.helpers.isDefinitionIdentityMatchMode(frm) && String(frm.doc?.sync_type || "") === "Frappe <-> Partner") ||
+		!frm.doc.delete_missing
+	) {
 		return;
 	}
 	frappe.model.set_value(frm.doctype, frm.docname, "delete_missing", 0);

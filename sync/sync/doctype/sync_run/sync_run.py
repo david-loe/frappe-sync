@@ -4,6 +4,8 @@
 import frappe
 from frappe.model.document import Document
 
+from sync.sync.constants import SYNC_DEFINITION, SYNC_RUN_ITEM
+
 
 class SyncRun(Document):
 	# begin: auto-generated types
@@ -37,12 +39,12 @@ class SyncRun(Document):
 	# end: auto-generated types
 
 	def on_trash(self):
-		for item_name in _linked_names("Sync Run Item", {"sync_run": self.name}):
-			frappe.delete_doc("Sync Run Item", item_name, ignore_permissions=True)
+		for item_name in _linked_names(SYNC_RUN_ITEM, {"sync_run": self.name}):
+			frappe.delete_doc(SYNC_RUN_ITEM, item_name, ignore_permissions=True)
 
-		for definition_name in _linked_names("Sync Definition", {"last_run": self.name}):
+		for definition_name in _linked_names(SYNC_DEFINITION, {"last_run": self.name}):
 			frappe.db.set_value(
-				"Sync Definition",
+				SYNC_DEFINITION,
 				definition_name,
 				"last_run",
 				None,

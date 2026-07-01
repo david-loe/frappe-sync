@@ -124,6 +124,7 @@ class TestSyncApi(ApiTestCase):
 			"frequency_cron": "*/15 * * * *",
 			"batch_size": 100,
 			"filter_expression": '[["docstatus","=",0]]',
+			"match_mode": "Match Fields",
 			"match_fields": [{"frappe_field": "name"}],
 			"field_mapping": [{"frappe_field": "name", "partner_field": "name"}],
 			"value_mapping": [
@@ -305,6 +306,7 @@ class TestSyncApi(ApiTestCase):
 				"name": "SYNC-NEW",
 				"sync_type": "Frappe -> Partner",
 				"sync_partner": "PARTNER-1",
+				"match_mode": "Match Fields",
 			},
 		}
 		yaml_payload = yaml.safe_dump(payload, sort_keys=False)
@@ -441,6 +443,7 @@ def _fake_meta(doctype):
 			("frequency_cron", "Data", None),
 			("batch_size", "Data", None),
 			("filter_expression", "Data", None),
+			("match_mode", "Data", None),
 			("name", "Data", None),
 			("sync_partner", "Data", None),
 			("value_mapping", "Table", "Sync Value Mapping"),

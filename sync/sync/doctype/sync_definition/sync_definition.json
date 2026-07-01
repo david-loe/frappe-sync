@@ -46,6 +46,7 @@
   "export_mask_credentials",
   "tab_mapping",
   "section_record_matching",
+  "match_mode",
   "match_fields",
   "section_field_mapping",
   "field_mapping",
@@ -160,7 +161,7 @@
    "label": "Create New"
   },
   {
-   "depends_on": "eval:doc.sync_type != 'Frappe <-> Partner'",
+   "depends_on": "eval:doc.sync_type != 'Frappe <-> Partner' || doc.match_mode == 'Identity Fields'",
    "fieldname": "delete_missing",
    "fieldtype": "Check",
    "label": "Delete Missing",
@@ -318,12 +319,22 @@
    "label": "Record Matching"
   },
   {
+   "default": "Match Fields",
+   "description": "Controls how bidirectional sync pairs records. Match Fields uses configured match fields. Identity Fields uses symmetric stored IDs.",
+   "fieldname": "match_mode",
+   "fieldtype": "Select",
+   "label": "Match Mode",
+   "options": "Match Fields\nIdentity Fields",
+   "reqd": 1
+  },
+  {
    "description": "Choose the Frappe fields that define a logical match between Frappe and partner records.",
    "fieldname": "match_fields",
    "fieldtype": "Table",
    "label": "Match Fields",
+   "mandatory_depends_on": "eval:doc.match_mode == 'Match Fields'",
    "options": "Sync Key Field",
-   "reqd": 1
+   "reqd": 0
   },
   {
    "fieldname": "section_field_mapping",
@@ -482,7 +493,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-29 00:00:00.000000",
+ "modified": "2026-07-01 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

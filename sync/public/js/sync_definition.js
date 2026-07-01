@@ -25,6 +25,11 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 	},
+	match_mode(frm) {
+		sync.helpers.normalizeDefinitionDeleteMissing(frm);
+		sync.helpers.refreshDefinitionFieldPresentation(frm);
+		sync.helpers.refreshDefinitionSourceValidation(frm);
+	},
 	doctype_name(frm) {
 		sync.helpers.refreshDefinitionFieldChoices(frm);
 	},

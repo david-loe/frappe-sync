@@ -5,3 +5,4 @@
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
 sync.patches.rename_no_write_timestamp_tie_breaker
+sync.patches.set_default_match_mode

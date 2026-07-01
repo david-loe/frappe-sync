@@ -40,6 +40,18 @@ The app ships with Desk helpers (Run, Preview, Export YAML, Import YAML, Open La
 
 For destructive flows, take a backup and run a dry run before enabling scheduled execution. `delete_missing` is allowed only for complete source loads, cannot be combined with `read_query`.
 
+### Dry run mode
+
+Dry runs create `Sync Run` and `Sync Run Item` audit rows without writing to Frappe or the partner system.
+
+Limitations:
+- Frappe and partner creates, updates and deletes are not executed.
+- `Sync Definition` runtime fields such as `last_run`, `last_run_status`, `last_sync_at` and `last_successful_sync` are not updated.
+- Dry-run successes are not used as the delta baseline for later runs.
+- Dry-run items cannot be manually resolved.
+- Connector-side create behavior is only simulated.
+- `partner_create_id_strategy = max_plus_one` does not reserve or calculate the final partner ID, so the previewed partner ID may stay empty even though a real insert would assign it.
+
 ### Contributing & CI
 
 The project uses `pre-commit` with the usual suspects (ruff, eslint, prettier, pyupgrade). Running `bench lint` indirectly benefits from the same setup. CI workflows run unit tests and pip-audit on every push into `develop`.

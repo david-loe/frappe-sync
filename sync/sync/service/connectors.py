@@ -13,6 +13,8 @@ import frappe
 from frappe.utils import cint
 from frappe.utils.password import get_decrypted_password
 
+from sync.sync.constants import SYNC_PARTNER_TYPE
+
 POSTGRES_DELIMITED_IDENTIFIER_RE = re.compile(r"^[^\x00\"]+$")
 FIREBIRD_REGULAR_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$]{0,30}$")
 FIREBIRD_DELIMITED_IDENTIFIER_RE = re.compile(r"^[^\x00\"]+$")
@@ -574,8 +576,8 @@ class RelationalConnector(BasePartnerConnector):
 		if not preferred_driver:
 			with suppress(Exception):
 				partner_type_name = self.partner_doc.get("partner_type") or self.partner_doc.get("sync_partner_type")
-				if partner_type_name and frappe.db.exists("Sync Partner Type", partner_type_name):
-					partner_type_doc = frappe.get_doc("Sync Partner Type", partner_type_name)
+				if partner_type_name and frappe.db.exists(SYNC_PARTNER_TYPE, partner_type_name):
+					partner_type_doc = frappe.get_doc(SYNC_PARTNER_TYPE, partner_type_name)
 					preferred_driver = partner_type_doc.get("db_api_module")
 		if preferred_driver:
 			candidates.append(str(preferred_driver).strip())
@@ -853,8 +855,8 @@ def get_partner_type(partner_doc: Any) -> str:
 			if value in {"mssql", "postgres", "firebird"}:
 				return value
 			with suppress(Exception):
-				if frappe.db.exists("Sync Partner Type", value):
-					partner_type_doc = frappe.get_doc("Sync Partner Type", value)
+				if frappe.db.exists(SYNC_PARTNER_TYPE, value):
+					partner_type_doc = frappe.get_doc(SYNC_PARTNER_TYPE, value)
 					return str(partner_type_doc.get("partner_type_code") or value).strip().lower()
 			return value
 	return ""

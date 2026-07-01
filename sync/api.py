@@ -5,6 +5,14 @@ from typing import Any
 
 import frappe
 
+from sync.sync.constants import (
+	SYNC_DEFINITION,
+	SYNC_PARTNER,
+	SYNC_PARTNER_TYPE,
+	SYNC_RUN_ITEM,
+	TRIGGER_MANUAL,
+	VALID_TRIGGER_TYPES,
+)
 from sync.sync.service import (
 	SyncPreviewService,
 	cleanup_sync_run_retention as service_cleanup_sync_run_retention,
@@ -19,16 +27,15 @@ from sync.sync.service import (
 )
 from sync.sync.service.connectors import get_connector_for_partner
 from sync.sync.service.runtime import (
-	VALID_TRIGGER_TYPES,
 	preview_import_sync_definition_yaml as service_preview_import_sync_definition_yaml,
 )
 
 
 SYSTEM_MANAGER_ROLE = "System Manager"
-SYNC_DEFINITION_DOCTYPE = "Sync Definition"
-SYNC_PARTNER_DOCTYPE = "Sync Partner"
-SYNC_PARTNER_TYPE_DOCTYPE = "Sync Partner Type"
-SYNC_RUN_ITEM_DOCTYPE = "Sync Run Item"
+SYNC_DEFINITION_DOCTYPE = SYNC_DEFINITION
+SYNC_PARTNER_DOCTYPE = SYNC_PARTNER
+SYNC_PARTNER_TYPE_DOCTYPE = SYNC_PARTNER_TYPE
+SYNC_RUN_ITEM_DOCTYPE = SYNC_RUN_ITEM
 
 
 def _as_bool(value: Any) -> bool:
@@ -133,7 +140,7 @@ def _normalize_import_result(result: dict[str, Any], *, overwrite: bool) -> dict
 
 
 def _validate_trigger_type(trigger: str | None) -> str:
-	normalized = _clean_string(trigger) or "manual"
+	normalized = _clean_string(trigger) or TRIGGER_MANUAL
 	if normalized not in VALID_TRIGGER_TYPES:
 		frappe.throw(
 			f"Trigger Type must be one of: {', '.join(sorted(VALID_TRIGGER_TYPES))}.",
@@ -232,14 +239,14 @@ def get_sync_partner_table_columns(
 
 
 @frappe.whitelist()
-def run_sync_now(sync_definition_name: str, trigger: str = "manual", dry_run: bool = False):
+def run_sync_now(sync_definition_name: str, trigger: str = TRIGGER_MANUAL, dry_run: bool = False):
 	_require_system_manager()
 	_require_sync_definition_permission(sync_definition_name, permtype="write", check_partner=True)
 	return service_execute_sync_definition(sync_definition_name, trigger=_validate_trigger_type(trigger), dry_run=_as_bool(dry_run))
 
 
 @frappe.whitelist()
-def run_sync_definition(sync_definition_name: str, trigger: str = "manual", queue: bool = True, dry_run: bool = False):
+def run_sync_definition(sync_definition_name: str, trigger: str = TRIGGER_MANUAL, queue: bool = True, dry_run: bool = False):
 	_require_system_manager()
 	_require_sync_definition_permission(sync_definition_name, permtype="write", check_partner=True)
 	return service_enqueue_sync_definition(

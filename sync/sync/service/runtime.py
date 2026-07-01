@@ -13,6 +13,44 @@ import frappe
 from frappe.utils import cint, get_datetime, get_system_timezone, now_datetime
 import yaml
 
+from sync.sync.constants import (
+	ACTIVE_RUN_STATUSES,
+	CONFLICT_POLICY_NEWEST_WINS,
+	DONE_RUN_STATUSES,
+	MAPPING_DIRECTION_BOTH,
+	MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
+	MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
+	MATCH_MODE_IDENTITY_FIELDS,
+	MATCH_MODE_MATCH_FIELDS,
+	MATCH_MODES,
+	ONE_WAY_MATCH_ALL,
+	ONE_WAY_MATCH_FIRST,
+	RUN_STATUS_ERROR,
+	RUN_STATUS_NEEDS_REVIEW,
+	RUN_STATUS_PARTIAL_ERROR,
+	RUN_STATUS_QUEUED,
+	RUN_STATUS_RUNNING,
+	RUN_STATUS_SKIPPED,
+	RUN_STATUS_SUCCESS,
+	SYNC_DEFINITION,
+	SYNC_PARTNER,
+	SYNC_PARTNER_TYPE,
+	SYNC_RUN,
+	SYNC_RUN_ITEM,
+	SYNC_SETTINGS,
+	TIMESTAMP_TIE_BREAKERS,
+	TIMESTAMP_TIE_FRAPPE_WINS,
+	TIMESTAMP_TIE_MANUAL,
+	TIMESTAMP_TIE_PARTNER_WINS,
+	TRIGGER_MANUAL,
+	TRIGGER_SCHEDULER,
+	VALID_TRIGGER_TYPES,
+	VALUE_MAPPING_FALLBACK_ACTIONS,
+	VALUE_MAPPING_FALLBACK_KEEP_ORIGINAL,
+	VALUE_MAPPING_FALLBACK_USE_FALLBACK,
+	VALUE_MAPPING_FALLBACK_USE_NULL,
+)
+
 from .connectors import ConnectorCreateOptions, get_connector_for_partner
 
 try:
@@ -20,16 +58,6 @@ try:
 except Exception:  # pragma: no cover - optional runtime dependency
 	croniter = None
 
-
-SYNC_DEFINITION = "Sync Definition"
-SYNC_PARTNER = "Sync Partner"
-SYNC_RUN = "Sync Run"
-SYNC_RUN_ITEM = "Sync Run Item"
-SYNC_SETTINGS = "Sync Settings"
-
-ACTIVE_RUN_STATUSES = {"Queued", "Running"}
-DONE_RUN_STATUSES = {"Success", "Partial Error", "Needs Review", "Error", "Skipped"}
-VALID_TRIGGER_TYPES = {"manual", "scheduler", "api"}
 
 SYSTEM_KEYS = {
 	"name",
@@ -53,19 +81,6 @@ SYNC_DEFINITION_RUNTIME_STATE_FIELDS = {
 	"next_run_at",
 }
 
-MAPPING_DIRECTION_BOTH = "Frappe <-> Partner"
-MAPPING_DIRECTION_FRAPPE_TO_PARTNER = "Frappe -> Partner"
-MAPPING_DIRECTION_PARTNER_TO_FRAPPE = "Frappe <- Partner"
-
-VALUE_MAPPING_FALLBACK_KEEP_ORIGINAL = "keep_original"
-VALUE_MAPPING_FALLBACK_USE_FALLBACK = "fallback"
-VALUE_MAPPING_FALLBACK_USE_NULL = "null"
-VALUE_MAPPING_FALLBACK_ACTIONS = {
-	VALUE_MAPPING_FALLBACK_KEEP_ORIGINAL,
-	VALUE_MAPPING_FALLBACK_USE_FALLBACK,
-	VALUE_MAPPING_FALLBACK_USE_NULL,
-}
-
 SYNC_TYPE_FRAPPE_TO_PARTNER = MAPPING_DIRECTION_FRAPPE_TO_PARTNER
 SYNC_TYPE_PARTNER_TO_FRAPPE = MAPPING_DIRECTION_PARTNER_TO_FRAPPE
 SYNC_TYPE_BIDIRECTIONAL = MAPPING_DIRECTION_BOTH
@@ -77,14 +92,6 @@ DEFAULT_RUN_RETENTION_DAYS_ERROR = 365
 RUN_DOC_PENDING_WRITES_ATTR = "_sync_pending_write_count"
 AUDIT_RECORD_UNSET = object()
 VALUE_MAPPING_UNSET = object()
-TIMESTAMP_TIE_MANUAL = "Manual"
-TIMESTAMP_TIE_FRAPPE_WINS = "Frappe Wins"
-TIMESTAMP_TIE_PARTNER_WINS = "Partner Wins"
-TIMESTAMP_TIE_BREAKERS = {
-	TIMESTAMP_TIE_MANUAL,
-	TIMESTAMP_TIE_FRAPPE_WINS,
-	TIMESTAMP_TIE_PARTNER_WINS,
-}
 DEFAULT_TIMESTAMP_BUFFER_MS = 100
 
 
@@ -107,6 +114,7 @@ class SyncDefinitionConfig:
 	match_fields: list[str]
 	mapping: dict[str, dict[str, str]]
 	value_mapping: dict[str, dict[Any, Any]]
+	match_mode: str = MATCH_MODE_MATCH_FIELDS
 	frappe_modified_field: str = "modified"
 	frappe_creation_field: str = "creation"
 	partner_modified_field: str | None = None
@@ -120,7 +128,7 @@ class SyncDefinitionConfig:
 	partner_create_id_source: str | None = None
 	partner_create_id_scope_where: str | None = None
 	partner_time_zone: str | None = None
-	one_way_match_mode: str = "first_match"
+	one_way_match_mode: str = ONE_WAY_MATCH_FIRST
 	capture_audit_payloads: bool = False
 
 @dataclass(slots=True)
@@ -137,6 +145,17 @@ class FrappeMatchLookup:
 	groups: dict[tuple[Any, ...], list[dict[str, Any]]]
 	latest_by_key: dict[tuple[Any, ...], dict[str, Any]]
 	identity_by_value: dict[Any, dict[str, Any]]
+
+
+@dataclass(slots=True)
+class IdentityRecordState:
+	frappe_records: list[dict[str, Any]]
+	partner_records: list[dict[str, Any]]
+	frappe_by_name: dict[Any, dict[str, Any]]
+	frappe_by_partner_id: dict[Any, dict[str, Any]]
+	partner_by_identity: dict[Any, dict[str, Any]]
+	partner_by_frappe_id: dict[Any, dict[str, Any]]
+	duplicate_conflicts: list[tuple[str, list[dict[str, Any]], list[dict[str, Any]]]]
 
 
 @dataclass(slots=True)
@@ -273,7 +292,7 @@ def list_due_sync_definitions(now: datetime | None = None) -> list[str]:
 def run_due_sync_definitions(limit: int = 20, queue: bool = True) -> list[dict[str, Any]]:
 	results: list[dict[str, Any]] = []
 	for name in list_due_sync_definitions()[:limit]:
-		results.append(enqueue_sync_definition(name, trigger="scheduler", queue=queue))
+		results.append(enqueue_sync_definition(name, trigger=TRIGGER_SCHEDULER, queue=queue))
 	return results
 
 
@@ -322,7 +341,7 @@ def recover_stale_runs(
 				"status": recovered_status,
 				"finished_at": now_datetime(),
 				"summary": message,
-				"error_message": message if recovered_status == "Error" else None,
+				"error_message": message if recovered_status == RUN_STATUS_ERROR else None,
 			},
 			commit=False,
 		)
@@ -379,7 +398,7 @@ def cleanup_sync_run_retention(
 		if not run_name:
 			continue
 		status = str(_row_value(row, "status") or "")
-		cutoff = success_cutoff if status == "Success" else error_cutoff
+		cutoff = success_cutoff if status == RUN_STATUS_SUCCESS else error_cutoff
 		completed_at = _parse_datetime(_row_value(row, "finished_at")) or _parse_datetime(_row_value(row, "creation"))
 		if completed_at and completed_at > cutoff:
 			continue
@@ -407,7 +426,7 @@ def cleanup_sync_run_retention_scheduled() -> dict[str, Any]:
 def enqueue_sync_definition(
 	sync_definition_name: str,
 	*,
-	trigger: str = "manual",
+	trigger: str = TRIGGER_MANUAL,
 	queue: bool = True,
 	dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -419,7 +438,7 @@ def enqueue_sync_definition(
 			return {"status": "already_running", "sync_definition": sync_definition_name}
 
 		sync_definition = frappe.get_doc(SYNC_DEFINITION, sync_definition_name)
-		run_doc = _create_run_doc(sync_definition, status="Queued", trigger=trigger, dry_run=dry_run)
+		run_doc = _create_run_doc(sync_definition, status=RUN_STATUS_QUEUED, trigger=trigger, dry_run=dry_run)
 
 	if not queue:
 		return execute_sync_definition(
@@ -430,7 +449,7 @@ def enqueue_sync_definition(
 		)
 
 	job_id = f"sync:run:{sync_definition_name}:{frappe.generate_hash(length=8)}"
-	_update_doc_fields(run_doc, {"status": "Queued", "job_id": job_id})
+	_update_doc_fields(run_doc, {"status": RUN_STATUS_QUEUED, "job_id": job_id})
 	frappe.enqueue(
 		"sync.sync.service.runtime.run_sync_definition_job",
 		queue="long",
@@ -446,7 +465,7 @@ def enqueue_sync_definition(
 def run_sync_definition_job(
 	sync_definition_name: str,
 	run_name: str | None = None,
-	trigger: str = "manual",
+	trigger: str = TRIGGER_MANUAL,
 	dry_run: bool = False,
 ):
 	return execute_sync_definition(sync_definition_name, trigger=trigger, dry_run=dry_run, run_name=run_name)
@@ -505,7 +524,7 @@ def resolve_sync_run_item(sync_run_item_name: str, direction: str) -> dict[str, 
 def execute_sync_definition(
 	sync_definition_name: str,
 	*,
-	trigger: str = "manual",
+	trigger: str = TRIGGER_MANUAL,
 	dry_run: bool = False,
 	run_name: str | None = None,
 ) -> dict[str, Any]:
@@ -519,11 +538,11 @@ def execute_sync_definition(
 			if _has_active_run(sync_definition_name):
 				return {"status": "already_running", "sync_definition": sync_definition_name}
 			sync_definition_doc = frappe.get_doc(SYNC_DEFINITION, sync_definition_name)
-			run_doc = _create_run_doc(sync_definition_doc, status="Queued", trigger=trigger, dry_run=dry_run)
+			run_doc = _create_run_doc(sync_definition_doc, status=RUN_STATUS_QUEUED, trigger=trigger, dry_run=dry_run)
 
 		sync_definition = frappe.get_doc(SYNC_DEFINITION, sync_definition_name)
 		run_started_at = now_datetime()
-		_update_doc_fields(run_doc, {"status": "Running", "started_at": run_started_at, "trigger_type": trigger})
+		_update_doc_fields(run_doc, {"status": RUN_STATUS_RUNNING, "started_at": run_started_at, "trigger_type": trigger})
 
 		try:
 			config = _build_definition_config(sync_definition)
@@ -532,7 +551,7 @@ def execute_sync_definition(
 			result_payload = _run_engine(sync_definition, run_doc, context=context)
 
 			terminal_status = _terminal_status_for_result(result_payload)
-			sync_stamp = run_started_at if terminal_status == "Success" and not dry_run else None
+			sync_stamp = run_started_at if terminal_status == RUN_STATUS_SUCCESS and not dry_run else None
 			_update_doc_fields(
 				run_doc,
 				{
@@ -568,7 +587,7 @@ def execute_sync_definition(
 			_update_doc_fields(
 				run_doc,
 				{
-					"status": "Error",
+					"status": RUN_STATUS_ERROR,
 					"finished_at": now_datetime(),
 					"error_message": frappe.get_traceback(with_context=False),
 				},
@@ -636,6 +655,7 @@ def _build_preview(sync_definition: Any, *, limit: int) -> dict[str, Any]:
 		"frappe_records_sample_count": len(frappe_records),
 		"frappe_records_sample": frappe_records,
 		"mapping": mapping,
+		"match_mode": _config_match_mode(config),
 		"match_fields": _config_match_fields(config),
 		"read_query": _config_read_query(config),
 		"partner_identity_field": _config_partner_identity_field(config),
@@ -648,6 +668,7 @@ def export_sync_definition_yaml(sync_definition_name: str) -> str:
 	sync_definition_doc = frappe.get_doc(SYNC_DEFINITION, sync_definition_name)
 	mask_credentials = _as_bool(_first_value(sync_definition_doc, ["export_mask_credentials"], default=1))
 	config_doc = _sanitize_document_dict(sync_definition_doc.as_dict(), mask_credentials=mask_credentials)
+	config_doc["match_mode"] = _first_value(sync_definition_doc, ["match_mode"], default=MATCH_MODE_MATCH_FIELDS)
 	partner_name = _first_value(sync_definition_doc, ["partner"])
 
 	payload: dict[str, Any] = {
@@ -659,8 +680,8 @@ def export_sync_definition_yaml(sync_definition_name: str) -> str:
 		partner_doc = frappe.get_doc(SYNC_PARTNER, partner_name)
 		payload["sync_partner"] = _sanitize_document_dict(partner_doc.as_dict(), mask_credentials=mask_credentials)
 		partner_type_name = _first_value(partner_doc, ["partner_type"])
-		if partner_type_name and frappe.db.exists("Sync Partner Type", partner_type_name):
-			partner_type_doc = frappe.get_doc("Sync Partner Type", partner_type_name)
+		if partner_type_name and frappe.db.exists(SYNC_PARTNER_TYPE, partner_type_name):
+			partner_type_doc = frappe.get_doc(SYNC_PARTNER_TYPE, partner_type_name)
 			payload["sync_partner_type"] = _sanitize_document_dict(
 				partner_type_doc.as_dict(),
 				mask_credentials=mask_credentials,
@@ -735,7 +756,7 @@ def preview_import_sync_definition_yaml(yaml_payload: str, overwrite: bool = Fal
 	}
 
 	for payload_key, doctype in (
-		("sync_partner_type", "Sync Partner Type"),
+		("sync_partner_type", SYNC_PARTNER_TYPE),
 		("sync_partner", SYNC_PARTNER),
 		("sync_definition", SYNC_DEFINITION),
 	):
@@ -767,6 +788,18 @@ def preview_import_sync_definition_yaml(yaml_payload: str, overwrite: bool = Fal
 			continue
 
 		normalized = _normalize_doc_payload(doctype, payload)
+		if doctype == SYNC_DEFINITION and "match_mode" not in payload:
+			summary["invalid"] += 1
+			documents[doctype] = {
+				"payload_key": payload_key,
+				"doctype": doctype,
+				"name": _first_value_dict(normalized, ["name"]),
+				"status": "invalid",
+				"exists": False,
+				"action": "skip",
+				"hint": "Payload section `sync_definition` is missing required field `match_mode`.",
+			}
+			continue
 		name = _first_value_dict(normalized, ["name"])
 		if not name:
 			summary["invalid"] += 1
@@ -822,7 +855,7 @@ def import_sync_definition_yaml(yaml_payload: str, overwrite: bool = False) -> d
 	data = yaml.safe_load(yaml_payload) or {}
 	created_or_updated: dict[str, str] = {}
 	for key, doctype in (
-		("sync_partner_type", "Sync Partner Type"),
+		("sync_partner_type", SYNC_PARTNER_TYPE),
 		("sync_partner", SYNC_PARTNER),
 		("sync_definition", SYNC_DEFINITION),
 	):
@@ -871,7 +904,7 @@ def _run_engine(
 				for batch in partner_batches
 				for record in batch
 			]
-		elif _config_one_way_match_mode(config) == "all_matches":
+		elif _config_one_way_match_mode(config) == ONE_WAY_MATCH_ALL:
 			partner_records = [
 				record
 				for batch in partner_batches
@@ -958,30 +991,60 @@ def _run_engine(
 				)
 			_flush_pending_run_writes(run_doc, force=True)
 	else:
-		frappe_index = _build_frappe_index_from_batches(
-			config,
-			_iter_frappe_source_batches(config, context),
-		)
-		frappe_lookup_index = (
-			_build_frappe_index_from_batches(
-				config,
-				_iter_frappe_source_batches(config, context, apply_delta_filter=False),
+		if _config_match_mode(config) == MATCH_MODE_IDENTITY_FIELDS:
+			frappe_index = [
+				record
+				for batch in _iter_frappe_source_batches(config, context)
+				for record in batch
+			]
+			frappe_lookup_index = (
+				[
+					record
+					for batch in _iter_frappe_source_batches(config, context, apply_delta_filter=False)
+					for record in batch
+				]
+				if context.is_delta_sync
+				else frappe_index
 			)
-			if context.is_delta_sync
-			else frappe_index
-		)
-		partner_index = _build_partner_index_from_batches(
-			config,
-			_iter_partner_source_batches(config, connector, context),
-		)
-		partner_lookup_index = (
-			_build_partner_index_from_batches(
-				config,
-				_iter_partner_source_batches(config, connector, context, apply_delta_filter=False),
+			partner_index = [
+				record
+				for batch in _iter_partner_source_batches(config, connector, context)
+				for record in batch
+			]
+			partner_lookup_index = (
+				[
+					record
+					for batch in _iter_partner_source_batches(config, connector, context, apply_delta_filter=False)
+					for record in batch
+				]
+				if context.is_delta_sync
+				else partner_index
 			)
-			if context.is_delta_sync
-			else partner_index
-		)
+		else:
+			frappe_index = _build_frappe_index_from_batches(
+				config,
+				_iter_frappe_source_batches(config, context),
+			)
+			frappe_lookup_index = (
+				_build_frappe_index_from_batches(
+					config,
+					_iter_frappe_source_batches(config, context, apply_delta_filter=False),
+				)
+				if context.is_delta_sync
+				else frappe_index
+			)
+			partner_index = _build_partner_index_from_batches(
+				config,
+				_iter_partner_source_batches(config, connector, context),
+			)
+			partner_lookup_index = (
+				_build_partner_index_from_batches(
+					config,
+					_iter_partner_source_batches(config, connector, context, apply_delta_filter=False),
+				)
+				if context.is_delta_sync
+				else partner_index
+			)
 		_sync_bidirectional(
 			run_doc=run_doc,
 			config=config,
@@ -994,6 +1057,7 @@ def _run_engine(
 			frappe_lookup_records=frappe_lookup_index,
 			partner_lookup_records=partner_lookup_index,
 			mapping_context=mapping_context,
+			full_sync=context.is_full_sync,
 		)
 	return {
 		"sync_definition": config.name,
@@ -1011,9 +1075,11 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 	if isinstance(config, SyncDefinitionConfig):
 		mapping = _normalize_field_mapping(config.mapping)
 		if mapping == config.mapping:
+			match_mode = _normalize_match_mode(getattr(config, "match_mode", None))
 			normalized_config = replace(
 				config,
-				delete_missing=_delete_missing_enabled(config.sync_type, config.delete_missing),
+				match_mode=match_mode,
+				delete_missing=_delete_missing_enabled(config.sync_type, config.delete_missing, match_mode=match_mode),
 				partner_time_zone=_normalize_time_zone_name(config.partner_time_zone),
 				timestamp_tie_breaker=_normalize_timestamp_tie_breaker(config.timestamp_tie_breaker),
 				value_mapping_fallbacks=_normalize_value_mapping_fallbacks(config.value_mapping_fallbacks),
@@ -1021,6 +1087,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 			_validate_runtime_mapping(normalized_config)
 			return normalized_config
 	timestamp_buffer_ms = _coerce_timestamp_buffer_ms(getattr(config, "timestamp_buffer_ms", None))
+	match_mode = _normalize_match_mode(getattr(config, "match_mode", None))
 	normalized = SyncDefinitionConfig(
 		name=str(getattr(config, "name", "")),
 		doctype=str(getattr(config, "doctype", "")),
@@ -1033,16 +1100,18 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		delete_missing=_delete_missing_enabled(
 			getattr(config, "sync_type", "Frappe -> Partner"),
 			getattr(config, "delete_missing", 0),
+			match_mode=match_mode,
 		),
-		one_way_match_mode=_clean_string(getattr(config, "one_way_match_mode", None)) or "first_match",
+		one_way_match_mode=_clean_string(getattr(config, "one_way_match_mode", None)) or ONE_WAY_MATCH_FIRST,
 		use_last_sync_date=_as_bool(getattr(config, "use_last_sync_date", 1)),
-		conflict_policy=str(getattr(config, "conflict_policy", "newest_wins")),
+		conflict_policy=str(getattr(config, "conflict_policy", CONFLICT_POLICY_NEWEST_WINS)),
 		timestamp_buffer_ms=timestamp_buffer_ms,
 		table_name=getattr(config, "table_name", None),
 		read_query=getattr(config, "read_query", None),
 		match_fields=list(getattr(config, "match_fields", []) or []),
 		mapping=_normalize_field_mapping(getattr(config, "mapping", {}) or {}),
 		value_mapping=dict(getattr(config, "value_mapping", {}) or {}),
+		match_mode=match_mode,
 		frappe_modified_field=_clean_string(getattr(config, "frappe_modified_field", None))
 		or _first_configured_field(getattr(config, "frappe_modified_fields", None), "modified"),
 		frappe_creation_field=_clean_string(getattr(config, "frappe_creation_field", None)) or "creation",
@@ -1770,8 +1839,25 @@ def _sync_bidirectional(
 	frappe_lookup_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None = None,
 	partner_lookup_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None = None,
 	mapping_context: RuntimeMappingContext | None = None,
+	full_sync: bool = False,
 ):
 	mapping_context = mapping_context or _build_runtime_mapping_context(config)
+	if _config_match_mode(config) == MATCH_MODE_IDENTITY_FIELDS:
+		_sync_bidirectional_identity_fields(
+			run_doc=run_doc,
+			config=config,
+			connector=connector,
+			frappe_records=frappe_records,
+			partner_records=partner_records,
+			dry_run=dry_run,
+			stats=stats,
+			last_successful_sync=last_successful_sync,
+			frappe_lookup_records=frappe_lookup_records,
+			partner_lookup_records=partner_lookup_records,
+			mapping_context=mapping_context,
+			full_sync=full_sync,
+		)
+		return
 	frappe_index = _index_paired_frappe_records(config, frappe_records)
 	partner_index = _index_paired_partner_records(config, partner_records)
 	frappe_target_lookup_records = frappe_lookup_records if frappe_lookup_records is not None else []
@@ -1930,7 +2016,7 @@ def _sync_bidirectional(
 			)
 			continue
 
-		if config.conflict_policy != "newest_wins":
+		if config.conflict_policy != CONFLICT_POLICY_NEWEST_WINS:
 			_register_and_log(
 				stats=stats,
 				run_doc=run_doc,
@@ -2066,6 +2152,845 @@ def _sync_bidirectional(
 	_flush_pending_run_writes(run_doc)
 
 
+def _sync_bidirectional_identity_fields(
+	*,
+	run_doc: Any,
+	config: SyncDefinitionConfig,
+	connector: Any,
+	frappe_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+	partner_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
+	dry_run: bool,
+	stats: SyncStats,
+	last_successful_sync: datetime | None,
+	frappe_lookup_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None,
+	partner_lookup_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None,
+	mapping_context: RuntimeMappingContext,
+	full_sync: bool,
+) -> None:
+	_validate_identity_field_config(config)
+	operation_state = _build_identity_record_state(config, frappe_records, partner_records)
+	lookup_state = _build_identity_record_state(
+		config,
+		frappe_lookup_records if frappe_lookup_records is not None else frappe_records,
+		partner_lookup_records if partner_lookup_records is not None else partner_records,
+	)
+	conflicted_frappe: set[int] = set()
+	conflicted_partner: set[int] = set()
+	_logged_conflicts: set[str] = set()
+
+	def log_conflict(message: str, frappe_record: dict[str, Any] | None, partner_record: dict[str, Any] | None) -> None:
+		key = json.dumps(
+			[
+				message,
+				_identity_frappe_name(config, frappe_record),
+				_identity_frappe_partner_id(config, frappe_record),
+				_identity_partner_identity(config, partner_record),
+				_identity_partner_frappe_id(config, partner_record),
+			],
+			default=str,
+			ensure_ascii=True,
+		)
+		if key in _logged_conflicts:
+			return
+		_logged_conflicts.add(key)
+		if frappe_record is not None:
+			conflicted_frappe.add(id(frappe_record))
+		if partner_record is not None:
+			conflicted_partner.add(id(partner_record))
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="conflict",
+			status="conflict",
+			message=message,
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			commit=False,
+		)
+
+	for message, frappe_group, partner_group in lookup_state.duplicate_conflicts:
+		frappe_record = frappe_group[0] if frappe_group else None
+		partner_record = partner_group[0] if partner_group else None
+		for record in frappe_group:
+			conflicted_frappe.add(id(record))
+		for record in partner_group:
+			conflicted_partner.add(id(record))
+		log_conflict(message, frappe_record, partner_record)
+
+	pairs: dict[tuple[Any, Any], tuple[dict[str, Any], dict[str, Any]]] = {}
+	frappe_only: list[dict[str, Any]] = []
+	partner_only: list[dict[str, Any]] = []
+
+	for frappe_record in operation_state.frappe_records:
+		if id(frappe_record) in conflicted_frappe:
+			continue
+		partner_record, message = _resolve_identity_partner_for_frappe(config, frappe_record, lookup_state)
+		if message:
+			log_conflict(message, frappe_record, partner_record)
+			continue
+		if partner_record:
+			if id(partner_record) in conflicted_partner:
+				continue
+			pairs[_identity_pair_key(config, frappe_record, partner_record)] = (frappe_record, partner_record)
+		else:
+			frappe_only.append(frappe_record)
+
+	for partner_record in operation_state.partner_records:
+		if id(partner_record) in conflicted_partner:
+			continue
+		frappe_record, message = _resolve_identity_frappe_for_partner(config, partner_record, lookup_state)
+		if message:
+			log_conflict(message, frappe_record, partner_record)
+			continue
+		if frappe_record:
+			if id(frappe_record) in conflicted_frappe:
+				continue
+			pairs[_identity_pair_key(config, frappe_record, partner_record)] = (frappe_record, partner_record)
+		else:
+			partner_only.append(partner_record)
+
+	for frappe_record, partner_record in pairs.values():
+		_sync_bidirectional_identity_pair(
+			run_doc=run_doc,
+			config=config,
+			connector=connector,
+			stats=stats,
+			dry_run=dry_run,
+			last_successful_sync=last_successful_sync,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			mapping_context=mapping_context,
+		)
+
+	if config.delete_missing and full_sync:
+		_delete_missing_identity_records(
+			run_doc=run_doc,
+			config=config,
+			connector=connector,
+			lookup_state=lookup_state,
+			dry_run=dry_run,
+			stats=stats,
+			conflicted_frappe=conflicted_frappe,
+			conflicted_partner=conflicted_partner,
+		)
+	else:
+		for frappe_record in frappe_only:
+			if _identity_frappe_partner_id(config, frappe_record) in (None, ""):
+				_create_identity_partner_from_frappe(
+					run_doc=run_doc,
+					config=config,
+					connector=connector,
+					stats=stats,
+					dry_run=dry_run,
+					frappe_record=frappe_record,
+					mapping_context=mapping_context,
+				)
+		for partner_record in partner_only:
+			if _identity_partner_frappe_id(config, partner_record) in (None, ""):
+				_create_identity_frappe_from_partner(
+					run_doc=run_doc,
+					config=config,
+					connector=connector,
+					stats=stats,
+					dry_run=dry_run,
+					partner_record=partner_record,
+					mapping_context=mapping_context,
+				)
+
+	if config.delete_missing and full_sync:
+		for frappe_record in frappe_only:
+			if _identity_frappe_partner_id(config, frappe_record) in (None, ""):
+				_create_identity_partner_from_frappe(
+					run_doc=run_doc,
+					config=config,
+					connector=connector,
+					stats=stats,
+					dry_run=dry_run,
+					frappe_record=frappe_record,
+					mapping_context=mapping_context,
+				)
+		for partner_record in partner_only:
+			if _identity_partner_frappe_id(config, partner_record) in (None, ""):
+				_create_identity_frappe_from_partner(
+					run_doc=run_doc,
+					config=config,
+					connector=connector,
+					stats=stats,
+					dry_run=dry_run,
+					partner_record=partner_record,
+					mapping_context=mapping_context,
+				)
+
+	_flush_pending_run_writes(run_doc)
+
+
+def _validate_identity_field_config(config: SyncDefinitionConfig) -> None:
+	missing = []
+	if not _config_partner_identity_field(config):
+		missing.append("Partner Identity Field")
+	if not _config_frappe_partner_identity_field(config):
+		missing.append("Frappe Partner Identity Field")
+	if not _config_partner_frappe_identity_field(config):
+		missing.append("Partner Frappe Identity Field")
+	if missing:
+		raise frappe.ValidationError("Identity Fields mode requires: " + ", ".join(missing) + ".")
+
+
+def _identity_records(records: list[dict[str, Any]] | dict[Any, dict[str, Any]] | None) -> list[dict[str, Any]]:
+	if not records:
+		return []
+	return list(records.values()) if isinstance(records, dict) else list(records)
+
+
+def _build_identity_record_state(
+	config: SyncDefinitionConfig,
+	frappe_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None,
+	partner_records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]] | None,
+) -> IdentityRecordState:
+	frappe_list = _identity_records(frappe_records)
+	partner_list = _identity_records(partner_records)
+	duplicate_conflicts: list[tuple[str, list[dict[str, Any]], list[dict[str, Any]]]] = []
+	frappe_by_name = _identity_unique_index(
+		frappe_list,
+		lambda record: _identity_frappe_name(config, record),
+		lambda key: f"Multiple Frappe records use the same Frappe ID {key!r}.",
+		duplicate_conflicts,
+		"frappe",
+	)
+	frappe_by_partner_id = _identity_unique_index(
+		frappe_list,
+		lambda record: _identity_frappe_partner_id(config, record),
+		lambda key: f"Multiple Frappe records claim the same partner ID {key!r}.",
+		duplicate_conflicts,
+		"frappe",
+	)
+	partner_by_identity = _identity_unique_index(
+		partner_list,
+		lambda record: _identity_partner_identity(config, record),
+		lambda key: f"Multiple partner records use the same partner ID {key!r}.",
+		duplicate_conflicts,
+		"partner",
+	)
+	partner_by_frappe_id = _identity_unique_index(
+		partner_list,
+		lambda record: _identity_partner_frappe_id(config, record),
+		lambda key: f"Multiple partner records claim the same Frappe ID {key!r}.",
+		duplicate_conflicts,
+		"partner",
+	)
+	return IdentityRecordState(
+		frappe_records=frappe_list,
+		partner_records=partner_list,
+		frappe_by_name=frappe_by_name,
+		frappe_by_partner_id=frappe_by_partner_id,
+		partner_by_identity=partner_by_identity,
+		partner_by_frappe_id=partner_by_frappe_id,
+		duplicate_conflicts=duplicate_conflicts,
+	)
+
+
+def _identity_unique_index(records, key_getter, message_getter, duplicate_conflicts, side: str) -> dict[Any, dict[str, Any]]:
+	groups: dict[Any, list[dict[str, Any]]] = {}
+	for record in records:
+		key = _normalize_pairing_key_value(key_getter(record))
+		if key in (None, ""):
+			continue
+		groups.setdefault(key, []).append(record)
+	index: dict[Any, dict[str, Any]] = {}
+	for key, group in groups.items():
+		if len(group) == 1:
+			index[key] = group[0]
+			continue
+		if side == "frappe":
+			duplicate_conflicts.append((message_getter(key), group, []))
+		else:
+			duplicate_conflicts.append((message_getter(key), [], group))
+	return index
+
+
+def _identity_frappe_name(config: SyncDefinitionConfig, record: dict[str, Any] | None) -> Any:
+	return (record or {}).get("name")
+
+
+def _identity_frappe_partner_id(config: SyncDefinitionConfig, record: dict[str, Any] | None) -> Any:
+	return _frappe_partner_identity_value(config, record)
+
+
+def _identity_partner_identity(config: SyncDefinitionConfig, record: dict[str, Any] | None) -> Any:
+	return _partner_identity_value(config, record)
+
+
+def _identity_partner_frappe_id(config: SyncDefinitionConfig, record: dict[str, Any] | None) -> Any:
+	fieldname = _config_partner_frappe_identity_field(config)
+	if not fieldname or not record:
+		return None
+	return record.get(fieldname)
+
+
+def _resolve_identity_partner_for_frappe(
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any],
+	state: IdentityRecordState,
+) -> tuple[dict[str, Any] | None, str | None]:
+	frappe_name = _normalize_pairing_key_value(_identity_frappe_name(config, frappe_record))
+	frappe_partner_id = _normalize_pairing_key_value(_identity_frappe_partner_id(config, frappe_record))
+	by_partner_id = state.partner_by_identity.get(frappe_partner_id) if frappe_partner_id not in (None, "") else None
+	by_frappe_id = state.partner_by_frappe_id.get(frappe_name) if frappe_name not in (None, "") else None
+	if by_partner_id and by_frappe_id and by_partner_id is not by_frappe_id:
+		return by_partner_id, (
+			"Identity conflict: Frappe record points to one partner by partner ID, "
+			"but another partner points back by Frappe ID."
+		)
+	partner_record = by_partner_id or by_frappe_id
+	if not partner_record:
+		return None, None
+	partner_identity = _normalize_pairing_key_value(_identity_partner_identity(config, partner_record))
+	partner_frappe_id = _normalize_pairing_key_value(_identity_partner_frappe_id(config, partner_record))
+	if frappe_partner_id not in (None, "") and partner_identity not in (None, "") and frappe_partner_id != partner_identity:
+		return partner_record, "Identity conflict: Frappe partner ID and partner own ID point to different partners."
+	if frappe_name not in (None, "") and partner_frappe_id not in (None, "") and frappe_name != partner_frappe_id:
+		return partner_record, "Identity conflict: Partner Frappe ID points to a different Frappe record."
+	return partner_record, None
+
+
+def _resolve_identity_frappe_for_partner(
+	config: SyncDefinitionConfig,
+	partner_record: dict[str, Any],
+	state: IdentityRecordState,
+) -> tuple[dict[str, Any] | None, str | None]:
+	partner_identity = _normalize_pairing_key_value(_identity_partner_identity(config, partner_record))
+	partner_frappe_id = _normalize_pairing_key_value(_identity_partner_frappe_id(config, partner_record))
+	by_partner_id = state.frappe_by_partner_id.get(partner_identity) if partner_identity not in (None, "") else None
+	by_frappe_id = state.frappe_by_name.get(partner_frappe_id) if partner_frappe_id not in (None, "") else None
+	if by_partner_id and by_frappe_id and by_partner_id is not by_frappe_id:
+		return by_frappe_id, (
+			"Identity conflict: Partner record points to one Frappe record by Frappe ID, "
+			"but another Frappe record points back by partner ID."
+		)
+	frappe_record = by_partner_id or by_frappe_id
+	if not frappe_record:
+		return None, None
+	frappe_name = _normalize_pairing_key_value(_identity_frappe_name(config, frappe_record))
+	frappe_partner_id = _normalize_pairing_key_value(_identity_frappe_partner_id(config, frappe_record))
+	if partner_frappe_id not in (None, "") and frappe_name not in (None, "") and partner_frappe_id != frappe_name:
+		return frappe_record, "Identity conflict: Partner Frappe ID and Frappe own ID point to different Frappe records."
+	if partner_identity not in (None, "") and frappe_partner_id not in (None, "") and partner_identity != frappe_partner_id:
+		return frappe_record, "Identity conflict: Frappe partner ID points to a different partner record."
+	return frappe_record, None
+
+
+def _identity_pair_key(config: SyncDefinitionConfig, frappe_record: dict[str, Any], partner_record: dict[str, Any]) -> tuple[Any, Any]:
+	return (
+		_normalize_pairing_key_value(_identity_frappe_name(config, frappe_record)) or id(frappe_record),
+		_normalize_pairing_key_value(_identity_partner_identity(config, partner_record)) or id(partner_record),
+	)
+
+
+def _sync_bidirectional_identity_pair(
+	*,
+	run_doc: Any,
+	config: SyncDefinitionConfig,
+	connector: Any,
+	stats: SyncStats,
+	dry_run: bool,
+	last_successful_sync: datetime | None,
+	frappe_record: dict[str, Any],
+	partner_record: dict[str, Any],
+	mapping_context: RuntimeMappingContext,
+) -> None:
+	frappe_payload = _map_partner_to_frappe(
+		partner_record,
+		config.mapping,
+		config.value_mapping,
+		getattr(config, "value_mapping_fallbacks", None),
+		doctype=getattr(config, "doctype", None),
+		partner_time_zone=getattr(config, "partner_time_zone", None),
+		mapping_context=mapping_context,
+	)
+	partner_payload = _map_frappe_to_partner(
+		frappe_record,
+		config.mapping,
+		config.value_mapping,
+		getattr(config, "value_mapping_fallbacks", None),
+		doctype=getattr(config, "doctype", None),
+		partner_time_zone=getattr(config, "partner_time_zone", None),
+		mapping_context=mapping_context,
+	)
+	to_partner_changes = _diff_target_values(
+		new_record=_apply_partner_link_fields(config, frappe_record, partner_payload),
+		old_record=partner_record,
+		field_names=list(_apply_partner_link_fields(config, frappe_record, partner_payload).keys()),
+		exclude_fields={_config_partner_modified_field(config), _config_partner_creation_field(config)},
+		datetime_fields=mapping_context.partner_datetime_fields,
+		assumed_time_zone=getattr(config, "partner_time_zone", None),
+		target_time_zone=getattr(config, "partner_time_zone", None) or mapping_context.site_time_zone,
+	)
+	frappe_partner_field = _config_frappe_partner_identity_field(config)
+	partner_identity_field = _config_partner_identity_field(config)
+	if frappe_partner_field and partner_identity_field and partner_record.get(partner_identity_field) not in (None, ""):
+		frappe_payload = dict(frappe_payload)
+		frappe_payload[frappe_partner_field] = partner_record.get(partner_identity_field)
+	to_frappe_changes = _diff_target_values(
+		new_record=frappe_payload,
+		old_record=frappe_record,
+		field_names=list(frappe_payload.keys()),
+		exclude_fields={_config_frappe_modified_field(config), _config_frappe_creation_field(config)},
+		datetime_fields=mapping_context.frappe_datetime_fields,
+		target_time_zone=mapping_context.site_time_zone,
+	)
+	if not to_partner_changes and not to_frappe_changes:
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="skipped",
+			status="skipped",
+			message="No differences between both sides.",
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			commit=False,
+		)
+		return
+	frappe_changed_since_last = _record_changed_since(
+		record=frappe_record,
+		modified_fields=_config_frappe_modified_field(config),
+		last_successful_sync=last_successful_sync,
+		creation_field=_config_frappe_creation_field(config),
+		target_time_zone=mapping_context.site_time_zone,
+	)
+	partner_changed_since_last = _record_changed_since(
+		record=partner_record,
+		modified_fields=_config_partner_modified_field(config),
+		last_successful_sync=last_successful_sync,
+		creation_field=_config_partner_creation_field(config),
+		assumed_time_zone=getattr(config, "partner_time_zone", None),
+		target_time_zone=mapping_context.site_time_zone,
+	)
+	if frappe_changed_since_last and not partner_changed_since_last:
+		_apply_partner_update(
+			run_doc=run_doc,
+			config=config,
+			connector=connector,
+			stats=stats,
+			dry_run=dry_run,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			partner_payload=partner_payload,
+			changes=to_partner_changes,
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			action="updated",
+			status="success",
+			message="Updated partner from frappe.",
+			commit=False,
+			mapping_context=mapping_context,
+		)
+		return
+	if partner_changed_since_last and not frappe_changed_since_last:
+		_apply_frappe_update(
+			run_doc=run_doc,
+			config=config,
+			stats=stats,
+			dry_run=dry_run,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			frappe_payload=frappe_payload,
+			changes=to_frappe_changes,
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			action="updated",
+			status="success",
+			message="Updated frappe from partner.",
+			commit=False,
+		)
+		return
+	if config.conflict_policy != CONFLICT_POLICY_NEWEST_WINS:
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="conflict",
+			status="conflict",
+			message=f"Unsupported conflict policy: {config.conflict_policy}",
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			commit=False,
+		)
+		return
+	frappe_latest = _latest_modified(
+		record=frappe_record,
+		modified_fields=_config_frappe_modified_field(config),
+		creation_field=_config_frappe_creation_field(config),
+		target_time_zone=mapping_context.site_time_zone,
+	)
+	partner_latest = _latest_modified(
+		record=partner_record,
+		modified_fields=_config_partner_modified_field(config),
+		creation_field=_config_partner_creation_field(config),
+		assumed_time_zone=getattr(config, "partner_time_zone", None),
+		target_time_zone=mapping_context.site_time_zone,
+	)
+	timestamp_winner = _compare_modified_timestamps(frappe_latest, partner_latest, buffer_ms=_config_timestamp_buffer_ms(config))
+	if timestamp_winner == "frappe":
+		_apply_partner_update(
+			run_doc=run_doc,
+			config=config,
+			connector=connector,
+			stats=stats,
+			dry_run=dry_run,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			partner_payload=partner_payload,
+			changes=to_partner_changes,
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			action="updated",
+			status="success",
+			message="Updated partner from frappe with newest_wins.",
+			commit=False,
+			mapping_context=mapping_context,
+		)
+	elif timestamp_winner == "partner":
+		_apply_frappe_update(
+			run_doc=run_doc,
+			config=config,
+			stats=stats,
+			dry_run=dry_run,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			frappe_payload=frappe_payload,
+			changes=to_frappe_changes,
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			action="updated",
+			status="success",
+			message="Updated frappe from partner with newest_wins.",
+			commit=False,
+		)
+	else:
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="conflict",
+			status="conflict",
+			message="Manual conflict requires review; no write performed.",
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			changes=_canonical_conflict_changes(config, to_frappe_changes=to_frappe_changes, to_partner_changes=to_partner_changes),
+			commit=False,
+		)
+
+
+def _create_identity_partner_from_frappe(
+	*,
+	run_doc: Any,
+	config: SyncDefinitionConfig,
+	connector: Any,
+	stats: SyncStats,
+	dry_run: bool,
+	frappe_record: dict[str, Any],
+	mapping_context: RuntimeMappingContext,
+) -> None:
+	if not config.create_new:
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="skipped",
+			status="skipped",
+			message="Create disabled and target record does not exist.",
+			direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+			frappe_record=frappe_record,
+			partner_record=None,
+			commit=False,
+		)
+		return
+	partner_payload = _with_partner_timestamps(
+		config,
+		frappe_record,
+		_apply_partner_link_fields(
+			config,
+			frappe_record,
+			_map_frappe_to_partner(
+				frappe_record,
+				config.mapping,
+				config.value_mapping,
+				getattr(config, "value_mapping_fallbacks", None),
+				doctype=getattr(config, "doctype", None),
+				partner_time_zone=getattr(config, "partner_time_zone", None),
+				mapping_context=mapping_context,
+			),
+		),
+		create=True,
+		mapping_context=mapping_context,
+	)
+	try:
+		write = connector.upsert_record(
+			record=partner_payload,
+			key_values={},
+			mapping=mapping_context.connector_mapping,
+			dry_run=dry_run,
+			source=config.table_name,
+			create_options=_build_partner_create_options(config),
+		)
+		if not write.ok:
+			raise RuntimeError(write.message or "Partner create failed.")
+		_persist_frappe_partner_identity(config, frappe_record, write, dry_run=dry_run)
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="created",
+			status="success",
+			message="Dry run create." if dry_run else "Created partner record.",
+			direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+			frappe_record=frappe_record,
+			partner_record=getattr(write, "record", None) or partner_payload,
+			write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+			written_after_record=getattr(write, "record", None) or partner_payload,
+			commit=False,
+		)
+	except Exception as exc:
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="error",
+			status="error",
+			message=str(exc),
+			direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+			frappe_record=frappe_record,
+			partner_record=partner_payload,
+			write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+			commit=False,
+		)
+
+
+def _create_identity_frappe_from_partner(
+	*,
+	run_doc: Any,
+	config: SyncDefinitionConfig,
+	connector: Any,
+	stats: SyncStats,
+	dry_run: bool,
+	partner_record: dict[str, Any],
+	mapping_context: RuntimeMappingContext,
+) -> None:
+	if not config.create_new:
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="skipped",
+			status="skipped",
+			message="Create disabled and target record does not exist.",
+			direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+			frappe_record=None,
+			partner_record=partner_record,
+			commit=False,
+		)
+		return
+	frappe_payload = _map_partner_to_frappe(
+		partner_record,
+		config.mapping,
+		config.value_mapping,
+		getattr(config, "value_mapping_fallbacks", None),
+		doctype=getattr(config, "doctype", None),
+		partner_time_zone=getattr(config, "partner_time_zone", None),
+		mapping_context=mapping_context,
+	)
+	frappe_partner_field = _config_frappe_partner_identity_field(config)
+	partner_identity_field = _config_partner_identity_field(config)
+	if frappe_partner_field and partner_identity_field and partner_record.get(partner_identity_field) not in (None, ""):
+		frappe_payload[frappe_partner_field] = partner_record.get(partner_identity_field)
+	frappe_payload = _with_frappe_modified_timestamp(
+		config,
+		partner_record,
+		frappe_payload,
+		mapping_context=mapping_context,
+	)
+	try:
+		doc_name = _upsert_frappe_record(
+			doctype=config.doctype,
+			existing_name=None,
+			payload=frappe_payload,
+			dry_run=dry_run,
+		)
+		if doc_name:
+			frappe_payload["name"] = doc_name
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="created",
+			status="success",
+			message="Dry run create." if dry_run else "Created frappe record.",
+			direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+			frappe_record=frappe_payload,
+			partner_record=partner_record,
+			write_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+			written_after_record=frappe_payload,
+			commit=False,
+		)
+	except Exception as exc:
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="error",
+			status="error",
+			message=str(exc),
+			direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+			frappe_record=None,
+			partner_record=partner_record,
+			write_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+			commit=False,
+		)
+		return
+	try:
+		_persist_partner_frappe_identity(config, connector, partner_record, frappe_payload.get("name"), dry_run=dry_run)
+	except Exception as exc:
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="error",
+			status="error",
+			message=str(exc),
+			direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+			frappe_record=frappe_payload,
+			partner_record=partner_record,
+			write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+			commit=False,
+		)
+
+
+def _persist_partner_frappe_identity(
+	config: SyncDefinitionConfig,
+	connector: Any,
+	partner_record: dict[str, Any],
+	frappe_name: Any,
+	*,
+	dry_run: bool,
+) -> None:
+	partner_frappe_field = _config_partner_frappe_identity_field(config)
+	partner_identity_field = _config_partner_identity_field(config)
+	partner_id = partner_record.get(partner_identity_field) if partner_identity_field else None
+	if dry_run or not partner_frappe_field or not partner_identity_field or frappe_name in (None, ""):
+		return
+	if partner_record.get(partner_frappe_field) == frappe_name:
+		return
+	if partner_id in (None, ""):
+		raise RuntimeError("Partner Frappe ID write-back requires a partner identity value.")
+	write = connector.upsert_record(
+		record={partner_frappe_field: frappe_name},
+		key_values={partner_identity_field: partner_id},
+		mapping={partner_frappe_field: partner_frappe_field},
+		dry_run=dry_run,
+		source=config.table_name,
+		create_options=_build_partner_create_options(config),
+	)
+	if not write.ok:
+		raise RuntimeError(write.message or "Partner Frappe ID write-back failed.")
+	partner_record[partner_frappe_field] = frappe_name
+
+
+def _delete_missing_identity_records(
+	*,
+	run_doc: Any,
+	config: SyncDefinitionConfig,
+	connector: Any,
+	lookup_state: IdentityRecordState,
+	dry_run: bool,
+	stats: SyncStats,
+	conflicted_frappe: set[int],
+	conflicted_partner: set[int],
+) -> None:
+	for frappe_record in lookup_state.frappe_records:
+		if id(frappe_record) in conflicted_frappe:
+			continue
+		frappe_name = _normalize_pairing_key_value(_identity_frappe_name(config, frappe_record))
+		frappe_partner_id = _normalize_pairing_key_value(_identity_frappe_partner_id(config, frappe_record))
+		if frappe_name in (None, "") or frappe_partner_id in (None, ""):
+			continue
+		if lookup_state.partner_by_identity.get(frappe_partner_id) or lookup_state.partner_by_frappe_id.get(frappe_name):
+			continue
+		try:
+			if not dry_run:
+				frappe.delete_doc(config.doctype, frappe_record["name"], ignore_permissions=True, force=True)
+			_register_and_log(
+				stats=stats,
+				run_doc=run_doc,
+				config=config,
+				action="deleted",
+				status="success",
+				message="Dry run delete." if dry_run else "Deleted frappe record whose identity-linked partner is missing.",
+				direction=SYNC_TYPE_BIDIRECTIONAL,
+				frappe_record=frappe_record,
+				partner_record=None,
+				commit=False,
+			)
+		except Exception as exc:
+			_register_and_log(
+				stats=stats,
+				run_doc=run_doc,
+				config=config,
+				action="error",
+				status="error",
+				message=str(exc),
+				direction=SYNC_TYPE_BIDIRECTIONAL,
+				frappe_record=frappe_record,
+				partner_record=None,
+				commit=False,
+			)
+
+	for partner_record in lookup_state.partner_records:
+		if id(partner_record) in conflicted_partner:
+			continue
+		partner_identity = _normalize_pairing_key_value(_identity_partner_identity(config, partner_record))
+		partner_frappe_id = _normalize_pairing_key_value(_identity_partner_frappe_id(config, partner_record))
+		if partner_identity in (None, "") or partner_frappe_id in (None, ""):
+			continue
+		if lookup_state.frappe_by_name.get(partner_frappe_id) or lookup_state.frappe_by_partner_id.get(partner_identity):
+			continue
+		partner_identity_field = _config_partner_identity_field(config)
+		try:
+			write = connector.delete_record(
+				key_values={partner_identity_field: partner_record.get(partner_identity_field)},
+				dry_run=dry_run,
+				source=config.table_name,
+			)
+			if not write.ok:
+				raise RuntimeError(write.message or "Partner delete failed.")
+			_register_and_log(
+				stats=stats,
+				run_doc=run_doc,
+				config=config,
+				action="deleted",
+				status="success",
+				message="Dry run delete." if dry_run else "Deleted partner record whose identity-linked Frappe record is missing.",
+				direction=SYNC_TYPE_BIDIRECTIONAL,
+				frappe_record=None,
+				partner_record=partner_record,
+				commit=False,
+			)
+		except Exception as exc:
+			_register_and_log(
+				stats=stats,
+				run_doc=run_doc,
+				config=config,
+				action="error",
+				status="error",
+				message=str(exc),
+				direction=SYNC_TYPE_BIDIRECTIONAL,
+				frappe_record=None,
+				partner_record=partner_record,
+				commit=False,
+			)
+
+
 def _manual_conflict_resolution_payloads(
 	*,
 	config: SyncDefinitionConfig,
@@ -2146,7 +3071,7 @@ def _apply_partner_update(
 	try:
 		write = connector.upsert_record(
 			record=partner_payload,
-			key_values=_partner_key_values_for_write(config, frappe_record, key),
+			key_values=_partner_key_values_for_existing_match(config, frappe_record, key, partner_record),
 			mapping=connector_mapping,
 			dry_run=dry_run,
 			source=config.table_name,
@@ -2204,6 +3129,13 @@ def _apply_frappe_update(
 	commit: bool = True,
 ):
 	try:
+		frappe_partner_field = _config_frappe_partner_identity_field(config)
+		partner_identity_field = _config_partner_identity_field(config)
+		if frappe_partner_field and partner_identity_field:
+			partner_id = partner_record.get(partner_identity_field)
+			if partner_id not in (None, ""):
+				frappe_payload = dict(frappe_payload)
+				frappe_payload[frappe_partner_field] = partner_id
 		frappe_payload = _with_frappe_modified_timestamp(
 			config,
 			partner_record,
@@ -2569,12 +3501,14 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 	filters = _parse_filter_expression(_first_value(sync_definition_doc, ["filter_expression"]))
 	batch_size = cint(_first_value(sync_definition_doc, ["batch_size"], default=100)) or 100
 	create_new = _as_bool(_first_value(sync_definition_doc, ["create_new"], default=1))
+	match_mode = _normalize_match_mode(_first_value(sync_definition_doc, ["match_mode"], default=MATCH_MODE_MATCH_FIELDS))
 	delete_missing = _delete_missing_enabled(
 		sync_type,
 		_first_value(sync_definition_doc, ["delete_missing"], default=0),
+		match_mode=match_mode,
 	)
 	use_last_sync_date = _as_bool(_first_value(sync_definition_doc, ["use_last_sync_date"], default=1))
-	conflict_policy = str(_first_value(sync_definition_doc, ["conflict_policy"], default="newest_wins"))
+	conflict_policy = str(_first_value(sync_definition_doc, ["conflict_policy"], default=CONFLICT_POLICY_NEWEST_WINS))
 	timestamp_buffer_ms = _coerce_timestamp_buffer_ms(_first_value(sync_definition_doc, ["timestamp_buffer_ms"]))
 
 	match_fields = _get_match_fields(sync_definition_doc)
@@ -2584,7 +3518,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 	value_mapping_fallbacks = _get_value_mapping_fallbacks(sync_definition_doc)
 	if not mapping:
 		raise frappe.ValidationError("Sync Definition has no field mapping entries.")
-	if not match_fields:
+	if not match_fields and match_mode == MATCH_MODE_MATCH_FIELDS:
 		match_fields = [next(iter(mapping.keys()))]
 
 	frappe_modified_field = _clean_string(_first_value(sync_definition_doc, ["frappe_modified_field"])) or "modified"
@@ -2604,7 +3538,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		batch_size=batch_size,
 		create_new=create_new,
 		delete_missing=delete_missing,
-		one_way_match_mode=_clean_string(_first_value(sync_definition_doc, ["one_way_match_mode"])) or "first_match",
+		one_way_match_mode=_clean_string(_first_value(sync_definition_doc, ["one_way_match_mode"])) or ONE_WAY_MATCH_FIRST,
 		use_last_sync_date=use_last_sync_date,
 		conflict_policy=conflict_policy,
 		timestamp_buffer_ms=timestamp_buffer_ms,
@@ -2613,6 +3547,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		match_fields=match_fields,
 		mapping=mapping,
 		value_mapping=value_mapping,
+		match_mode=match_mode,
 		frappe_modified_field=frappe_modified_field,
 		frappe_creation_field=frappe_creation_field,
 		partner_modified_field=partner_modified_field,
@@ -2707,8 +3642,21 @@ def _read_query_can_replace_table_name(sync_type: Any, read_query: Any) -> bool:
 	return _one_way_mapping_direction(sync_type) == MAPPING_DIRECTION_PARTNER_TO_FRAPPE and bool(_clean_string(read_query))
 
 
-def _delete_missing_enabled(sync_type: Any, value: Any) -> bool:
-	return bool(_one_way_mapping_direction(sync_type)) and _as_bool(value)
+def _delete_missing_enabled(sync_type: Any, value: Any, *, match_mode: Any = MATCH_MODE_MATCH_FIELDS) -> bool:
+	if _one_way_mapping_direction(sync_type):
+		return _as_bool(value)
+	return (
+		_clean_string(sync_type) == SYNC_TYPE_BIDIRECTIONAL
+		and _normalize_match_mode(match_mode) == MATCH_MODE_IDENTITY_FIELDS
+		and _as_bool(value)
+	)
+
+
+def _normalize_match_mode(value: Any) -> str:
+	mode = _clean_string(value) or MATCH_MODE_MATCH_FIELDS
+	if mode not in MATCH_MODES:
+		raise frappe.ValidationError(f"Match Mode must be one of: {', '.join(sorted(MATCH_MODES))}.")
+	return mode
 
 
 def _normalize_field_mapping_entry(raw_entry: Any, *, sync_type: str | None = None) -> dict[str, str] | None:
@@ -2809,6 +3757,10 @@ def _required_mapping_directions(sync_type: str) -> list[str]:
 
 def _validate_runtime_mapping(config: SyncDefinitionConfig) -> None:
 	mapping = _normalize_field_mapping(config.mapping)
+	if _config_match_mode(config) == MATCH_MODE_MATCH_FIELDS and mapping and not _config_match_fields(config):
+		raise frappe.ValidationError("Match fields are required in Match Fields mode.")
+	if _config_match_mode(config) == MATCH_MODE_IDENTITY_FIELDS:
+		_validate_identity_field_config(config)
 	missing_or_invalid: list[str] = []
 	for match_field in _config_match_fields(config):
 		entry = mapping.get(match_field)
@@ -3686,6 +4638,8 @@ def _partner_key_values_from_partner_record(config: SyncDefinitionConfig, record
 
 
 def _partner_fetch_key_fields(config: SyncDefinitionConfig) -> list[str]:
+	if _config_match_mode(config) == MATCH_MODE_IDENTITY_FIELDS:
+		return [field for field in [_config_partner_identity_field(config)] if field]
 	mapping = getattr(config, "mapping", {}) or {}
 	fields = [
 		_partner_field_for_mapping(mapping, frappe_field, frappe_field)
@@ -3693,6 +4647,8 @@ def _partner_fetch_key_fields(config: SyncDefinitionConfig) -> list[str]:
 	]
 	if _config_partner_identity_field(config):
 		fields.append(_config_partner_identity_field(config) or "")
+	if _config_partner_frappe_identity_field(config):
+		fields.append(_config_partner_frappe_identity_field(config) or "")
 	return [field for field in fields if field]
 
 
@@ -3705,7 +4661,11 @@ def _config_read_query(config: Any) -> str | None:
 
 
 def _config_one_way_match_mode(config: Any) -> str:
-	return getattr(config, "one_way_match_mode", None) or "first_match"
+	return getattr(config, "one_way_match_mode", None) or ONE_WAY_MATCH_FIRST
+
+
+def _config_match_mode(config: Any) -> str:
+	return _normalize_match_mode(getattr(config, "match_mode", None))
 
 
 def _config_frappe_modified_field(config: Any) -> str:
@@ -3798,7 +4758,7 @@ def _normalize_partner_match_records(
 	config: SyncDefinitionConfig,
 	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
 ) -> list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]]:
-	if isinstance(records, dict) or _config_one_way_match_mode(config) == "all_matches":
+	if isinstance(records, dict) or _config_one_way_match_mode(config) == ONE_WAY_MATCH_ALL:
 		return records
 	return _index_partner_records(config, records)
 
@@ -3823,7 +4783,7 @@ def _normalize_frappe_match_records(
 	config: SyncDefinitionConfig,
 	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
 ) -> list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]]:
-	if isinstance(records, dict) or _config_one_way_match_mode(config) == "all_matches":
+	if isinstance(records, dict) or _config_one_way_match_mode(config) == ONE_WAY_MATCH_ALL:
 		return records
 	return _index_frappe_records(config, records)
 
@@ -3861,7 +4821,7 @@ def _find_existing_partner_records(
 	key = _key_tuple_from_frappe(frappe_record, _config_match_fields(config))
 	if _valid_key(key):
 		matches = list(partner_groups.get(key) or [])
-		if _config_one_way_match_mode(config) == "all_matches":
+		if _config_one_way_match_mode(config) == ONE_WAY_MATCH_ALL:
 			return matches
 		return matches[-1:] if matches else []
 	return []
@@ -3900,7 +4860,7 @@ def _find_existing_frappe_records(
 	key = _key_tuple_from_partner(partner_record, _config_match_fields(config), config.mapping)
 	if _valid_key(key):
 		matches = list(frappe_groups.get(key) or [])
-		if _config_one_way_match_mode(config) == "all_matches":
+		if _config_one_way_match_mode(config) == ONE_WAY_MATCH_ALL:
 			return matches
 		return matches[-1:] if matches else []
 	return []
@@ -4382,7 +5342,7 @@ def _update_definition_runtime(
 	sync_definition_doc: Any,
 	*,
 	last_run: str,
-	status: str = "Success",
+	status: str = RUN_STATUS_SUCCESS,
 	last_sync_at: datetime | None,
 	summary: str | None = None,
 	commit: bool = True,
@@ -4394,7 +5354,7 @@ def _update_definition_runtime(
 		"last_run_summary": summary,
 		"last_sync_at": last_sync_at,
 	}
-	if status == "Success" and last_sync_at is not None:
+	if status == RUN_STATUS_SUCCESS and last_sync_at is not None:
 		updates["last_successful_sync"] = last_sync_at
 	valid_updates = {}
 	for fieldname, value in updates.items():
@@ -4411,7 +5371,7 @@ def _update_definition_failure(sync_definition_doc: Any, *, last_run: str, error
 	meta = frappe.get_meta(sync_definition_doc.doctype)
 	updates = {
 		"last_run": last_run,
-		"last_run_status": "Error",
+		"last_run_status": RUN_STATUS_ERROR,
 		"last_run_summary": error_message.splitlines()[-1] if error_message else "Sync failed",
 	}
 	valid_updates = {}
@@ -4472,7 +5432,7 @@ def _get_last_successful_sync(sync_definition_name: str) -> datetime | None:
 		fields = ["modified"]
 	runs = frappe.get_all(
 		SYNC_RUN,
-		filters={"sync_definition": sync_definition_name, "status": "Success", "dry_run": 0},
+		filters={"sync_definition": sync_definition_name, "status": RUN_STATUS_SUCCESS, "dry_run": 0},
 		fields=fields,
 		order_by="creation desc",
 		limit=1,
@@ -4513,9 +5473,9 @@ def _positive_int(value: Any, default: int) -> int:
 
 
 def _stale_run_terminal_status(previous_status: str, requested_status: str | None = None) -> str:
-	if requested_status in {"Error", "Skipped"}:
+	if requested_status in {RUN_STATUS_ERROR, RUN_STATUS_SKIPPED}:
 		return requested_status
-	return "Skipped" if previous_status == "Queued" else "Error"
+	return RUN_STATUS_SKIPPED if previous_status == RUN_STATUS_QUEUED else RUN_STATUS_ERROR
 
 
 def _linked_run_item_names(run_name: str) -> list[str]:
@@ -4542,7 +5502,7 @@ def _format_run_summary(result_payload: dict[str, Any]) -> str:
 
 
 def _normalize_trigger_type(trigger: Any) -> str:
-	normalized = _clean_string(trigger) or "manual"
+	normalized = _clean_string(trigger) or TRIGGER_MANUAL
 	if normalized not in VALID_TRIGGER_TYPES:
 		raise frappe.ValidationError(f"Trigger Type must be one of: {', '.join(sorted(VALID_TRIGGER_TYPES))}.")
 	return normalized
@@ -4550,18 +5510,18 @@ def _normalize_trigger_type(trigger: Any) -> str:
 
 def _terminal_status_for_result(result_payload: dict[str, Any]) -> str:
 	if cint(result_payload.get("error_count")) > 0:
-		return "Partial Error"
+		return RUN_STATUS_PARTIAL_ERROR
 	if cint(result_payload.get("conflict_count")) > 0:
-		return "Needs Review"
-	return "Success"
+		return RUN_STATUS_NEEDS_REVIEW
+	return RUN_STATUS_SUCCESS
 
 
 def _api_status_for_run_status(run_status: str) -> str:
-	if run_status == "Success":
+	if run_status == RUN_STATUS_SUCCESS:
 		return "success"
-	if run_status == "Partial Error":
+	if run_status == RUN_STATUS_PARTIAL_ERROR:
 		return "partial_error"
-	if run_status == "Needs Review":
+	if run_status == RUN_STATUS_NEEDS_REVIEW:
 		return "needs_review"
 	return str(run_status or "").strip().lower().replace(" ", "_")
 
@@ -4784,7 +5744,7 @@ def _fit_data_value(value: str | None, max_length: int = 140) -> str | None:
 
 def _update_partner_connection_status(partner_doc: Any, *, status: str, details: str) -> None:
 	values = {
-		"last_connection_status": "Success" if status == "ok" else "Error",
+		"last_connection_status": RUN_STATUS_SUCCESS if status == "ok" else RUN_STATUS_ERROR,
 		"last_checked_on": now_datetime(),
 		"last_connection_error": "" if status == "ok" else details,
 	}

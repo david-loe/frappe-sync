@@ -6,20 +6,29 @@ import json
 import frappe
 from frappe.model.document import Document
 
-MAPPING_DIRECTIONS = ("Frappe <-> Partner", "Frappe -> Partner", "Frappe <- Partner")
-UNMAPPED_ACTION_KEEP_ORIGINAL = "Keep Original"
-UNMAPPED_ACTION_USE_FALLBACK = "Use Fallback Value"
-UNMAPPED_ACTION_USE_NULL = "Use NULL"
-UNMAPPED_ACTIONS = (
+from sync.sync.constants import (
+	CONFLICT_POLICY_NEWEST_WINS,
+	MAPPING_DIRECTION_BOTH,
+	MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
+	MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
+	MAPPING_DIRECTIONS,
+	MATCH_MODE_IDENTITY_FIELDS,
+	MATCH_MODE_MATCH_FIELDS,
+	MATCH_MODES,
+	ONE_WAY_MATCH_FIRST,
+	ONE_WAY_MATCH_MODES,
+	SYNC_RUN,
+	SYNC_RUN_ITEM,
+	TIMESTAMP_TIE_BREAKERS,
+	TIMESTAMP_TIE_MANUAL,
+	TIMESTAMP_TIE_FRAPPE_WINS,
+	TIMESTAMP_TIE_PARTNER_WINS,
+	UNMAPPED_ACTIONS,
 	UNMAPPED_ACTION_KEEP_ORIGINAL,
+	UNMAPPED_ACTION_KEYS,
 	UNMAPPED_ACTION_USE_FALLBACK,
 	UNMAPPED_ACTION_USE_NULL,
 )
-UNMAPPED_ACTION_KEYS = {
-	UNMAPPED_ACTION_KEEP_ORIGINAL: "keep_original",
-	UNMAPPED_ACTION_USE_FALLBACK: "fallback",
-	UNMAPPED_ACTION_USE_NULL: "null",
-}
 
 
 class SyncDefinition(Document):
@@ -54,6 +63,7 @@ class SyncDefinition(Document):
 		last_successful_sync: DF.Datetime | None
 		last_sync_at: DF.Datetime | None
 		match_fields: DF.Table[SyncKeyField]
+		match_mode: DF.Literal["Match Fields", "Identity Fields"]
 		next_run_at: DF.Datetime | None
 		one_way_match_mode: DF.Literal["first_match", "all_matches"]
 		partner: DF.Link
@@ -79,6 +89,7 @@ class SyncDefinition(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		SyncDefinition.validate_match_mode(self)
 		SyncDefinition.validate_field_mapping(self)
 		SyncDefinition.validate_value_mapping(self)
 		SyncDefinition.validate_match_fields(self)
@@ -90,11 +101,11 @@ class SyncDefinition(Document):
 		SyncDefinition.validate_preview_limit(self)
 
 	def on_trash(self):
-		for run_name in _linked_names("Sync Run", {"sync_definition": self.name}):
-			frappe.delete_doc("Sync Run", run_name, ignore_permissions=True)
+		for run_name in _linked_names(SYNC_RUN, {"sync_definition": self.name}):
+			frappe.delete_doc(SYNC_RUN, run_name, ignore_permissions=True)
 
-		for item_name in _linked_names("Sync Run Item", {"sync_definition": self.name}):
-			frappe.delete_doc("Sync Run Item", item_name, ignore_permissions=True)
+		for item_name in _linked_names(SYNC_RUN_ITEM, {"sync_definition": self.name}):
+			frappe.delete_doc(SYNC_RUN_ITEM, item_name, ignore_permissions=True)
 
 	def validate_field_mapping(self):
 		seen: set[str] = set()
@@ -115,8 +126,13 @@ class SyncDefinition(Document):
 			frappe.throw(f"Field Mapping contains duplicate Frappe fields: {', '.join(sorted(set(duplicates)))}")
 
 	def validate_match_fields(self):
+		if (_clean_value(getattr(self, "match_mode", None)) or MATCH_MODE_MATCH_FIELDS) != MATCH_MODE_MATCH_FIELDS:
+			return
 		mapping_fields = set(self.get_field_mapping().keys())
-		missing = [field for field in SyncDefinition.get_match_fields(self) if field not in mapping_fields]
+		match_fields = SyncDefinition.get_match_fields(self)
+		if mapping_fields and not match_fields:
+			frappe.throw("Match fields are required in Match Fields mode.")
+		missing = [field for field in match_fields if field not in mapping_fields]
 		if missing:
 			frappe.throw(f"Match fields must exist in field mapping: {', '.join(missing)}")
 
@@ -141,7 +157,7 @@ class SyncDefinition(Document):
 	def validate_source_settings(self):
 		table_name = _clean_value(self.table_name)
 		read_query = _clean_value(getattr(self, "read_query", None))
-		if not _one_way_mapping_direction(getattr(self, "sync_type", None)):
+		if not _delete_missing_allowed(getattr(self, "sync_type", None), getattr(self, "match_mode", None)):
 			self.delete_missing = 0
 		if not table_name and not _read_query_can_replace_table_name(getattr(self, "sync_type", None), read_query):
 			frappe.throw("Table Name is required.")
@@ -155,7 +171,7 @@ class SyncDefinition(Document):
 		self.frappe_modified_field = _clean_value(getattr(self, "frappe_modified_field", None)) or "modified"
 		self.partner_modified_field = _clean_value(getattr(self, "partner_modified_field", None))
 		self.partner_creation_field = _clean_value(getattr(self, "partner_creation_field", None))
-		self.timestamp_tie_breaker = _clean_value(getattr(self, "timestamp_tie_breaker", None)) or "Manual"
+		self.timestamp_tie_breaker = _clean_value(getattr(self, "timestamp_tie_breaker", None)) or TIMESTAMP_TIE_MANUAL
 
 		partner_timestamps_required = _partner_timestamps_required(self)
 		if partner_timestamps_required and not self.partner_modified_field:
@@ -170,10 +186,13 @@ class SyncDefinition(Document):
 			and self.partner_modified_field == self.partner_creation_field
 		):
 			frappe.throw("Partner Modified Field and Partner Creation Field must be different.")
-		if _clean_value(getattr(self, "sync_type", None)) != "Frappe <-> Partner":
-			self.timestamp_tie_breaker = "Manual"
-		if self.timestamp_tie_breaker not in {"Manual", "Frappe Wins", "Partner Wins"}:
-			frappe.throw("Timestamp Tie Breaker must be one of: Manual, Frappe Wins, Partner Wins.")
+		if _clean_value(getattr(self, "sync_type", None)) != MAPPING_DIRECTION_BOTH:
+			self.timestamp_tie_breaker = TIMESTAMP_TIE_MANUAL
+		if self.timestamp_tie_breaker not in TIMESTAMP_TIE_BREAKERS:
+			frappe.throw(
+				"Timestamp Tie Breaker must be one of: "
+				+ ", ".join((TIMESTAMP_TIE_MANUAL, TIMESTAMP_TIE_FRAPPE_WINS, TIMESTAMP_TIE_PARTNER_WINS))
+			)
 
 		doctype_name = _clean_value(getattr(self, "doctype_name", None))
 		if doctype_name:
@@ -216,6 +235,16 @@ class SyncDefinition(Document):
 		self.partner_create_id_scope_where = scope_where
 		self.frappe_partner_identity_field = _clean_value(self.frappe_partner_identity_field)
 		self.partner_frappe_identity_field = _clean_value(self.partner_frappe_identity_field)
+		if _clean_value(getattr(self, "match_mode", None)) == MATCH_MODE_IDENTITY_FIELDS:
+			missing = []
+			if not identity_field:
+				missing.append("Partner Identity Field")
+			if not self.frappe_partner_identity_field:
+				missing.append("Frappe Partner Identity Field")
+			if not self.partner_frappe_identity_field:
+				missing.append("Partner Frappe Identity Field")
+			if missing:
+				frappe.throw("Identity Fields mode requires: " + ", ".join(missing) + ".")
 
 		if strategy not in {"payload", "connector_default", "sequence", "max_plus_one"}:
 			frappe.throw("Partner Create ID Strategy must be one of: payload, connector_default, sequence, max_plus_one.")
@@ -244,10 +273,16 @@ class SyncDefinition(Document):
 			frappe.throw("Preview Limit must be at least 1.")
 
 	def validate_one_way_match_mode(self):
-		mode = _clean_value(getattr(self, "one_way_match_mode", None)) or "first_match"
-		if mode not in {"first_match", "all_matches"}:
+		mode = _clean_value(getattr(self, "one_way_match_mode", None)) or ONE_WAY_MATCH_FIRST
+		if mode not in ONE_WAY_MATCH_MODES:
 			frappe.throw("One-Way Match Mode must be one of: first_match, all_matches.")
 		self.one_way_match_mode = mode
+
+	def validate_match_mode(self):
+		mode = _clean_value(getattr(self, "match_mode", None)) or MATCH_MODE_MATCH_FIELDS
+		if mode not in MATCH_MODES:
+			frappe.throw(f"Match Mode must be one of: {', '.join(MATCH_MODES)}.")
+		self.match_mode = mode
 
 	def get_match_fields(self) -> list[str]:
 		fields: list[str] = []
@@ -324,8 +359,9 @@ class SyncDefinition(Document):
 			"timestamp_buffer_ms": self.timestamp_buffer_ms,
 			"create_new": self.create_new,
 			"delete_missing": self.delete_missing,
-			"one_way_match_mode": getattr(self, "one_way_match_mode", "first_match"),
-			"conflict_policy": self.conflict_policy,
+			"match_mode": getattr(self, "match_mode", MATCH_MODE_MATCH_FIELDS),
+			"one_way_match_mode": getattr(self, "one_way_match_mode", ONE_WAY_MATCH_FIRST),
+			"conflict_policy": self.conflict_policy or CONFLICT_POLICY_NEWEST_WINS,
 			"table_name": self.table_name,
 			"read_query": getattr(self, "read_query", None),
 			"preview_limit": self.get_preview_limit(),
@@ -334,7 +370,7 @@ class SyncDefinition(Document):
 			"frappe_creation_field": "creation",
 			"partner_modified_field": getattr(self, "partner_modified_field", None),
 			"partner_creation_field": getattr(self, "partner_creation_field", None),
-			"timestamp_tie_breaker": getattr(self, "timestamp_tie_breaker", "Manual"),
+			"timestamp_tie_breaker": getattr(self, "timestamp_tie_breaker", TIMESTAMP_TIE_MANUAL),
 			"match_fields": SyncDefinition.get_match_fields(self),
 			"field_mapping": SyncDefinition.get_field_mapping(self),
 			"value_mapping": SyncDefinition.get_value_mapping(self),
@@ -420,7 +456,7 @@ def _assign_row_value(row, fieldname: str, value):
 			row.update({fieldname: value})
 
 
-def _normalize_mapping_direction(value, *, default: str = "Frappe <-> Partner") -> str:
+def _normalize_mapping_direction(value, *, default: str = MAPPING_DIRECTION_BOTH) -> str:
 	direction = _clean_value(value) or default
 	if direction not in MAPPING_DIRECTIONS:
 		frappe.throw(f"Direction must be one of: {', '.join(MAPPING_DIRECTIONS)}")
@@ -429,17 +465,23 @@ def _normalize_mapping_direction(value, *, default: str = "Frappe <-> Partner") 
 
 def _one_way_mapping_direction(sync_type) -> str | None:
 	sync_type = _clean_value(sync_type)
-	if sync_type in {"Frappe -> Partner", "Frappe <- Partner"}:
+	if sync_type in {MAPPING_DIRECTION_FRAPPE_TO_PARTNER, MAPPING_DIRECTION_PARTNER_TO_FRAPPE}:
 		return sync_type
 	return None
 
 
 def _read_query_can_replace_table_name(sync_type, read_query) -> bool:
-	return _one_way_mapping_direction(sync_type) == "Frappe <- Partner" and bool(_clean_value(read_query))
+	return _one_way_mapping_direction(sync_type) == MAPPING_DIRECTION_PARTNER_TO_FRAPPE and bool(_clean_value(read_query))
+
+
+def _delete_missing_allowed(sync_type, match_mode) -> bool:
+	if _one_way_mapping_direction(sync_type):
+		return True
+	return _clean_value(sync_type) == MAPPING_DIRECTION_BOTH and _clean_value(match_mode) == MATCH_MODE_IDENTITY_FIELDS
 
 
 def _partner_timestamps_required(doc) -> bool:
-	return _clean_value(getattr(doc, "sync_type", None)) == "Frappe <-> Partner" or _truthy(
+	return _clean_value(getattr(doc, "sync_type", None)) == MAPPING_DIRECTION_BOTH or _truthy(
 		getattr(doc, "use_last_sync_date", None)
 	)
 
