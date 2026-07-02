@@ -328,6 +328,17 @@ class TestRelationalConnectorSql(unittest.TestCase):
 			"SELECT * FROM (SELECT id FROM dbo.SyncTable) AS source_rows ORDER BY [id] OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY",
 		)
 		self.assertEqual(
+			MssqlConnector(DummyPartner("mssql"))._build_fetch_sql(
+				source=None,
+				query="WITH rows AS (SELECT id FROM dbo.SyncTable) SELECT id FROM rows",
+				batch_size=10,
+				key_fields=["id"],
+				where_clause="[id] > ?",
+			),
+			"WITH rows AS (SELECT id FROM dbo.SyncTable), source_rows AS (SELECT id FROM rows) "
+			"SELECT * FROM source_rows WHERE [id] > ? ORDER BY [id] OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY",
+		)
+		self.assertEqual(
 			PostgresConnector(DummyPartner("postgres"))._build_fetch_sql(
 				source=None,
 				query="SELECT id FROM sync_table",

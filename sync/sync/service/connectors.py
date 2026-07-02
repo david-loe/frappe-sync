@@ -640,6 +640,12 @@ class RelationalConnector(BasePartnerConnector):
 		where_sql = f" WHERE {where_clause}" if where_clause else ""
 		if query:
 			if self.dialect == "mssql":
+				cte_source = self._mssql_cte_source_query(query)
+				if cte_source:
+					return (
+						f"{cte_source}{where_sql} "
+						f"{order_clause} OFFSET 0 ROWS FETCH NEXT {batch_size} ROWS ONLY"
+					)
 				return (
 					f"SELECT * FROM ({query}) AS source_rows{where_sql} "
 					f"{order_clause} OFFSET 0 ROWS FETCH NEXT {batch_size} ROWS ONLY"
@@ -654,6 +660,97 @@ class RelationalConnector(BasePartnerConnector):
 		if self.dialect == "firebird":
 			return f"SELECT * FROM {table}{where_sql} {order_clause} ROWS 1 TO {batch_size}"
 		return f"SELECT * FROM {table}{where_sql} {order_clause} LIMIT {batch_size}"
+
+	def _mssql_cte_source_query(self, query: str) -> str | None:
+		sql = query.strip().rstrip(";")
+		if not self._keyword_at(sql, 0, "WITH"):
+			return None
+		select_index = self._find_top_level_keyword(sql, "SELECT", start=4)
+		if select_index is None:
+			return None
+		cte_prefix = sql[:select_index].rstrip()
+		final_select = sql[select_index:].strip()
+		return f"{cte_prefix}, source_rows AS ({final_select}) SELECT * FROM source_rows"
+
+	def _find_top_level_keyword(self, sql: str, keyword: str, *, start: int = 0) -> int | None:
+		depth = 0
+		i = start
+		in_single_quote = False
+		in_double_quote = False
+		in_bracket = False
+		in_line_comment = False
+		in_block_comment = False
+		while i < len(sql):
+			ch = sql[i]
+			next_ch = sql[i + 1] if i + 1 < len(sql) else ""
+			if in_line_comment:
+				in_line_comment = ch not in "\r\n"
+				i += 1
+				continue
+			if in_block_comment:
+				if ch == "*" and next_ch == "/":
+					in_block_comment = False
+					i += 2
+					continue
+				i += 1
+				continue
+			if in_single_quote:
+				if ch == "'" and next_ch == "'":
+					i += 2
+					continue
+				if ch == "'":
+					in_single_quote = False
+				i += 1
+				continue
+			if in_double_quote:
+				in_double_quote = ch != '"'
+				i += 1
+				continue
+			if in_bracket:
+				in_bracket = ch != "]"
+				i += 1
+				continue
+			if ch == "-" and next_ch == "-":
+				in_line_comment = True
+				i += 2
+				continue
+			if ch == "/" and next_ch == "*":
+				in_block_comment = True
+				i += 2
+				continue
+			if ch == "'":
+				in_single_quote = True
+				i += 1
+				continue
+			if ch == '"':
+				in_double_quote = True
+				i += 1
+				continue
+			if ch == "[":
+				in_bracket = True
+				i += 1
+				continue
+			if ch == "(":
+				depth += 1
+				i += 1
+				continue
+			if ch == ")":
+				depth = max(depth - 1, 0)
+				i += 1
+				continue
+			if depth == 0 and self._keyword_at(sql, i, keyword):
+				return i
+			i += 1
+		return None
+
+	@staticmethod
+	def _keyword_at(sql: str, index: int, keyword: str) -> bool:
+		end = index + len(keyword)
+		if sql[index:end].upper() != keyword:
+			return False
+		before = sql[index - 1] if index > 0 else ""
+		after = sql[end] if end < len(sql) else ""
+		return not (before.isalnum() or before == "_") and not (after.isalnum() or after == "_")
 
 	def _mssql_order_clause(self, key_fields: list[str]) -> str:
 		return self._order_clause(key_fields)

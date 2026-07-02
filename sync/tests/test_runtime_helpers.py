@@ -24,7 +24,10 @@ class FakeDoc:
 
 class DummyMeta:
 	def __init__(self, fields):
-		self.fields = [SimpleNamespace(fieldname=f, fieldtype="Data") for f in fields]
+		self.fields = [
+			field if hasattr(field, "fieldname") else SimpleNamespace(fieldname=f, fieldtype="Data")
+			for f, field in ((field, field) for field in fields)
+		]
 
 	def has_field(self, fieldname):
 		return fieldname in {field.fieldname for field in self.fields}
@@ -39,14 +42,19 @@ class DummyLogger:
 
 
 class MutableDoc:
-	def __init__(self, name="DOC-1"):
+	def __init__(self, name="DOC-1", docstatus=0):
 		self.name = name
+		self.docstatus = docstatus
 		self.values = {}
 		self.saved = False
 		self.inserted = False
+		self.submitted = False
 
 	def set(self, key, value):
 		self.values[key] = value
+
+	def get(self, key, default=None):
+		return getattr(self, key, self.values.get(key, default))
 
 	def save(self, **kwargs):
 		self.saved = True
@@ -54,6 +62,11 @@ class MutableDoc:
 
 	def insert(self, **kwargs):
 		self.inserted = True
+		return self
+
+	def submit(self):
+		self.submitted = True
+		self.docstatus = 1
 		return self
 
 
@@ -122,6 +135,9 @@ class TestRuntimeHelpers(unittest.TestCase):
 				"filter_expression": '[["docstatus","=",0]]',
 				"batch_size": 10,
 				"create_new": 1,
+				"update_existing": 0,
+				"frappe_after_insert_action": "Submit",
+				"frappe_after_update_action": "Invalid Value",
 				"delete_missing": 0,
 				"conflict_policy": "newest_wins",
 				"frappe_modified_field": "modified",
@@ -148,7 +164,137 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(config.frappe_creation_field, "creation")
 		self.assertEqual(config.partner_creation_field, "created_at")
 		self.assertEqual(config.table_name, "tabTask")
-		self.assertIsNone(config.read_query)
+		self.assertFalse(config.update_existing)
+		self.assertEqual(config.frappe_after_insert_action, "Submit")
+		self.assertEqual(config.frappe_after_update_action, "None")
+
+	def test_child_field_mapping_maps_in_both_directions(self):
+		def fake_meta(doctype):
+			if doctype == "Task":
+				return DummyMeta(
+					[
+						SimpleNamespace(fieldname="subject", fieldtype="Data"),
+						SimpleNamespace(fieldname="items", fieldtype="Table", options="Task Item"),
+					]
+				)
+			if doctype == "Task Item":
+				return DummyMeta([SimpleNamespace(fieldname="item_code", fieldtype="Data")])
+			return DummyMeta([])
+
+		config = SimpleNamespace(
+			doctype="Task",
+			mapping={
+				"subject": {"partner_field": "title", "direction": "Frappe <-> Partner"},
+				"items.1.item_code": {"partner_field": "external_item_code", "direction": "Frappe <-> Partner"},
+			},
+			value_mapping={},
+			value_mapping_fallbacks={},
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+			partner_modified_field=None,
+			partner_creation_field=None,
+			partner_time_zone=None,
+		)
+
+		with patch("sync.sync.service.runtime.frappe.get_meta", side_effect=fake_meta):
+			context = runtime._build_runtime_mapping_context(config)
+			self.assertEqual(
+				runtime._map_frappe_to_partner(
+					{"subject": "Parent", "items": [{"item_code": "ITEM-1"}]},
+					config.mapping,
+					{},
+					mapping_context=context,
+				),
+				{"title": "Parent", "external_item_code": "ITEM-1"},
+			)
+			self.assertEqual(
+				runtime._map_partner_to_frappe(
+					{"title": "Parent", "external_item_code": "ITEM-1"},
+					config.mapping,
+					{},
+					mapping_context=context,
+				),
+				{"subject": "Parent", "items": [{"doctype": "Task Item", "item_code": "ITEM-1"}]},
+			)
+
+	def test_upsert_frappe_record_merges_configured_child_rows_on_update(self):
+		def fake_meta(doctype):
+			if doctype == "Task":
+				return DummyMeta(
+					[
+						SimpleNamespace(fieldname="subject", fieldtype="Data"),
+						SimpleNamespace(fieldname="items", fieldtype="Table", options="Task Item"),
+					]
+				)
+			return DummyMeta([SimpleNamespace(fieldname="item_code", fieldtype="Data")])
+
+		doc = MutableDoc("TASK-1")
+		doc.doctype = "Task"
+		doc.items = [{"doctype": "Task Item", "item_code": "OLD", "description": "Keep"}]
+
+		with patch(
+			"sync.sync.service.runtime.frappe",
+			new=_runtime_frappe_stub(
+				get_meta=fake_meta,
+				get_doc=lambda doctype, name: doc,
+				db=_db_stub(),
+			),
+		):
+			name = runtime._upsert_frappe_record(
+				doctype="Task",
+				existing_name="TASK-1",
+				payload={"items": [{"doctype": "Task Item", "item_code": "NEW"}]},
+				dry_run=False,
+			)
+
+		self.assertEqual(name, "TASK-1")
+		self.assertTrue(doc.saved)
+		self.assertEqual(doc.values["items"][0]["item_code"], "NEW")
+		self.assertEqual(doc.values["items"][0]["description"], "Keep")
+
+	def test_upsert_frappe_record_drops_empty_child_slot_rows_on_insert(self):
+		def fake_meta(doctype):
+			if doctype == "Task":
+				return DummyMeta(
+					[
+						SimpleNamespace(fieldname="subject", fieldtype="Data"),
+						SimpleNamespace(fieldname="items", fieldtype="Table", options="Task Item"),
+					]
+				)
+			return DummyMeta(
+				[
+					SimpleNamespace(fieldname="item_code", fieldtype="Data"),
+					SimpleNamespace(fieldname="quantity", fieldtype="Float"),
+				]
+			)
+
+		doc = MutableDoc("TASK-1")
+		doc.doctype = "Task"
+
+		with patch(
+			"sync.sync.service.runtime.frappe",
+			new=_runtime_frappe_stub(
+				get_meta=fake_meta,
+				new_doc=lambda doctype: doc,
+				db=_db_stub(),
+			),
+		):
+			name = runtime._upsert_frappe_record(
+				doctype="Task",
+				existing_name=None,
+				payload={
+					"items": [
+						{"doctype": "Task Item", "item_code": "ITEM-1", "quantity": 0},
+						{"doctype": "Task Item", "item_code": None, "quantity": None},
+						{"doctype": "Task Item"},
+					]
+				},
+				dry_run=False,
+			)
+
+		self.assertEqual(name, "TASK-1")
+		self.assertTrue(doc.inserted)
+		self.assertEqual(doc.values["items"], [{"doctype": "Task Item", "item_code": "ITEM-1", "quantity": 0}])
 
 	@patch("sync.sync.service.runtime._get_child_rows_by_options")
 	def test_build_definition_config_uses_dedicated_timestamp_fields(self, mock_children):
@@ -745,6 +891,191 @@ class TestRuntimeHelpers(unittest.TestCase):
 			update_modified=False,
 		)
 
+	def test_upsert_frappe_record_submits_after_insert_before_restoring_mapped_modified(self):
+		doc = MutableDoc(name="TASK-NEW")
+		calls = []
+
+		def set_value(*args, **kwargs):
+			calls.append(("set_value", args, kwargs))
+
+		original_submit = doc.submit
+
+		def submit():
+			calls.append(("submit", (), {}))
+			return original_submit()
+
+		doc.submit = submit
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				_runtime_frappe_stub(
+					new_doc=Mock(return_value=doc),
+					db=_db_stub(set_value=set_value),
+				),
+			),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+		):
+			name = runtime._upsert_frappe_record(
+				doctype="Task",
+				existing_name=None,
+				payload={"subject": "Created", "modified": datetime(2026, 3, 17, 10, 0)},
+				dry_run=False,
+				after_insert_action="Submit",
+			)
+
+		self.assertEqual(name, "TASK-NEW")
+		self.assertTrue(doc.inserted)
+		self.assertTrue(doc.submitted)
+		self.assertEqual([call[0] for call in calls], ["submit", "set_value"])
+
+	def test_upsert_frappe_record_without_action_does_not_create_savepoint(self):
+		doc = MutableDoc(name="TASK-NEW")
+		db = _db_stub(set_value=Mock())
+		db.savepoint = Mock()
+		db.rollback = Mock()
+		db.release_savepoint = Mock()
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				_runtime_frappe_stub(
+					new_doc=Mock(return_value=doc),
+					db=db,
+				),
+			),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+		):
+			name = runtime._upsert_frappe_record(
+				doctype="Task",
+				existing_name=None,
+				payload={"subject": "Created"},
+				dry_run=False,
+			)
+
+		self.assertEqual(name, "TASK-NEW")
+		db.savepoint.assert_not_called()
+		db.rollback.assert_not_called()
+		db.release_savepoint.assert_not_called()
+
+	def test_upsert_frappe_record_releases_savepoint_after_successful_submit_action(self):
+		doc = MutableDoc(name="TASK-NEW")
+		db = _db_stub(set_value=Mock())
+		db.savepoint = Mock()
+		db.rollback = Mock()
+		db.release_savepoint = Mock()
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				_runtime_frappe_stub(
+					new_doc=Mock(return_value=doc),
+					db=db,
+					generate_hash=Mock(return_value="abc123"),
+				),
+			),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+		):
+			name = runtime._upsert_frappe_record(
+				doctype="Task",
+				existing_name=None,
+				payload={"subject": "Created"},
+				dry_run=False,
+				after_insert_action="Submit",
+			)
+
+		self.assertEqual(name, "TASK-NEW")
+		self.assertTrue(doc.submitted)
+		db.savepoint.assert_called_once_with("sync_frappe_write_abc123")
+		db.rollback.assert_not_called()
+		db.release_savepoint.assert_called_once_with("sync_frappe_write_abc123")
+
+	def test_upsert_frappe_record_submits_after_existing_save(self):
+		doc = MutableDoc(name="TASK-1")
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				_runtime_frappe_stub(
+					get_doc=Mock(return_value=doc),
+					db=_db_stub(set_value=Mock()),
+				),
+			),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+		):
+			name = runtime._upsert_frappe_record(
+				doctype="Task",
+				existing_name="TASK-1",
+				payload={"subject": "Updated"},
+				dry_run=False,
+				after_update_action="Submit",
+			)
+
+		self.assertEqual(name, "TASK-1")
+		self.assertTrue(doc.saved)
+		self.assertTrue(doc.submitted)
+
+	def test_upsert_frappe_record_submit_action_is_noop_for_submitted_doc(self):
+		doc = MutableDoc(name="TASK-1", docstatus=1)
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				_runtime_frappe_stub(
+					get_doc=Mock(return_value=doc),
+					db=_db_stub(set_value=Mock()),
+				),
+			),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+		):
+			name = runtime._upsert_frappe_record(
+				doctype="Task",
+				existing_name="TASK-1",
+				payload={"subject": "Updated"},
+				dry_run=False,
+				after_update_action="Submit",
+			)
+
+		self.assertEqual(name, "TASK-1")
+		self.assertTrue(doc.saved)
+		self.assertFalse(doc.submitted)
+
+	def test_upsert_frappe_record_rolls_back_savepoint_when_submit_fails(self):
+		class FailingSubmitDoc(MutableDoc):
+			def submit(self):
+				raise frappe.ValidationError("submit failed")
+
+		doc = FailingSubmitDoc(name="TASK-NEW")
+		db = _db_stub(set_value=Mock())
+		db.savepoint = Mock()
+		db.rollback = Mock()
+		db.release_savepoint = Mock()
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				_runtime_frappe_stub(
+					new_doc=Mock(return_value=doc),
+					db=db,
+					generate_hash=Mock(return_value="abc123"),
+					ValidationError=frappe.ValidationError,
+				),
+			),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+			self.assertRaises(frappe.ValidationError),
+		):
+			runtime._upsert_frappe_record(
+				doctype="Task",
+				existing_name=None,
+				payload={"subject": "Created"},
+				dry_run=False,
+				after_insert_action="Submit",
+			)
+
+		db.savepoint.assert_called_once_with("sync_frappe_write_abc123")
+		db.rollback.assert_called_once_with(save_point="sync_frappe_write_abc123")
+		db.release_savepoint.assert_not_called()
+
 	def test_upsert_frappe_record_dry_run_returns_existing_name(self):
 		mock_get_doc = Mock()
 		mock_new_doc = Mock()
@@ -770,6 +1101,127 @@ class TestRuntimeHelpers(unittest.TestCase):
 		mock_get_doc.assert_not_called()
 		mock_new_doc.assert_not_called()
 		mock_set_value.assert_not_called()
+
+	def test_update_existing_disabled_skips_partner_and_frappe_update_helpers(self):
+		config = SimpleNamespace(update_existing=0)
+		stats = runtime.SyncStats()
+		run_doc = SimpleNamespace(name="RUN-1")
+		connector = SimpleNamespace(upsert_record=Mock())
+		logged = []
+
+		with (
+			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
+			patch("sync.sync.service.runtime._upsert_frappe_record") as mock_upsert_frappe,
+		):
+			runtime._apply_partner_update(
+				run_doc=run_doc,
+				config=config,
+				connector=connector,
+				stats=stats,
+				dry_run=False,
+				frappe_record={"name": "TASK-1"},
+				partner_record={"id": "TASK-1"},
+				partner_payload={"status": "Closed"},
+				changes=[("status", "Open", "Closed")],
+				direction="Frappe <-> Partner",
+				action="updated",
+				status="success",
+				message="Updated partner.",
+			)
+			runtime._apply_frappe_update(
+				run_doc=run_doc,
+				config=config,
+				stats=stats,
+				dry_run=False,
+				frappe_record={"name": "TASK-1"},
+				partner_record={"id": "TASK-1"},
+				frappe_payload={"status": "Closed"},
+				changes=[("status", "Open", "Closed")],
+				direction="Frappe <-> Partner",
+				action="updated",
+				status="success",
+				message="Updated frappe.",
+			)
+
+		connector.upsert_record.assert_not_called()
+		mock_upsert_frappe.assert_not_called()
+		self.assertEqual([entry["action"] for entry in logged], ["skipped", "skipped"])
+		self.assertTrue(all("Update Existing is disabled" in entry["message"] for entry in logged))
+
+	def test_bidirectional_update_existing_disabled_skips_changed_pair_without_conflict(self):
+		config = SimpleNamespace(
+			name="SYNC-1",
+			doctype="Task",
+			update_existing=0,
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe <-> Partner"},
+				"status": {"partner_field": "state", "direction": "Frappe <-> Partner"},
+			},
+			value_mapping={},
+			value_mapping_fallbacks={},
+			conflict_policy="newest_wins",
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+			partner_modified_field="updated_at",
+			partner_creation_field="created_at",
+			timestamp_buffer_ms=100,
+		)
+		logged = []
+
+		with (
+			patch("sync.sync.service.runtime._map_partner_to_frappe", return_value={"name": "TASK-1", "status": "Closed"}),
+			patch("sync.sync.service.runtime._map_frappe_to_partner", return_value={"id": "TASK-1", "state": "Open"}),
+			patch(
+				"sync.sync.service.runtime._diff_target_values",
+				side_effect=[
+					[("state", "Closed", "Open")],
+					[("status", "Open", "Closed")],
+				],
+			),
+			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
+			patch("sync.sync.service.runtime._flush_pending_run_writes"),
+		):
+			runtime._sync_bidirectional(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=SimpleNamespace(),
+				frappe_records=[{"name": "TASK-1", "status": "Open"}],
+				partner_records=[{"id": "TASK-1", "state": "Closed"}],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				last_successful_sync=None,
+				mapping_context=SimpleNamespace(
+					frappe_datetime_fields=set(),
+					partner_datetime_fields=set(),
+					site_time_zone="UTC",
+					to_frappe_entries=(("name", "id"), ("status", "state")),
+				),
+			)
+
+		self.assertEqual(len(logged), 1)
+		self.assertEqual(logged[0]["action"], "skipped")
+		self.assertEqual(logged[0]["status"], "skipped")
+		self.assertIn("Update Existing is disabled", logged[0]["message"])
+
+	def test_manual_resolution_rejects_when_update_existing_disabled(self):
+		item_doc = SimpleNamespace(
+			name="ITEM-1",
+			sync_run="RUN-1",
+			status="conflict",
+			action="conflict",
+			write_direction=None,
+			sync_definition="SYNC-1",
+		)
+		run_doc = SimpleNamespace(name="RUN-1", dry_run=0, sync_definition="SYNC-1")
+		definition_doc = SimpleNamespace(name="SYNC-1")
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", side_effect=[item_doc, run_doc, definition_doc]),
+			patch("sync.sync.service.runtime._build_definition_config", return_value=SimpleNamespace(update_existing=0)),
+			self.assertRaises(frappe.ValidationError),
+		):
+			runtime.resolve_sync_run_item("ITEM-1", runtime.SYNC_TYPE_PARTNER_TO_FRAPPE)
 
 	@patch("sync.sync.service.runtime._create_run_item")
 	@patch("sync.sync.service.runtime._flush_pending_run_writes")

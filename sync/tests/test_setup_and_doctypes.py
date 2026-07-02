@@ -41,6 +41,9 @@ class FakeSyncDefinitionDoc:
 		self.batch_size = values.get("batch_size", 50)
 		self.timestamp_buffer_ms = values.get("timestamp_buffer_ms", 100)
 		self.create_new = values.get("create_new", 1)
+		self.update_existing = values.get("update_existing", 1)
+		self.frappe_after_insert_action = values.get("frappe_after_insert_action", "None")
+		self.frappe_after_update_action = values.get("frappe_after_update_action", "None")
 		self.one_way_match_mode = values.get("one_way_match_mode", "first_match")
 		self.conflict_policy = values.get("conflict_policy", "newest_wins")
 		self.export_mask_credentials = values.get("export_mask_credentials", 1)
@@ -107,6 +110,9 @@ class FakeSyncDefinitionDoc:
 
 	def validate_one_way_match_mode(self):
 		return sync_definition_module.SyncDefinition.validate_one_way_match_mode(self)
+
+	def validate_write_behavior(self):
+		return sync_definition_module.SyncDefinition.validate_write_behavior(self)
 
 
 class TestDoctypeControllerBehavior(unittest.TestCase):
@@ -226,6 +232,65 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_field_mapping(duplicate_doc)
 
+	def test_validate_field_mapping_normalizes_child_mapping_rows(self):
+		def fake_meta(doctype):
+			if doctype == "Task":
+				return SimpleNamespace(
+					fields=[
+						SimpleNamespace(fieldname="items", fieldtype="Table", options="Task Item"),
+						SimpleNamespace(fieldname="subject", fieldtype="Data"),
+					]
+				)
+			if doctype == "Task Item":
+				return SimpleNamespace(
+					fields=[
+						SimpleNamespace(fieldname="item_code", fieldtype="Data"),
+						SimpleNamespace(fieldname="subitems", fieldtype="Table", options="Nested"),
+					]
+				)
+			return SimpleNamespace(fields=[])
+
+		doc = FakeSyncDefinitionDoc(
+			sync_type="Frappe <-> Partner",
+			field_mapping=[
+				SimpleNamespace(
+					mapping_scope="Child",
+					table_field="items",
+					row_idx=1,
+					child_field="item_code",
+					partner_field="external_item_code",
+					direction="",
+				)
+			],
+		)
+
+		with patch.object(sync_definition_module.frappe, "get_meta", side_effect=fake_meta):
+			sync_definition_module.SyncDefinition.validate_field_mapping(doc)
+
+		row = doc.field_mapping[0]
+		self.assertEqual(row.mapping_scope, "Child")
+		self.assertEqual(row.frappe_field, "items.1.item_code")
+		self.assertEqual(row.child_doctype, "Task Item")
+		self.assertEqual(row.direction, "Frappe <-> Partner")
+
+		invalid_doc = FakeSyncDefinitionDoc(
+			field_mapping=[
+				SimpleNamespace(
+					mapping_scope="Child",
+					table_field="items",
+					row_idx=1,
+					child_field="subitems",
+					partner_field="nested",
+				)
+			]
+		)
+		with (
+			patch.object(sync_definition_module.frappe, "get_meta", side_effect=fake_meta),
+			patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-child")),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_field_mapping(invalid_doc)
+
 	def test_validate_field_mapping_rejects_invalid_direction(self):
 		doc = FakeSyncDefinitionDoc(
 			sync_type="Frappe <-> Partner",
@@ -299,6 +364,31 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 				)
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_preview_limit(FakeSyncDefinitionDoc(preview_limit=0))
+
+	def test_validate_write_behavior_normalizes_actions_and_requires_submittable_doctype(self):
+		doc = FakeSyncDefinitionDoc(
+			update_existing=0,
+			frappe_after_insert_action="Submit",
+			frappe_after_update_action="",
+		)
+		with patch.object(sync_definition_module.frappe, "get_meta", return_value=SimpleNamespace(is_submittable=True)):
+			sync_definition_module.SyncDefinition.validate_write_behavior(doc)
+
+		self.assertEqual(doc.update_existing, 0)
+		self.assertEqual(doc.frappe_after_insert_action, "Submit")
+		self.assertEqual(doc.frappe_after_update_action, "None")
+
+		non_submittable = FakeSyncDefinitionDoc(frappe_after_insert_action="Submit")
+		with (
+			patch.object(sync_definition_module.frappe, "get_meta", return_value=SimpleNamespace(is_submittable=False)),
+			patch.object(
+				sync_definition_module.frappe,
+				"throw",
+				side_effect=frappe.ValidationError("not submittable"),
+			),
+			self.assertRaises(frappe.ValidationError),
+		):
+			sync_definition_module.SyncDefinition.validate_write_behavior(non_submittable)
 
 	def test_validate_modified_fields_allows_blank_partner_timestamps_for_one_way_full_sync(self):
 		doc = FakeSyncDefinitionDoc(
@@ -529,6 +619,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		self.assertEqual(exported["field_mapping"]["name"]["direction"], "Frappe <- Partner")
 		self.assertEqual(exported["value_mapping"]["status"], {'{"a": 1}': '["x"]'})
 		self.assertEqual(exported["timestamp_buffer_ms"], 100)
+		self.assertEqual(exported["update_existing"], 1)
+		self.assertEqual(exported["frappe_after_insert_action"], "None")
+		self.assertEqual(exported["frappe_after_update_action"], "None")
 		self.assertEqual(
 			exported["value_mapping_fallbacks"]["name"],
 			{"action": "fallback", "value": "UNKNOWN"},
@@ -550,7 +643,12 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			sync_definition_module._normalize_field_mapping_row(
 				SimpleNamespace(frappe_field=" name ", partner_field=" id ", direction="")
 			),
-			{"frappe_field": "name", "partner_field": "id", "direction": "Frappe <-> Partner"},
+			{
+				"frappe_field": "name",
+				"partner_field": "id",
+				"direction": "Frappe <-> Partner",
+				"mapping_scope": "Parent",
+			},
 		)
 		self.assertEqual(sync_definition_module.cstr(None), "")
 		self.assertEqual(sync_definition_module.cstr({"a": 1}), '{"a": 1}')

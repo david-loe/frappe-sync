@@ -34,7 +34,10 @@
   "timestamp_tie_breaker",
   "section_write_behavior",
   "create_new",
+  "update_existing",
   "delete_missing",
+  "frappe_after_insert_action",
+  "frappe_after_update_action",
   "column_write_behavior",
   "one_way_match_mode",
   "section_execution",
@@ -161,11 +164,36 @@
    "label": "Create New"
   },
   {
+   "default": "1",
+   "description": "When disabled, existing matched target records are skipped instead of updated.",
+   "fieldname": "update_existing",
+   "fieldtype": "Check",
+   "label": "Update Existing"
+  },
+  {
    "depends_on": "eval:doc.sync_type != 'Frappe <-> Partner' || doc.match_mode == 'Identity Fields'",
    "fieldname": "delete_missing",
    "fieldtype": "Check",
    "label": "Delete Missing",
    "description": "Deletes target records that are missing from a complete source load."
+  },
+  {
+   "default": "None",
+   "depends_on": "eval:doc.sync_type != 'Frappe -> Partner'",
+   "description": "Optional action after a Frappe document is inserted by sync.",
+   "fieldname": "frappe_after_insert_action",
+   "fieldtype": "Select",
+   "label": "Frappe After Insert Action",
+   "options": "None\nSubmit"
+  },
+  {
+   "default": "None",
+   "depends_on": "eval:doc.sync_type != 'Frappe -> Partner'",
+   "description": "Optional action after a Frappe document is updated by sync.",
+   "fieldname": "frappe_after_update_action",
+   "fieldtype": "Select",
+   "label": "Frappe After Update Action",
+   "options": "None\nSubmit"
   },
   {
    "default": "first_match",
@@ -493,7 +521,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-07-01 00:00:00.000000",
+ "modified": "2026-07-01 12:00:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

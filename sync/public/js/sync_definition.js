@@ -76,6 +76,22 @@ frappe.ui.form.on("Sync Value Mapping", {
 	},
 });
 
+frappe.ui.form.on("Sync Field Mapping", {
+	mapping_scope(frm, cdt, cdn) {
+		sync.helpers.updateDefinitionChildMappingPath(frm, cdt, cdn);
+	},
+	table_field(frm, cdt, cdn) {
+		sync.helpers.updateDefinitionChildMappingPath(frm, cdt, cdn);
+		sync.helpers.refreshDefinitionFieldChoices(frm);
+	},
+	row_idx(frm, cdt, cdn) {
+		sync.helpers.updateDefinitionChildMappingPath(frm, cdt, cdn);
+	},
+	child_field(frm, cdt, cdn) {
+		sync.helpers.updateDefinitionChildMappingPath(frm, cdt, cdn);
+	},
+});
+
 sync.helpers.clearNullValueMappingInput = function (frm, cdt, cdn, nullField, valueField) {
 	const row = locals[cdt]?.[cdn];
 	if (!row?.[nullField]) {
@@ -218,7 +234,7 @@ sync.helpers.updateDefinitionGridSelect = function (frm, tableField, fieldname, 
 	setTimeout(() => sync.helpers.applyDefinitionGridSelectOverrides(grid), 0);
 };
 
-sync.helpers.applyDefinitionFieldChoices = function (frm, fields) {
+sync.helpers.applyDefinitionFieldChoices = function (frm, fields, tableFields = [], childFields = {}) {
 	const fieldnames = [
 		...new Set([
 			...(fields || []).map((field) => field?.fieldname).filter(Boolean),
@@ -229,6 +245,19 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields) {
 	const description = fields?.length
 		? __("Field choices loaded from {0}.", [frm.doc.doctype_name])
 		: __("Select a DocType to load guided field choices.");
+	const tableOptions = [
+		"",
+		...new Set((tableFields || []).map((field) => field?.fieldname).filter(Boolean)),
+	].join("\n");
+	const childOptions = [
+		"",
+		...new Set(
+			Object.values(childFields || {})
+				.flat()
+				.map((field) => field?.fieldname)
+				.filter(Boolean)
+		),
+	].join("\n");
 
 	["match_fields", "field_mapping", "value_mapping"].forEach((tableField) => {
 		const grid = frm.fields_dict[tableField]?.grid;
@@ -239,6 +268,16 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields) {
 		grid.update_docfield_property("frappe_field", "description", description);
 		frm.refresh_field(tableField);
 	});
+
+	const fieldMappingGrid = frm.fields_dict.field_mapping?.grid;
+	if (fieldMappingGrid) {
+		fieldMappingGrid.update_docfield_property("table_field", "options", tableOptions);
+		fieldMappingGrid.update_docfield_property("child_field", "options", childOptions);
+		frm.refresh_field("field_mapping");
+	}
+
+	frm.__sync_table_fields = tableFields || [];
+	frm.__sync_child_fields = childFields || {};
 
 	frm.set_df_property("frappe_partner_identity_field", "options", options);
 	frm.set_df_property("frappe_partner_identity_field", "description", description);
@@ -537,7 +576,9 @@ sync.helpers.refreshDefinitionFieldChoices = function (frm) {
 		.then((response) => {
 			const payload = response?.message || {};
 			const fields = Array.isArray(payload.fields) ? payload.fields : [];
-			sync.helpers.applyDefinitionFieldChoices(frm, fields);
+			const tableFields = Array.isArray(payload.table_fields) ? payload.table_fields : [];
+			const childFields = payload.child_fields || {};
+			sync.helpers.applyDefinitionFieldChoices(frm, fields, tableFields, childFields);
 			return fields;
 		})
 		.catch((error) => {
@@ -548,6 +589,26 @@ sync.helpers.refreshDefinitionFieldChoices = function (frm) {
 			});
 			return [];
 		});
+};
+
+sync.helpers.updateDefinitionChildMappingPath = function (frm, cdt, cdn) {
+	const row = locals[cdt]?.[cdn];
+	if (!row) {
+		return;
+	}
+	if ((row.mapping_scope || "Parent") !== "Child") {
+		return;
+	}
+	const tableField = String(row.table_field || "").trim();
+	const rowIdx = Number.parseInt(row.row_idx || 0, 10);
+	const childField = String(row.child_field || "").trim();
+	const tableMeta = (frm.__sync_table_fields || []).find((field) => field.fieldname === tableField);
+	if (tableMeta?.options && row.child_doctype !== tableMeta.options) {
+		frappe.model.set_value(cdt, cdn, "child_doctype", tableMeta.options);
+	}
+	if (tableField && rowIdx > 0 && childField) {
+		frappe.model.set_value(cdt, cdn, "frappe_field", `${tableField}.${rowIdx}.${childField}`);
+	}
 };
 
 sync.helpers.getDefinitionSourceSettingsIssue = function (frm) {

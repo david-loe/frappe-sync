@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -17,6 +17,9 @@ from sync.sync.constants import (
 	ACTIVE_RUN_STATUSES,
 	CONFLICT_POLICY_NEWEST_WINS,
 	DONE_RUN_STATUSES,
+	FRAPPE_WRITE_ACTION_NONE,
+	FRAPPE_WRITE_ACTION_SUBMIT,
+	FRAPPE_WRITE_ACTIONS,
 	MAPPING_DIRECTION_BOTH,
 	MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
 	MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
@@ -80,6 +83,7 @@ SYNC_DEFINITION_RUNTIME_STATE_FIELDS = {
 	"last_successful_sync",
 	"next_run_at",
 }
+SYNC_DEFINITION_LOCK_TIMEOUT_SECONDS = 2 * 60 * 60
 
 SYNC_TYPE_FRAPPE_TO_PARTNER = MAPPING_DIRECTION_FRAPPE_TO_PARTNER
 SYNC_TYPE_PARTNER_TO_FRAPPE = MAPPING_DIRECTION_PARTNER_TO_FRAPPE
@@ -93,6 +97,7 @@ RUN_DOC_PENDING_WRITES_ATTR = "_sync_pending_write_count"
 AUDIT_RECORD_UNSET = object()
 VALUE_MAPPING_UNSET = object()
 DEFAULT_TIMESTAMP_BUFFER_MS = 100
+CHILD_FIELD_PATH_SEPARATOR = "."
 
 
 @dataclass(slots=True)
@@ -130,6 +135,9 @@ class SyncDefinitionConfig:
 	partner_time_zone: str | None = None
 	one_way_match_mode: str = ONE_WAY_MATCH_FIRST
 	capture_audit_payloads: bool = False
+	update_existing: bool = True
+	frappe_after_insert_action: str = FRAPPE_WRITE_ACTION_NONE
+	frappe_after_update_action: str = FRAPPE_WRITE_ACTION_NONE
 
 @dataclass(slots=True)
 class PartnerMatchLookup:
@@ -170,6 +178,7 @@ class RuntimeMappingContext:
 	frappe_datetime_fields: set[str]
 	partner_datetime_fields: set[str]
 	frappe_fieldnames: set[str] | None
+	child_table_options: dict[str, str]
 	site_time_zone: str
 	partner_time_zone: str | None
 
@@ -489,6 +498,8 @@ def resolve_sync_run_item(sync_run_item_name: str, direction: str) -> dict[str, 
 	if not sync_definition_name:
 		raise frappe.ValidationError("Sync Run Item is missing Sync Definition.")
 	config = _build_definition_config(frappe.get_doc(SYNC_DEFINITION, sync_definition_name))
+	if not _update_existing_enabled(config):
+		raise frappe.ValidationError("Update Existing is disabled for this Sync Definition.")
 
 	try:
 		if direction == SYNC_TYPE_PARTNER_TO_FRAPPE:
@@ -1083,6 +1094,13 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 				partner_time_zone=_normalize_time_zone_name(config.partner_time_zone),
 				timestamp_tie_breaker=_normalize_timestamp_tie_breaker(config.timestamp_tie_breaker),
 				value_mapping_fallbacks=_normalize_value_mapping_fallbacks(config.value_mapping_fallbacks),
+				update_existing=_as_bool(getattr(config, "update_existing", 1)),
+				frappe_after_insert_action=_normalize_frappe_write_action(
+					getattr(config, "frappe_after_insert_action", None)
+				),
+				frappe_after_update_action=_normalize_frappe_write_action(
+					getattr(config, "frappe_after_update_action", None)
+				),
 			)
 			_validate_runtime_mapping(normalized_config)
 			return normalized_config
@@ -1130,6 +1148,13 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		partner_create_id_scope_where=_clean_string(getattr(config, "partner_create_id_scope_where", None)),
 		partner_time_zone=_normalize_time_zone_name(getattr(config, "partner_time_zone", None)),
 		capture_audit_payloads=_as_bool(getattr(config, "capture_audit_payloads", 0)),
+		update_existing=_as_bool(getattr(config, "update_existing", 1)),
+		frappe_after_insert_action=_normalize_frappe_write_action(
+			getattr(config, "frappe_after_insert_action", None)
+		),
+		frappe_after_update_action=_normalize_frappe_write_action(
+			getattr(config, "frappe_after_update_action", None)
+		),
 	)
 	_validate_runtime_mapping(normalized)
 	return normalized
@@ -1368,6 +1393,19 @@ def _sync_frappe_to_partner(
 					commit=False,
 				)
 				continue
+			if not _update_existing_enabled(config):
+				_log_update_existing_disabled(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					direction=label_direction,
+					frappe_record=frappe_record,
+					partner_record=existing_partner,
+					write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+					changes=change_sets[-1],
+					commit=False,
+				)
+				continue
 			write_payload = _with_partner_timestamps(
 				config,
 				frappe_record,
@@ -1446,6 +1484,19 @@ def _sync_frappe_to_partner(
 					direction=label_direction,
 					frappe_record=frappe_record,
 					partner_record=matched_partner,
+					commit=False,
+				)
+				continue
+			if not _update_existing_enabled(config):
+				_log_update_existing_disabled(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					direction=label_direction,
+					frappe_record=frappe_record,
+					partner_record=matched_partner,
+					write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+					changes=changes,
 					commit=False,
 				)
 				continue
@@ -1608,6 +1659,7 @@ def _sync_partner_to_frappe(
 					existing_name=None,
 					payload=write_payload,
 					dry_run=dry_run,
+					**_frappe_write_action_kwargs(config),
 				)
 				if doc_name:
 					write_payload["name"] = doc_name
@@ -1647,7 +1699,7 @@ def _sync_partner_to_frappe(
 			changes = _diff_target_values(
 				new_record=frappe_payload,
 				old_record=matched_frappe or {},
-				field_names=list(frappe_payload.keys()),
+				field_names=_frappe_diff_field_names(frappe_payload, mapping_context),
 				exclude_fields={
 					_config_frappe_modified_field(config),
 					_config_frappe_creation_field(config),
@@ -1670,6 +1722,20 @@ def _sync_partner_to_frappe(
 				)
 				continue
 
+			if not _update_existing_enabled(config):
+				_log_update_existing_disabled(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					direction=label_direction,
+					frappe_record=matched_frappe,
+					partner_record=partner_record,
+					write_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+					changes=changes,
+					commit=False,
+				)
+				continue
+
 			try:
 				target_payload = _with_frappe_modified_timestamp(
 					config,
@@ -1683,6 +1749,7 @@ def _sync_partner_to_frappe(
 					existing_name=matched_frappe.get("name"),
 					payload=target_payload,
 					dry_run=dry_run,
+					**_frappe_write_action_kwargs(config),
 				)
 				if doc_name:
 					target_payload["name"] = doc_name
@@ -1939,7 +2006,7 @@ def _sync_bidirectional(
 		to_frappe_changes = _diff_target_values(
 			new_record=frappe_payload,
 			old_record=frappe_record,
-			field_names=list(frappe_payload.keys()),
+			field_names=_frappe_diff_field_names(frappe_payload, mapping_context),
 			exclude_fields={
 				_config_frappe_modified_field(config),
 				_config_frappe_creation_field(config),
@@ -1958,6 +2025,24 @@ def _sync_bidirectional(
 				direction="Frappe <-> Partner",
 				frappe_record=frappe_record,
 				partner_record=partner_record,
+				commit=False,
+			)
+			continue
+
+		if not _update_existing_enabled(config):
+			_log_update_existing_disabled(
+				stats=stats,
+				run_doc=run_doc,
+				config=config,
+				direction="Frappe <-> Partner",
+				frappe_record=frappe_record,
+				partner_record=partner_record,
+				write_direction=SYNC_TYPE_BIDIRECTIONAL,
+				changes=_canonical_conflict_changes(
+					config,
+					to_frappe_changes=to_frappe_changes,
+					to_partner_changes=to_partner_changes,
+				),
 				commit=False,
 			)
 			continue
@@ -2535,7 +2620,7 @@ def _sync_bidirectional_identity_pair(
 	to_frappe_changes = _diff_target_values(
 		new_record=frappe_payload,
 		old_record=frappe_record,
-		field_names=list(frappe_payload.keys()),
+		field_names=_frappe_diff_field_names(frappe_payload, mapping_context),
 		exclude_fields={_config_frappe_modified_field(config), _config_frappe_creation_field(config)},
 		datetime_fields=mapping_context.frappe_datetime_fields,
 		target_time_zone=mapping_context.site_time_zone,
@@ -2551,6 +2636,23 @@ def _sync_bidirectional_identity_pair(
 			direction=SYNC_TYPE_BIDIRECTIONAL,
 			frappe_record=frappe_record,
 			partner_record=partner_record,
+			commit=False,
+		)
+		return
+	if not _update_existing_enabled(config):
+		_log_update_existing_disabled(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			write_direction=SYNC_TYPE_BIDIRECTIONAL,
+			changes=_canonical_conflict_changes(
+				config,
+				to_frappe_changes=to_frappe_changes,
+				to_partner_changes=to_partner_changes,
+			),
 			commit=False,
 		)
 		return
@@ -2817,6 +2919,7 @@ def _create_identity_frappe_from_partner(
 			existing_name=None,
 			payload=frappe_payload,
 			dry_run=dry_run,
+			**_frappe_write_action_kwargs(config),
 		)
 		if doc_name:
 			frappe_payload["name"] = doc_name
@@ -3036,6 +3139,34 @@ def _canonical_conflict_changes(
 	]
 
 
+def _log_update_existing_disabled(
+	*,
+	stats: SyncStats,
+	run_doc: Any,
+	config: SyncDefinitionConfig,
+	direction: str,
+	frappe_record: dict[str, Any] | None,
+	partner_record: dict[str, Any] | None,
+	write_direction: str,
+	changes: list[tuple[str, Any, Any]] | None = None,
+	commit: bool = True,
+) -> None:
+	_register_and_log(
+		stats=stats,
+		run_doc=run_doc,
+		config=config,
+		action="skipped",
+		status="skipped",
+		message="Update Existing is disabled; matched target record was not updated.",
+		direction=direction,
+		frappe_record=frappe_record,
+		partner_record=partner_record,
+		write_direction=write_direction,
+		changes=changes,
+		commit=commit,
+	)
+
+
 def _apply_partner_update(
 	*,
 	run_doc: Any,
@@ -3054,6 +3185,19 @@ def _apply_partner_update(
 	commit: bool = True,
 	mapping_context: RuntimeMappingContext | None = None,
 ):
+	if not _update_existing_enabled(config):
+		_log_update_existing_disabled(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			direction=direction,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
+			changes=changes,
+			commit=commit,
+		)
+		return
 	key = _key_tuple_from_frappe(frappe_record, _config_match_fields(config))
 	mapping_context = mapping_context or _build_runtime_mapping_context(config)
 	partner_payload = _with_partner_timestamps(
@@ -3128,6 +3272,19 @@ def _apply_frappe_update(
 	message: str,
 	commit: bool = True,
 ):
+	if not _update_existing_enabled(config):
+		_log_update_existing_disabled(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			direction=direction,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			write_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+			changes=changes,
+			commit=commit,
+		)
+		return
 	try:
 		frappe_partner_field = _config_frappe_partner_identity_field(config)
 		partner_identity_field = _config_partner_identity_field(config)
@@ -3147,6 +3304,7 @@ def _apply_frappe_update(
 			existing_name=(frappe_record or {}).get("name"),
 			payload=frappe_payload,
 			dry_run=dry_run,
+			**_frappe_write_action_kwargs(config),
 		)
 		if doc_name:
 			frappe_payload["name"] = doc_name
@@ -3203,7 +3361,7 @@ def _iter_frappe_source_batches(
 ):
 	doctype_fieldnames = _doctype_fieldnames(config.doctype)
 	fields = sorted(
-		_mapping_fields_for_sync_type(config.mapping, config.sync_type)
+		_parent_mapping_fields_for_sync_type(config.mapping, config.sync_type)
 		| set(_config_match_fields(config))
 		| {_config_frappe_modified_field(config), _config_frappe_creation_field(config)}
 		| {"name", "modified"}
@@ -3236,6 +3394,7 @@ def _iter_frappe_source_batches(
 		or_filters=or_filters,
 		batch_size=config.batch_size,
 	)
+	record_batches = _with_configured_child_rows(config, record_batches)
 	if not apply_delta_filter or not context.is_delta_sync:
 		return record_batches
 
@@ -3256,6 +3415,49 @@ def _iter_frappe_source_batches(
 				yield filtered
 
 	return _filtered_batches()
+
+
+def _with_configured_child_rows(
+	config: SyncDefinitionConfig,
+	record_batches: Any,
+):
+	table_fields = _child_table_fields_for_mapping(config.mapping, config.sync_type)
+	if not table_fields:
+		return record_batches
+
+	def _enriched_batches():
+		for batch in record_batches:
+			for record in batch:
+				_enrich_record_with_child_rows(config.doctype, record, table_fields)
+			yield batch
+
+	return _enriched_batches()
+
+
+def _enrich_record_with_child_rows(doctype: str, record: dict[str, Any], table_fields: set[str]) -> None:
+	name = record.get("name")
+	if not name:
+		return
+	try:
+		doc = frappe.get_doc(doctype, name)
+	except Exception:
+		return
+	for table_field in table_fields:
+		rows = []
+		for row in getattr(doc, table_field, None) or []:
+			if hasattr(row, "as_dict"):
+				rows.append(row.as_dict())
+			elif isinstance(row, dict):
+				rows.append(dict(row))
+			else:
+				rows.append(
+					{
+						key: value
+						for key, value in vars(row).items()
+						if not key.startswith("_")
+					}
+				)
+		record[table_field] = rows
 
 
 def _get_partner_source_records(
@@ -3384,34 +3586,168 @@ def _upsert_frappe_record(
 	existing_name: str | None,
 	payload: dict[str, Any],
 	dry_run: bool,
+	after_insert_action: str | None = None,
+	after_update_action: str | None = None,
 ) -> str | None:
 	if dry_run:
 		return existing_name
 	mapped_modified = payload["modified"] if "modified" in payload else AUDIT_RECORD_UNSET
 	doctype_fieldnames = _doctype_fieldnames(doctype)
-	if existing_name:
-		doc = frappe.get_doc(doctype, existing_name)
+	insert_action = _normalize_frappe_write_action(after_insert_action)
+	update_action = _normalize_frappe_write_action(after_update_action)
+	write_action = update_action if existing_name else insert_action
+	with _frappe_write_savepoint(enabled=write_action != FRAPPE_WRITE_ACTION_NONE):
+		if existing_name:
+			doc = frappe.get_doc(doctype, existing_name)
+			for key, value in payload.items():
+				if key in SYSTEM_KEYS:
+					continue
+				if _doctype_payload_allows_field(doctype, key, doctype_fieldnames):
+					_set_frappe_doc_payload_value(doc, doctype, key, value, merge_child_rows=True)
+			doc.save(ignore_permissions=True)
+			_apply_frappe_write_action(doc, update_action)
+			_set_mapped_frappe_modified(doctype, doc.name, mapped_modified)
+			return doc.name
+
+		doc = frappe.new_doc(doctype)
 		for key, value in payload.items():
 			if key in SYSTEM_KEYS:
 				continue
 			if _doctype_payload_allows_field(doctype, key, doctype_fieldnames):
-				doc.set(key, value)
-		doc.save(ignore_permissions=True)
+				_set_frappe_doc_payload_value(doc, doctype, key, value, merge_child_rows=False)
+		doc.insert(ignore_permissions=True)
+		_apply_frappe_write_action(doc, insert_action)
 		_set_mapped_frappe_modified(doctype, doc.name, mapped_modified)
 		return doc.name
 
-	doc = frappe.new_doc(doctype)
-	for key, value in payload.items():
-		if key in SYSTEM_KEYS:
+
+@contextmanager
+def _frappe_write_savepoint(*, enabled: bool = True):
+	if not enabled:
+		yield
+		return
+	try:
+		db = getattr(frappe, "db", None)
+		savepoint = getattr(db, "savepoint", None)
+	except Exception:
+		db = None
+		savepoint = None
+	if not callable(savepoint):
+		yield
+		return
+	name = _new_frappe_write_savepoint_name()
+	savepoint(name)
+	try:
+		yield
+	except Exception:
+		rollback = getattr(db, "rollback", None)
+		if callable(rollback):
+			rollback(save_point=name)
+		raise
+	else:
+		release = getattr(db, "release_savepoint", None)
+		if callable(release):
+			release(name)
+
+
+def _new_frappe_write_savepoint_name() -> str:
+	try:
+		return f"sync_frappe_write_{frappe.generate_hash(length=8)}"
+	except Exception:
+		return "sync_frappe_write"
+
+
+def _apply_frappe_write_action(doc: Any, action: str) -> None:
+	if action != FRAPPE_WRITE_ACTION_SUBMIT:
+		return
+	docstatus = _docstatus_value(doc)
+	if docstatus == 1:
+		return
+	if docstatus == 2:
+		raise frappe.ValidationError("Cannot submit a cancelled document.")
+	submit = getattr(doc, "submit", None)
+	if not callable(submit):
+		raise frappe.ValidationError("Frappe document does not support submit.")
+	submit()
+
+
+def _docstatus_value(doc: Any) -> int:
+	value = getattr(doc, "docstatus", None)
+	if value is None and hasattr(doc, "get"):
+		value = doc.get("docstatus", 0)
+	try:
+		return cint(value)
+	except Exception:
+		return 0
+
+
+def _set_frappe_doc_payload_value(
+	doc: Any,
+	doctype: str,
+	fieldname: str,
+	value: Any,
+	*,
+	merge_child_rows: bool,
+) -> None:
+	table_fields = _doctype_table_fields(doctype)
+	if fieldname not in table_fields or not isinstance(value, list):
+		doc.set(fieldname, value)
+		return
+	if not merge_child_rows:
+		doc.set(fieldname, _prepare_child_row_payloads(table_fields[fieldname], value))
+		return
+
+	existing_rows = []
+	for row in getattr(doc, fieldname, None) or []:
+		if hasattr(row, "as_dict"):
+			existing_rows.append(row.as_dict())
+		elif isinstance(row, dict):
+			existing_rows.append(dict(row))
+		else:
+			existing_rows.append(dict(vars(row)))
+	for index, incoming in enumerate(value):
+		if not isinstance(incoming, dict):
 			continue
-		if _doctype_payload_allows_field(doctype, key, doctype_fieldnames):
-			doc.set(key, value)
-	doc.insert(ignore_permissions=True)
-	_set_mapped_frappe_modified(doctype, doc.name, mapped_modified)
-	return doc.name
+		prepared = _prepare_child_row_payload(table_fields[fieldname], incoming)
+		if not _child_row_has_payload_value(prepared):
+			continue
+		while len(existing_rows) <= index:
+			existing_rows.append({})
+		merged = dict(existing_rows[index])
+		merged.update(prepared)
+		existing_rows[index] = merged
+	doc.set(fieldname, existing_rows)
+
+
+def _prepare_child_row_payloads(child_doctype: str | None, rows: list[Any]) -> list[dict[str, Any]]:
+	return [
+		prepared
+		for row in rows
+		if isinstance(row, dict)
+		for prepared in [_prepare_child_row_payload(child_doctype, row)]
+		if _child_row_has_payload_value(prepared)
+	]
+
+
+def _prepare_child_row_payload(child_doctype: str | None, row: dict[str, Any]) -> dict[str, Any]:
+	result = dict(row)
+	if child_doctype:
+		result.setdefault("doctype", child_doctype)
+	return result
+
+
+def _child_row_has_payload_value(row: dict[str, Any]) -> bool:
+	for key, value in row.items():
+		if key in SYSTEM_KEYS or key in {"doctype", "parent", "parenttype", "parentfield"}:
+			continue
+		if value not in (None, ""):
+			return True
+	return False
 
 
 def _resolve_item_to_frappe(item_doc: Any, config: SyncDefinitionConfig) -> dict[str, Any]:
+	if not _update_existing_enabled(config):
+		raise frappe.ValidationError("Update Existing is disabled for this Sync Definition.")
 	payload = _json_field_payload(item_doc, "frappe_resolution_payload")
 	existing_name = _clean_string(getattr(item_doc, "document_name", None)) or _clean_string(payload.get("name"))
 	if not existing_name:
@@ -3421,6 +3757,7 @@ def _resolve_item_to_frappe(item_doc: Any, config: SyncDefinitionConfig) -> dict
 		existing_name=existing_name,
 		payload=payload,
 		dry_run=False,
+		**_frappe_write_action_kwargs(config),
 	)
 	result = dict(payload)
 	if doc_name:
@@ -3429,6 +3766,8 @@ def _resolve_item_to_frappe(item_doc: Any, config: SyncDefinitionConfig) -> dict
 
 
 def _resolve_item_to_partner(item_doc: Any, config: SyncDefinitionConfig) -> dict[str, Any]:
+	if not _update_existing_enabled(config):
+		raise frappe.ValidationError("Update Existing is disabled for this Sync Definition.")
 	payload = _json_field_payload(item_doc, "partner_resolution_payload")
 	key_values = _manual_partner_key_values(config, payload)
 	mapping_context = _build_runtime_mapping_context(config)
@@ -3539,6 +3878,13 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		create_new=create_new,
 		delete_missing=delete_missing,
 		one_way_match_mode=_clean_string(_first_value(sync_definition_doc, ["one_way_match_mode"])) or ONE_WAY_MATCH_FIRST,
+		update_existing=_as_bool(_first_value(sync_definition_doc, ["update_existing"], default=1)),
+		frappe_after_insert_action=_normalize_frappe_write_action(
+			_first_value(sync_definition_doc, ["frappe_after_insert_action"])
+		),
+		frappe_after_update_action=_normalize_frappe_write_action(
+			_first_value(sync_definition_doc, ["frappe_after_update_action"])
+		),
 		use_last_sync_date=use_last_sync_date,
 		conflict_policy=conflict_policy,
 		timestamp_buffer_ms=timestamp_buffer_ms,
@@ -3588,12 +3934,7 @@ def _get_field_mapping(sync_definition_doc: Any) -> dict[str, dict[str, str]]:
 	mapping: dict[str, dict[str, str]] = {}
 	sync_type = _clean_string(_first_value(sync_definition_doc, ["sync_type"]))
 	for row in rows:
-		frappe_field = _clean_string(
-			_first_value_dict(
-				row,
-				["frappe_field", "source_field", "doctype_field", "source_fieldname", "field_name"],
-			)
-		)
+		frappe_field = _field_mapping_row_fieldname(row)
 		entry = _normalize_field_mapping_entry(row, sync_type=sync_type)
 		if frappe_field and entry:
 			mapping[frappe_field] = entry
@@ -3605,6 +3946,20 @@ def _get_field_mapping(sync_definition_doc: Any) -> dict[str, dict[str, str]]:
 	if _one_way_mapping_direction(sync_type):
 		mapping = _force_mapping_direction(mapping, sync_type)
 	return mapping
+
+
+def _field_mapping_row_fieldname(row: Any) -> str | None:
+	table_field = _clean_string(_first_value_dict(row, ["table_field"]))
+	row_idx = _clean_string(_first_value_dict(row, ["row_idx", "child_row_idx"]))
+	child_field = _clean_string(_first_value_dict(row, ["child_field"]))
+	if table_field and row_idx and child_field:
+		return CHILD_FIELD_PATH_SEPARATOR.join((table_field, row_idx, child_field))
+	return _clean_string(
+		_first_value_dict(
+			row,
+			["frappe_field", "source_field", "doctype_field", "source_fieldname", "field_name"],
+		)
+	)
 
 
 def _mapping_entry_value(raw_entry: Any, candidates: list[str], default: Any = None) -> Any:
@@ -3744,6 +4099,43 @@ def _mapping_fields_for_sync_type(mapping: dict[str, Any], sync_type: str) -> se
 	}
 
 
+def _parent_mapping_fields_for_sync_type(mapping: dict[str, Any], sync_type: str) -> set[str]:
+	return {
+		fieldname
+		for fieldname in _mapping_fields_for_sync_type(mapping, sync_type)
+		if not _parse_child_field_path(fieldname)
+	}
+
+
+def _parse_child_field_path(fieldname: Any) -> tuple[str, int, str] | None:
+	cleaned = _clean_string(fieldname)
+	if not cleaned:
+		return None
+	parts = cleaned.split(CHILD_FIELD_PATH_SEPARATOR)
+	if len(parts) != 3:
+		return None
+	table_field, row_idx, child_field = (_clean_string(part) for part in parts)
+	if not table_field or not row_idx or not child_field:
+		return None
+	try:
+		row_number = int(row_idx)
+	except Exception:
+		return None
+	if row_number < 1:
+		return None
+	return table_field, row_number, child_field
+
+
+def _child_table_fields_for_mapping(mapping: dict[str, Any], sync_type: str | None = None) -> set[str]:
+	fields = _mapping_fields_for_sync_type(mapping, sync_type or SYNC_TYPE_BIDIRECTIONAL)
+	result: set[str] = set()
+	for fieldname in fields:
+		parsed = _parse_child_field_path(fieldname)
+		if parsed:
+			result.add(parsed[0])
+	return result
+
+
 def _required_mapping_directions(sync_type: str) -> list[str]:
 	required: list[str] = []
 	if sync_type in {"Frappe -> Partner", "Frappe <-> Partner"}:
@@ -3761,6 +4153,7 @@ def _validate_runtime_mapping(config: SyncDefinitionConfig) -> None:
 		raise frappe.ValidationError("Match fields are required in Match Fields mode.")
 	if _config_match_mode(config) == MATCH_MODE_IDENTITY_FIELDS:
 		_validate_identity_field_config(config)
+	_validate_child_mapping_paths(config, mapping)
 	missing_or_invalid: list[str] = []
 	for match_field in _config_match_fields(config):
 		entry = mapping.get(match_field)
@@ -3802,6 +4195,28 @@ def _validate_runtime_mapping(config: SyncDefinitionConfig) -> None:
 	duplicate_partner = partner_timestamp_fields & mapped_partner_fields
 	if duplicate_frappe or duplicate_partner:
 		raise frappe.ValidationError("Dedicated timestamp fields must not also exist in Field Mapping.")
+
+
+def _validate_child_mapping_paths(config: SyncDefinitionConfig, mapping: dict[str, dict[str, str]]) -> None:
+	child_paths = [fieldname for fieldname in mapping if _parse_child_field_path(fieldname)]
+	if not child_paths:
+		return
+	table_fields = _doctype_table_fields(getattr(config, "doctype", None))
+	for fieldname in child_paths:
+		parsed = _parse_child_field_path(fieldname)
+		if not parsed:
+			continue
+		table_field, row_idx, child_field = parsed
+		child_doctype = table_fields.get(table_field)
+		if not child_doctype:
+			raise frappe.ValidationError(f"Child mapping table field does not exist: {table_field}.")
+		if row_idx < 1:
+			raise frappe.ValidationError(f"Child mapping row index must be greater than zero: {fieldname}.")
+		fieldtype = _doctype_fieldtype(child_doctype, child_field)
+		if not fieldtype:
+			raise frappe.ValidationError(f"Child mapping field does not exist: {fieldname}.")
+		if fieldtype in {"Table", "Table MultiSelect"}:
+			raise frappe.ValidationError(f"Child mapping field cannot be a table field: {fieldname}.")
 
 
 def _first_configured_field(values: Any, default: str | None) -> str | None:
@@ -3853,12 +4268,7 @@ def _get_value_mapping_fallbacks(sync_definition_doc: Any) -> dict[str, dict[str
 	rows = _get_child_rows_by_options(sync_definition_doc, "Sync Field Mapping")
 	result: dict[str, dict[str, Any]] = {}
 	for row in rows:
-		frappe_field = _clean_string(
-			_first_value_dict(
-				row,
-				["frappe_field", "source_field", "doctype_field", "source_fieldname", "field_name"],
-			)
-		)
+		frappe_field = _field_mapping_row_fieldname(row)
 		if not frappe_field:
 			continue
 		result[frappe_field] = _normalize_value_mapping_fallback(
@@ -3931,6 +4341,7 @@ def _build_runtime_mapping_context(config: SyncDefinitionConfig | Any) -> Runtim
 	value_mapping_fallbacks = _normalize_value_mapping_fallbacks(
 		getattr(config, "value_mapping_fallbacks", {}) or {}
 	)
+	child_table_options = _doctype_table_fields(getattr(config, "doctype", None))
 	to_partner_entries = tuple(
 		(frappe_field, entry["partner_field"])
 		for frappe_field, entry in _iter_field_mapping_entries(mapping)
@@ -3969,6 +4380,7 @@ def _build_runtime_mapping_context(config: SyncDefinitionConfig | Any) -> Runtim
 		frappe_datetime_fields=frappe_datetime_fields,
 		partner_datetime_fields=partner_datetime_fields,
 		frappe_fieldnames=_doctype_fieldnames(getattr(config, "doctype", None)),
+		child_table_options=child_table_options,
 		site_time_zone=_site_time_zone(),
 		partner_time_zone=getattr(config, "partner_time_zone", None),
 	)
@@ -4029,7 +4441,7 @@ def _map_frappe_to_partner(
 		partner_time_zone=partner_time_zone,
 	)
 	for frappe_field, partner_field in context.to_partner_entries:
-		value = record.get(frappe_field)
+		value = _get_frappe_payload_value(record, frappe_field)
 		field_map = context.value_mapping.get(frappe_field) or {}
 		value = _mapped_value_with_fallback(
 			field_map,
@@ -4086,8 +4498,76 @@ def _map_partner_to_frappe(
 				source_time_zone=context.partner_time_zone,
 				target_time_zone=context.site_time_zone,
 			)
-		result[frappe_field] = value
+		_set_frappe_payload_value(result, frappe_field, value, mapping_context=context)
 	return result
+
+
+def _get_frappe_payload_value(record: dict[str, Any], fieldname: str) -> Any:
+	parsed = _parse_child_field_path(fieldname)
+	if not parsed:
+		return record.get(fieldname)
+	table_field, row_idx, child_field = parsed
+	rows = record.get(table_field)
+	if not isinstance(rows, list) or len(rows) < row_idx:
+		return None
+	row = rows[row_idx - 1]
+	if isinstance(row, dict):
+		return row.get(child_field)
+	getter = getattr(row, "get", None)
+	if callable(getter):
+		return getter(child_field)
+	return getattr(row, child_field, None)
+
+
+def _set_frappe_payload_value(
+	payload: dict[str, Any],
+	fieldname: str,
+	value: Any,
+	*,
+	mapping_context: RuntimeMappingContext | None = None,
+) -> None:
+	parsed = _parse_child_field_path(fieldname)
+	if not parsed:
+		payload[fieldname] = value
+		return
+	table_field, row_idx, child_field = parsed
+	rows = payload.setdefault(table_field, [])
+	if not isinstance(rows, list):
+		rows = []
+		payload[table_field] = rows
+	while len(rows) < row_idx:
+		child_row: dict[str, Any] = {}
+		child_doctype = (mapping_context.child_table_options if mapping_context else {}).get(table_field)
+		if child_doctype:
+			child_row["doctype"] = child_doctype
+		rows.append(child_row)
+	row = rows[row_idx - 1]
+	if not isinstance(row, dict):
+		row = {}
+		rows[row_idx - 1] = row
+	child_doctype = (mapping_context.child_table_options if mapping_context else {}).get(table_field)
+	if child_doctype:
+		row.setdefault("doctype", child_doctype)
+	row[child_field] = value
+
+
+def _frappe_diff_field_names(payload: dict[str, Any], mapping_context: RuntimeMappingContext) -> list[str]:
+	fields: list[str] = []
+	child_tables: set[str] = set()
+	for frappe_field, _partner_field in mapping_context.to_frappe_entries:
+		parsed = _parse_child_field_path(frappe_field)
+		if parsed:
+			if parsed[0] in payload:
+				fields.append(frappe_field)
+				child_tables.add(parsed[0])
+			continue
+		if frappe_field in payload:
+			fields.append(frappe_field)
+	for fieldname in payload:
+		if fieldname in fields or fieldname in child_tables:
+			continue
+		fields.append(fieldname)
+	return fields or list(payload.keys())
 
 
 def _mapped_value_with_fallback(field_map: dict[Any, Any], value: Any, fallback: dict[str, Any] | None) -> Any:
@@ -4210,8 +4690,8 @@ def _diff_target_values(
 	for field_name in field_names:
 		if field_name in (exclude_fields or set()):
 			continue
-		old_value = old_record.get(field_name)
-		new_value = new_record.get(field_name)
+		old_value = _get_frappe_payload_value(old_record, field_name)
+		new_value = _get_frappe_payload_value(new_record, field_name)
 		if _normalize_field_value(
 			field_name,
 			old_value,
@@ -4664,6 +5144,10 @@ def _config_one_way_match_mode(config: Any) -> str:
 	return getattr(config, "one_way_match_mode", None) or ONE_WAY_MATCH_FIRST
 
 
+def _update_existing_enabled(config: Any) -> bool:
+	return _as_bool(getattr(config, "update_existing", 1))
+
+
 def _config_match_mode(config: Any) -> str:
 	return _normalize_match_mode(getattr(config, "match_mode", None))
 
@@ -4705,6 +5189,32 @@ def _normalize_timestamp_tie_breaker(value: Any) -> str:
 	if not normalized:
 		return TIMESTAMP_TIE_MANUAL
 	return normalized
+
+
+def _normalize_frappe_write_action(value: Any) -> str:
+	normalized = _clean_string(value) or FRAPPE_WRITE_ACTION_NONE
+	if normalized in FRAPPE_WRITE_ACTIONS:
+		return normalized
+	return FRAPPE_WRITE_ACTION_NONE
+
+
+def _config_frappe_after_insert_action(config: Any) -> str:
+	return _normalize_frappe_write_action(getattr(config, "frappe_after_insert_action", None))
+
+
+def _config_frappe_after_update_action(config: Any) -> str:
+	return _normalize_frappe_write_action(getattr(config, "frappe_after_update_action", None))
+
+
+def _frappe_write_action_kwargs(config: Any) -> dict[str, str]:
+	kwargs: dict[str, str] = {}
+	insert_action = _config_frappe_after_insert_action(config)
+	update_action = _config_frappe_after_update_action(config)
+	if insert_action != FRAPPE_WRITE_ACTION_NONE:
+		kwargs["after_insert_action"] = insert_action
+	if update_action != FRAPPE_WRITE_ACTION_NONE:
+		kwargs["after_update_action"] = update_action
+	return kwargs
 
 
 def _config_timestamp_buffer_ms(config: Any) -> int:
@@ -5257,7 +5767,19 @@ def _get_frappe_datetime_fields(doctype: str | None, field_names: list[str] | se
 		_clean_string(getattr(field, "fieldname", None)): getattr(field, "fieldtype", None)
 		for field in getattr(meta, "fields", [])
 	}
+	table_fields = {
+		_clean_string(getattr(field, "fieldname", None)): getattr(field, "options", None)
+		for field in getattr(meta, "fields", [])
+		if getattr(field, "fieldtype", None) == "Table"
+	}
 	for field_name in candidates:
+		parsed = _parse_child_field_path(field_name)
+		if parsed:
+			table_field, _row_idx, child_field = parsed
+			child_doctype = table_fields.get(table_field)
+			if child_doctype and _doctype_fieldtype(child_doctype, child_field) == "Datetime":
+				result.add(field_name)
+			continue
 		if fieldtypes.get(field_name) == "Datetime":
 			result.add(field_name)
 	return result
@@ -5635,6 +6157,37 @@ def _doctype_fieldnames(doctype: str | None) -> set[str] | None:
 	return fieldnames
 
 
+def _doctype_table_fields(doctype: str | None) -> dict[str, str]:
+	if not doctype:
+		return {}
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		return {}
+	result: dict[str, str] = {}
+	for field in getattr(meta, "fields", []) or []:
+		if getattr(field, "fieldtype", None) != "Table":
+			continue
+		fieldname = _clean_string(getattr(field, "fieldname", None))
+		options = _clean_string(getattr(field, "options", None))
+		if fieldname and options:
+			result[fieldname] = options
+	return result
+
+
+def _doctype_fieldtype(doctype: str | None, fieldname: str | None) -> str | None:
+	if not doctype or not fieldname:
+		return None
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		return None
+	for field in getattr(meta, "fields", []) or []:
+		if getattr(field, "fieldname", None) == fieldname:
+			return getattr(field, "fieldtype", None)
+	return None
+
+
 def _doctype_payload_allows_field(
 	doctype: str,
 	fieldname: str,
@@ -5676,7 +6229,7 @@ def _definition_lock(lock_key: str):
 	lock = getattr(cache, "lock", None)
 	if not callable(lock):
 		return nullcontext()
-	return cache.lock(lock_key, timeout=600, blocking_timeout=10)
+	return cache.lock(lock_key, timeout=SYNC_DEFINITION_LOCK_TIMEOUT_SECONDS, blocking_timeout=10)
 
 
 def _build_record_key(record: dict[str, Any]) -> str:

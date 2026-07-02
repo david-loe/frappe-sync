@@ -199,6 +199,44 @@ def _build_doctype_field_choices(doctype_name: str) -> list[dict[str, str]]:
 	return choices
 
 
+def _build_doctype_table_field_choices(doctype_name: str) -> list[dict[str, str]]:
+	meta = frappe.get_meta(doctype_name)
+	choices: list[dict[str, str]] = []
+	for field in getattr(meta, "fields", []) or []:
+		fieldname = str(getattr(field, "fieldname", "") or "").strip()
+		if not fieldname or str(getattr(field, "fieldtype", "") or "").strip() != "Table":
+			continue
+		label = str(getattr(field, "label", "") or "").strip() or fieldname
+		options = str(getattr(field, "options", "") or "").strip()
+		choices.append({"fieldname": fieldname, "label": label, "fieldtype": "Table", "options": options})
+	return choices
+
+
+def _build_child_field_choices(table_fields: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+	result: dict[str, list[dict[str, str]]] = {}
+	for table_field in table_fields:
+		child_doctype = table_field.get("options")
+		if not child_doctype:
+			continue
+		choices: list[dict[str, str]] = []
+		try:
+			child_meta = frappe.get_meta(child_doctype)
+		except Exception:
+			result[table_field["fieldname"]] = choices
+			continue
+		for child_field in getattr(child_meta, "fields", []) or []:
+			fieldname = str(getattr(child_field, "fieldname", "") or "").strip()
+			if not fieldname:
+				continue
+			fieldtype = str(getattr(child_field, "fieldtype", "") or "").strip()
+			if fieldtype in _NON_SELECTABLE_FIELD_TYPES:
+				continue
+			label = str(getattr(child_field, "label", "") or "").strip() or fieldname
+			choices.append({"fieldname": fieldname, "label": label, "fieldtype": fieldtype or "Data"})
+		result[table_field["fieldname"]] = choices
+	return result
+
+
 @frappe.whitelist()
 def list_due_syncs() -> list[str]:
 	_require_system_manager()
@@ -212,7 +250,13 @@ def get_sync_definition_field_choices(doctype_name: str) -> dict[str, Any]:
 	if not doctype_name:
 		return {"doctype": "", "fields": []}
 	_require_doctype_permission(doctype_name, permtype="read")
-	return {"doctype": doctype_name, "fields": _build_doctype_field_choices(doctype_name)}
+	table_fields = _build_doctype_table_field_choices(doctype_name)
+	return {
+		"doctype": doctype_name,
+		"fields": _build_doctype_field_choices(doctype_name),
+		"table_fields": table_fields,
+		"child_fields": _build_child_field_choices(table_fields),
+	}
 
 
 @frappe.whitelist()

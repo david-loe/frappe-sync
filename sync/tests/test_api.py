@@ -72,6 +72,8 @@ class TestSyncApi(ApiTestCase):
 		self.assertEqual(response["fields"][0]["label"], "Name")
 		self.assertEqual(response["fields"][1]["label"], "Created On")
 		self.assertEqual(response["fields"][2]["label"], "Modified")
+		self.assertEqual(response["table_fields"], [{"fieldname": "items", "label": "Items", "fieldtype": "Table", "options": ""}])
+		self.assertEqual(response["child_fields"], {})
 
 	def test_get_sync_definition_field_choices_returns_empty_payload_for_blank_doctype(self):
 		self.assertEqual(self.api.get_sync_definition_field_choices("   "), {"doctype": "", "fields": []})

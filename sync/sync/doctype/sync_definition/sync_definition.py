@@ -8,6 +8,9 @@ from frappe.model.document import Document
 
 from sync.sync.constants import (
 	CONFLICT_POLICY_NEWEST_WINS,
+	FRAPPE_WRITE_ACTION_NONE,
+	FRAPPE_WRITE_ACTION_SUBMIT,
+	FRAPPE_WRITE_ACTIONS,
 	MAPPING_DIRECTION_BOTH,
 	MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
 	MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
@@ -29,6 +32,11 @@ from sync.sync.constants import (
 	UNMAPPED_ACTION_USE_FALLBACK,
 	UNMAPPED_ACTION_USE_NULL,
 )
+
+MAPPING_SCOPE_PARENT = "Parent"
+MAPPING_SCOPE_CHILD = "Child"
+MAPPING_SCOPES = (MAPPING_SCOPE_PARENT, MAPPING_SCOPE_CHILD)
+CHILD_FIELD_PATH_SEPARATOR = "."
 
 
 class SyncDefinition(Document):
@@ -53,6 +61,8 @@ class SyncDefinition(Document):
 		export_mask_credentials: DF.Check
 		field_mapping: DF.Table[SyncFieldMapping]
 		filter_expression: DF.Code | None
+		frappe_after_insert_action: DF.Literal["None", "Submit"]
+		frappe_after_update_action: DF.Literal["None", "Submit"]
 		frappe_creation_field: DF.Data
 		frappe_modified_field: DF.Literal[None]
 		frappe_partner_identity_field: DF.Literal[None]
@@ -84,6 +94,7 @@ class SyncDefinition(Document):
 		timestamp_buffer_ms: DF.Int
 		timestamp_tie_breaker: DF.Literal["Manual", "Frappe Wins", "Partner Wins"]
 		title: DF.Data
+		update_existing: DF.Check
 		use_last_sync_date: DF.Check
 		value_mapping: DF.Table[SyncValueMapping]
 	# end: auto-generated types
@@ -98,6 +109,7 @@ class SyncDefinition(Document):
 		SyncDefinition.validate_modified_fields(self)
 		SyncDefinition.validate_identity_settings(self)
 		SyncDefinition.validate_one_way_match_mode(self)
+		SyncDefinition.validate_write_behavior(self)
 		SyncDefinition.validate_preview_limit(self)
 
 	def on_trash(self):
@@ -110,20 +122,43 @@ class SyncDefinition(Document):
 	def validate_field_mapping(self):
 		seen: set[str] = set()
 		duplicates: list[str] = []
+		partner_fields_by_direction: dict[tuple[str, str], str] = {}
+		partner_duplicates: list[str] = []
 		for row in self.field_mapping or []:
-			entry = _normalize_field_mapping_row(row, sync_type=getattr(self, "sync_type", None))
+			entry = _normalize_field_mapping_row(
+				row,
+				sync_type=getattr(self, "sync_type", None),
+				doctype_name=getattr(self, "doctype_name", None),
+			)
 			if not entry:
 				continue
 			_assign_row_value(row, "frappe_field", entry["frappe_field"])
 			_assign_row_value(row, "partner_field", entry["partner_field"])
 			_assign_row_value(row, "direction", entry["direction"])
+			_assign_row_value(row, "mapping_scope", entry["mapping_scope"])
+			if entry["mapping_scope"] == MAPPING_SCOPE_CHILD:
+				_assign_row_value(row, "table_field", entry["table_field"])
+				_assign_row_value(row, "row_idx", entry["row_idx"])
+				_assign_row_value(row, "child_field", entry["child_field"])
+				_assign_row_value(row, "child_doctype", entry["child_doctype"])
 			_normalize_field_mapping_fallbacks(row)
 			if entry["frappe_field"] in seen:
 				duplicates.append(entry["frappe_field"])
 				continue
 			seen.add(entry["frappe_field"])
+			for direction in _directions_for_mapping_entry(entry["direction"]):
+				key = (direction, entry["partner_field"])
+				if key in partner_fields_by_direction:
+					partner_duplicates.append(f"{entry['partner_field']} ({direction})")
+					continue
+				partner_fields_by_direction[key] = entry["frappe_field"]
 		if duplicates:
 			frappe.throw(f"Field Mapping contains duplicate Frappe fields: {', '.join(sorted(set(duplicates)))}")
+		if partner_duplicates:
+			frappe.throw(
+				"Field Mapping contains duplicate Partner fields for the same direction: "
+				+ ", ".join(sorted(set(partner_duplicates)))
+			)
 
 	def validate_match_fields(self):
 		if (_clean_value(getattr(self, "match_mode", None)) or MATCH_MODE_MATCH_FIELDS) != MATCH_MODE_MATCH_FIELDS:
@@ -278,6 +313,22 @@ class SyncDefinition(Document):
 			frappe.throw("One-Way Match Mode must be one of: first_match, all_matches.")
 		self.one_way_match_mode = mode
 
+	def validate_write_behavior(self):
+		self.update_existing = 1 if getattr(self, "update_existing", 1) else 0
+		self.frappe_after_insert_action = _normalize_frappe_write_action(
+			getattr(self, "frappe_after_insert_action", None)
+		)
+		self.frappe_after_update_action = _normalize_frappe_write_action(
+			getattr(self, "frappe_after_update_action", None)
+		)
+		if (
+			self.frappe_after_insert_action == FRAPPE_WRITE_ACTION_SUBMIT
+			or self.frappe_after_update_action == FRAPPE_WRITE_ACTION_SUBMIT
+		):
+			doctype_name = _clean_value(getattr(self, "doctype_name", None))
+			if doctype_name and not getattr(frappe.get_meta(doctype_name), "is_submittable", False):
+				frappe.throw(f"Frappe write action Submit requires submittable DocType {doctype_name}.")
+
 	def validate_match_mode(self):
 		mode = _clean_value(getattr(self, "match_mode", None)) or MATCH_MODE_MATCH_FIELDS
 		if mode not in MATCH_MODES:
@@ -295,7 +346,11 @@ class SyncDefinition(Document):
 	def get_field_mapping(self) -> dict[str, dict[str, str]]:
 		mapping = {}
 		for row in self.field_mapping or []:
-			entry = _normalize_field_mapping_row(row, sync_type=getattr(self, "sync_type", None))
+			entry = _normalize_field_mapping_row(
+				row,
+				sync_type=getattr(self, "sync_type", None),
+				doctype_name=getattr(self, "doctype_name", None),
+			)
 			if not entry:
 				continue
 			mapping[entry["frappe_field"]] = {
@@ -327,7 +382,11 @@ class SyncDefinition(Document):
 	def get_value_mapping_fallbacks(self) -> dict[str, dict[str, str | None]]:
 		result: dict[str, dict[str, str | None]] = {}
 		for row in self.field_mapping or []:
-			entry = _normalize_field_mapping_row(row, sync_type=getattr(self, "sync_type", None))
+			entry = _normalize_field_mapping_row(
+				row,
+				sync_type=getattr(self, "sync_type", None),
+				doctype_name=getattr(self, "doctype_name", None),
+			)
 			if not entry:
 				continue
 			result[entry["frappe_field"]] = _get_unmapped_action_config(
@@ -358,7 +417,18 @@ class SyncDefinition(Document):
 			"use_last_sync_date": self.use_last_sync_date,
 			"timestamp_buffer_ms": self.timestamp_buffer_ms,
 			"create_new": self.create_new,
+			"update_existing": getattr(self, "update_existing", 1),
 			"delete_missing": self.delete_missing,
+			"frappe_after_insert_action": getattr(
+				self,
+				"frappe_after_insert_action",
+				FRAPPE_WRITE_ACTION_NONE,
+			),
+			"frappe_after_update_action": getattr(
+				self,
+				"frappe_after_update_action",
+				FRAPPE_WRITE_ACTION_NONE,
+			),
 			"match_mode": getattr(self, "match_mode", MATCH_MODE_MATCH_FIELDS),
 			"one_way_match_mode": getattr(self, "one_way_match_mode", ONE_WAY_MATCH_FIRST),
 			"conflict_policy": self.conflict_policy or CONFLICT_POLICY_NEWEST_WINS,
@@ -463,6 +533,12 @@ def _normalize_mapping_direction(value, *, default: str = MAPPING_DIRECTION_BOTH
 	return direction
 
 
+def _directions_for_mapping_entry(direction: str) -> tuple[str, ...]:
+	if direction == MAPPING_DIRECTION_BOTH:
+		return (MAPPING_DIRECTION_FRAPPE_TO_PARTNER, MAPPING_DIRECTION_PARTNER_TO_FRAPPE)
+	return (direction,)
+
+
 def _one_way_mapping_direction(sync_type) -> str | None:
 	sync_type = _clean_value(sync_type)
 	if sync_type in {MAPPING_DIRECTION_FRAPPE_TO_PARTNER, MAPPING_DIRECTION_PARTNER_TO_FRAPPE}:
@@ -478,6 +554,16 @@ def _delete_missing_allowed(sync_type, match_mode) -> bool:
 	if _one_way_mapping_direction(sync_type):
 		return True
 	return _clean_value(sync_type) == MAPPING_DIRECTION_BOTH and _clean_value(match_mode) == MATCH_MODE_IDENTITY_FIELDS
+
+
+def _normalize_frappe_write_action(value) -> str:
+	action = _clean_value(value) or FRAPPE_WRITE_ACTION_NONE
+	if action not in FRAPPE_WRITE_ACTIONS:
+		frappe.throw(
+			"Frappe write action must be one of: "
+			+ ", ".join((FRAPPE_WRITE_ACTION_NONE, FRAPPE_WRITE_ACTION_SUBMIT))
+		)
+	return action
 
 
 def _partner_timestamps_required(doc) -> bool:
@@ -541,21 +627,111 @@ def _get_unmapped_action_config(action, value) -> dict[str, str | None]:
 	return {"action": UNMAPPED_ACTION_KEYS[normalized_action], "value": None}
 
 
-def _normalize_field_mapping_row(row, *, sync_type: str | None = None) -> dict[str, str] | None:
-	frappe_field = _clean_value(
-		_get_row_value(row, "frappe_field", "source_field", "doctype_field", "field_name")
-	)
+def _normalize_field_mapping_row(
+	row,
+	*,
+	sync_type: str | None = None,
+	doctype_name: str | None = None,
+) -> dict[str, str] | None:
+	scope = _normalize_mapping_scope(_get_row_value(row, "mapping_scope"), row=row)
 	partner_field = _clean_value(
 		_get_row_value(row, "partner_field", "target_field", "external_field", "column_name")
 	)
-	if not frappe_field or not partner_field:
+	if not partner_field:
+		return None
+	if scope == MAPPING_SCOPE_CHILD:
+		child_entry = _normalize_child_mapping_row(row, doctype_name=doctype_name)
+		if not child_entry:
+			return None
+		return {
+			**child_entry,
+			"partner_field": partner_field,
+			"direction": _one_way_mapping_direction(sync_type)
+			or _normalize_mapping_direction(_get_row_value(row, "direction")),
+			"mapping_scope": MAPPING_SCOPE_CHILD,
+		}
+
+	frappe_field = _clean_value(
+		_get_row_value(row, "frappe_field", "source_field", "doctype_field", "field_name")
+	)
+	if not frappe_field:
 		return None
 	return {
 		"frappe_field": frappe_field,
 		"partner_field": partner_field,
 		"direction": _one_way_mapping_direction(sync_type)
 		or _normalize_mapping_direction(_get_row_value(row, "direction")),
+		"mapping_scope": MAPPING_SCOPE_PARENT,
 	}
+
+
+def _normalize_mapping_scope(value, *, row=None) -> str:
+	scope = _clean_value(value)
+	if not scope:
+		if row is not None and any(
+			_clean_value(_get_row_value(row, fieldname))
+			for fieldname in ("table_field", "child_field", "child_doctype", "row_idx")
+		):
+			return MAPPING_SCOPE_CHILD
+		return MAPPING_SCOPE_PARENT
+	if scope not in MAPPING_SCOPES:
+		frappe.throw(f"Mapping Scope must be one of: {', '.join(MAPPING_SCOPES)}")
+	return scope
+
+
+def _normalize_child_mapping_row(row, *, doctype_name: str | None = None) -> dict[str, str] | None:
+	table_field = _clean_value(_get_row_value(row, "table_field"))
+	child_field = _clean_value(_get_row_value(row, "child_field"))
+	row_idx = _coerce_positive_int(_get_row_value(row, "row_idx"), label="Row Index")
+	if not table_field or not child_field:
+		return None
+	child_doctype = _child_doctype_for_table_field(doctype_name, table_field)
+	if not child_doctype:
+		frappe.throw(f"Table Field must be a Table field on {doctype_name}.")
+	configured_child_doctype = _clean_value(_get_row_value(row, "child_doctype"))
+	if configured_child_doctype and configured_child_doctype != child_doctype:
+		frappe.throw(f"Child DocType for {table_field} must be {child_doctype}.")
+	_validate_child_field(child_doctype, child_field)
+	field_path = CHILD_FIELD_PATH_SEPARATOR.join((table_field, str(row_idx), child_field))
+	return {
+		"frappe_field": field_path,
+		"table_field": table_field,
+		"child_doctype": child_doctype,
+		"row_idx": str(row_idx),
+		"child_field": child_field,
+	}
+
+
+def _coerce_positive_int(value, *, label: str) -> int:
+	try:
+		result = int(value)
+	except Exception:
+		frappe.throw(f"{label} must be a positive integer.")
+		return 0
+	if result < 1:
+		frappe.throw(f"{label} must be a positive integer.")
+	return result
+
+
+def _child_doctype_for_table_field(doctype_name: str | None, table_field: str) -> str | None:
+	if not doctype_name:
+		return None
+	meta = frappe.get_meta(doctype_name)
+	for field in getattr(meta, "fields", []) or []:
+		if getattr(field, "fieldname", None) == table_field and getattr(field, "fieldtype", None) == "Table":
+			return _clean_value(getattr(field, "options", None))
+	return None
+
+
+def _validate_child_field(child_doctype: str, child_field: str) -> None:
+	meta = frappe.get_meta(child_doctype)
+	for field in getattr(meta, "fields", []) or []:
+		if getattr(field, "fieldname", None) != child_field:
+			continue
+		if getattr(field, "fieldtype", None) in {"Table", "Table MultiSelect"}:
+			frappe.throw(f"Child Field cannot be a table field: {child_field}.")
+		return
+	frappe.throw(f"Child Field does not exist on {child_doctype}: {child_field}.")
 
 
 def _normalize_filter_expression(value) -> str | None:

@@ -592,6 +592,9 @@ class TestRuntimeManagement(unittest.TestCase):
 				sync_type="Frappe <- Partner",
 				batch_size="25",
 				create_new="0",
+				update_existing="0",
+				frappe_after_insert_action="Submit",
+				frappe_after_update_action="bad value",
 				delete_missing="1",
 				one_way_match_mode="all_matches",
 				use_last_sync_date="0",
@@ -605,6 +608,9 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertEqual(coerced.sync_type, "Frappe <- Partner")
 		self.assertEqual(coerced.batch_size, 25)
 		self.assertFalse(coerced.create_new)
+		self.assertFalse(coerced.update_existing)
+		self.assertEqual(coerced.frappe_after_insert_action, "Submit")
+		self.assertEqual(coerced.frappe_after_update_action, "None")
 		self.assertTrue(coerced.delete_missing)
 		self.assertEqual(coerced.one_way_match_mode, "all_matches")
 		self.assertFalse(coerced.use_last_sync_date)

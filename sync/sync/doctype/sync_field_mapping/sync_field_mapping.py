@@ -13,13 +13,18 @@ class SyncFieldMapping(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		child_doctype: DF.Data | None
+		child_field: DF.Literal[None]
 		direction: DF.Literal["Frappe <-> Partner", "Frappe -> Partner", "Frappe <- Partner"]
 		fallback_value: DF.Data | None
 		frappe_field: DF.Literal[None]
+		mapping_scope: DF.Literal["Parent", "Child"]
 		parent: DF.Data
 		parentfield: DF.Data
 		parenttype: DF.Data
 		partner_field: DF.Literal[None]
+		row_idx: DF.Int
+		table_field: DF.Literal[None]
 		unmapped_action: DF.Literal["Keep Original", "Use Fallback Value", "Use NULL"]
 	# end: auto-generated types
 

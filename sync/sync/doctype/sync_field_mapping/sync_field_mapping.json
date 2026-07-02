@@ -4,7 +4,12 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "mapping_scope",
   "frappe_field",
+  "table_field",
+  "child_doctype",
+  "row_idx",
+  "child_field",
   "partner_field",
   "direction",
   "unmapped_action",
@@ -12,13 +17,54 @@
  ],
  "fields": [
   {
+   "default": "Parent",
+   "fieldname": "mapping_scope",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Mapping Scope",
+   "options": "Parent\nChild"
+  },
+  {
    "fieldname": "frappe_field",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Frappe Field",
    "description": "Select a field from the chosen DocType.",
-   "options": "",
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.mapping_scope != 'Child'",
+   "options": ""
+  },
+  {
+   "depends_on": "eval:doc.mapping_scope == 'Child'",
+   "fieldname": "table_field",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Table Field",
+   "mandatory_depends_on": "eval:doc.mapping_scope == 'Child'",
+   "options": ""
+  },
+  {
+   "depends_on": "eval:doc.mapping_scope == 'Child'",
+   "fieldname": "child_doctype",
+   "fieldtype": "Data",
+   "label": "Child DocType",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.mapping_scope == 'Child'",
+   "fieldname": "row_idx",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Row Index",
+   "mandatory_depends_on": "eval:doc.mapping_scope == 'Child'"
+  },
+  {
+   "depends_on": "eval:doc.mapping_scope == 'Child'",
+   "fieldname": "child_field",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Child Field",
+   "mandatory_depends_on": "eval:doc.mapping_scope == 'Child'",
+   "options": ""
   },
   {
    "fieldname": "partner_field",
@@ -53,7 +99,7 @@
  "grid_page_length": 50,
  "istable": 1,
  "links": [],
- "modified": "2026-05-29 00:00:00.000000",
+ "modified": "2026-07-01 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Field Mapping",
  "permissions": [],
