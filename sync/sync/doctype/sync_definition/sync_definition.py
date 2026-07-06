@@ -89,6 +89,7 @@ class SyncDefinition(Document):
 		partner_modified_field: DF.Literal[None]
 		preview_limit: DF.Int
 		read_query: DF.Code | None
+		render_read_query_template: DF.Check
 		sync_type: DF.Literal["Frappe -> Partner", "Frappe <-> Partner", "Frappe <- Partner"]
 		table_name: DF.Data | None
 		timestamp_buffer_ms: DF.Int
@@ -434,6 +435,7 @@ class SyncDefinition(Document):
 			"conflict_policy": self.conflict_policy or CONFLICT_POLICY_NEWEST_WINS,
 			"table_name": self.table_name,
 			"read_query": getattr(self, "read_query", None),
+			"render_read_query_template": bool(getattr(self, "render_read_query_template", 0)),
 			"preview_limit": self.get_preview_limit(),
 			"export_mask_credentials": bool(self.export_mask_credentials),
 			"frappe_modified_field": getattr(self, "frappe_modified_field", "modified"),

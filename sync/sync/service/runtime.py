@@ -57,6 +57,15 @@ from sync.sync.constants import (
 from .connectors import ConnectorCreateOptions, get_connector_for_partner
 
 try:
+	from jinja2 import StrictUndefined
+	from jinja2.exceptions import TemplateError
+	from jinja2.sandbox import SandboxedEnvironment
+except Exception:  # pragma: no cover - Frappe depends on Jinja, but keep import-time safe
+	StrictUndefined = None
+	TemplateError = Exception
+	SandboxedEnvironment = None
+
+try:
 	from croniter import croniter
 except Exception:  # pragma: no cover - optional runtime dependency
 	croniter = None
@@ -138,6 +147,7 @@ class SyncDefinitionConfig:
 	update_existing: bool = True
 	frappe_after_insert_action: str = FRAPPE_WRITE_ACTION_NONE
 	frappe_after_update_action: str = FRAPPE_WRITE_ACTION_NONE
+	render_read_query_template: bool = False
 
 @dataclass(slots=True)
 class PartnerMatchLookup:
@@ -669,6 +679,8 @@ def _build_preview(sync_definition: Any, *, limit: int) -> dict[str, Any]:
 		"match_mode": _config_match_mode(config),
 		"match_fields": _config_match_fields(config),
 		"read_query": _config_read_query(config),
+		"render_read_query_template": _config_render_read_query_template(config),
+		"rendered_read_query": _resolve_read_query(config, connector),
 		"partner_identity_field": _config_partner_identity_field(config),
 		"value_mapping_fields": sorted(config.value_mapping.keys()),
 		"actions": [{"direction": config.sync_type, "result": "preview"}],
@@ -1095,6 +1107,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 				timestamp_tie_breaker=_normalize_timestamp_tie_breaker(config.timestamp_tie_breaker),
 				value_mapping_fallbacks=_normalize_value_mapping_fallbacks(config.value_mapping_fallbacks),
 				update_existing=_as_bool(getattr(config, "update_existing", 1)),
+				render_read_query_template=_as_bool(getattr(config, "render_read_query_template", 0)),
 				frappe_after_insert_action=_normalize_frappe_write_action(
 					getattr(config, "frappe_after_insert_action", None)
 				),
@@ -1149,6 +1162,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		partner_time_zone=_normalize_time_zone_name(getattr(config, "partner_time_zone", None)),
 		capture_audit_payloads=_as_bool(getattr(config, "capture_audit_payloads", 0)),
 		update_existing=_as_bool(getattr(config, "update_existing", 1)),
+		render_read_query_template=_as_bool(getattr(config, "render_read_query_template", 0)),
 		frappe_after_insert_action=_normalize_frappe_write_action(
 			getattr(config, "frappe_after_insert_action", None)
 		),
@@ -3484,7 +3498,7 @@ def _iter_partner_source_batches(
 	record_batches = _iter_partner_record_batches(
 		connector=connector,
 		source=config.table_name,
-		query=_config_read_query(config),
+		query=_resolve_read_query(config, connector),
 		batch_size=config.batch_size,
 		key_fields=_partner_fetch_key_fields(config),
 	)
@@ -3907,6 +3921,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		partner_create_id_source=_clean_string(_first_value(sync_definition_doc, ["partner_create_id_source"])),
 		partner_create_id_scope_where=_clean_string(_first_value(sync_definition_doc, ["partner_create_id_scope_where"])),
 		capture_audit_payloads=_as_bool(_first_value(sync_definition_doc, ["capture_audit_payloads"], default=0)),
+		render_read_query_template=_as_bool(_first_value(sync_definition_doc, ["render_read_query_template"], default=0)),
 	)
 	if not config.table_name and not _read_query_can_replace_table_name(config.sync_type, config.read_query):
 		raise frappe.ValidationError("Table Name is required.")
@@ -5138,6 +5153,95 @@ def _config_match_fields(config: Any) -> list[str]:
 
 def _config_read_query(config: Any) -> str | None:
 	return getattr(config, "read_query", None)
+
+
+def _config_render_read_query_template(config: Any) -> bool:
+	return _as_bool(getattr(config, "render_read_query_template", 0))
+
+
+def _resolve_read_query(config: Any, connector: Any, context: dict[str, Any] | None = None) -> str | None:
+	read_query = _clean_string(_config_read_query(config))
+	if not read_query or not _config_render_read_query_template(config):
+		return read_query
+	if SandboxedEnvironment is None or StrictUndefined is None:
+		raise frappe.ValidationError("Read Query templating is unavailable because Jinja is not installed.")
+
+	template_context = _build_read_query_template_context(connector, context=context)
+	try:
+		rendered_query = SandboxedEnvironment(undefined=StrictUndefined).from_string(read_query).render(template_context)
+	except TemplateError as exc:
+		raise frappe.ValidationError(f"Read Query template rendering failed: {exc}") from exc
+	except Exception as exc:
+		raise frappe.ValidationError(f"Read Query template helper failed: {exc}") from exc
+
+	rendered_query = _clean_string(rendered_query)
+	if not rendered_query:
+		raise frappe.ValidationError("Read Query template rendered an empty query.")
+	return rendered_query
+
+
+def _build_read_query_template_context(connector: Any, context: dict[str, Any] | None = None) -> dict[str, Any]:
+	today = date.today()
+	template_context: dict[str, Any] = {
+		"current_year": today.year,
+		"previous_year": today.year - 1,
+		"quote_identifier": lambda value: _template_quote_identifier(connector, value),
+		"source_tables": lambda schema=None, filter=None: _template_source_tables(
+			connector,
+			schema=schema,
+			filter_text=filter,
+		),
+	}
+	if context:
+		for key, value in context.items():
+			if key not in template_context:
+				template_context[str(key)] = _safe_read_query_template_value(value)
+	return template_context
+
+
+def _safe_read_query_template_value(value: Any) -> Any:
+	if value is None or isinstance(value, (str, int, float, bool)):
+		return value
+	if isinstance(value, (list, tuple)):
+		return [_safe_read_query_template_value(entry) for entry in value]
+	if isinstance(value, dict):
+		return {
+			str(key): _safe_read_query_template_value(nested_value)
+			for key, nested_value in value.items()
+		}
+	raise frappe.ValidationError(f"Unsafe Read Query template context value: {type(value).__name__}")
+
+
+def _template_quote_identifier(connector: Any, value: Any) -> str:
+	quote = getattr(connector, "quote_identifier", None)
+	if not callable(quote):
+		raise RuntimeError("Connector does not support identifier quoting")
+	identifier = _clean_string(value)
+	if not identifier:
+		raise RuntimeError("Identifier is required")
+	return str(quote(identifier))
+
+
+def _template_source_tables(connector: Any, *, schema: Any = None, filter_text: Any = None) -> list[Any]:
+	list_tables = getattr(connector, "list_source_tables", None)
+	if not callable(list_tables):
+		raise RuntimeError("Connector does not support source-table inspection")
+	tables = list(list_tables() or [])
+	schema_filter = _clean_string(schema)
+	text_filter = _clean_string(filter_text)
+	if schema_filter:
+		tables = [
+			table for table in tables
+			if str(getattr(table, "schema", "") or "").lower() == schema_filter.lower()
+		]
+	if text_filter:
+		needle = text_filter.lower()
+		tables = [
+			table for table in tables
+			if needle in str(getattr(table, "name", "") or "").lower()
+			or needle in str(getattr(table, "full_name", "") or "").lower()
+		]
+	return tables
 
 
 def _config_one_way_match_mode(config: Any) -> str:

@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import frappe
 
 from sync.sync.service import runtime
-from sync.sync.service.connectors import ConnectorPingResult, ConnectorWriteResult
+from sync.sync.service.connectors import ConnectorPingResult, ConnectorWriteResult, PartnerSourceTable
 
 
 class FakeDoc:
@@ -164,9 +164,139 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(config.frappe_creation_field, "creation")
 		self.assertEqual(config.partner_creation_field, "created_at")
 		self.assertEqual(config.table_name, "tabTask")
+		self.assertFalse(config.render_read_query_template)
 		self.assertFalse(config.update_existing)
 		self.assertEqual(config.frappe_after_insert_action, "Submit")
 		self.assertEqual(config.frappe_after_update_action, "None")
+
+	def test_build_definition_config_includes_read_query_template_flag(self):
+		doc = FakeDoc(
+			{
+				"name": "SYNC-TEMPLATE",
+				"sync_type": "Frappe <- Partner",
+				"partner": "PARTNER-1",
+				"doctype_name": "Task",
+				"read_query": "select 1",
+				"render_read_query_template": 1,
+				"use_last_sync_date": 0,
+			}
+		)
+
+		with (
+			patch("sync.sync.service.runtime._get_match_fields", return_value=["name"]),
+			patch(
+				"sync.sync.service.runtime._get_field_mapping",
+				return_value={"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}},
+			),
+			patch("sync.sync.service.runtime._get_value_mapping", return_value={}),
+			patch("sync.sync.service.runtime._get_value_mapping_fallbacks", return_value={}),
+		):
+			config = runtime._build_definition_config(doc)
+
+		self.assertTrue(config.render_read_query_template)
+
+	def test_resolve_read_query_returns_original_when_template_disabled(self):
+		config = SimpleNamespace(read_query=" select * from sync_table ", render_read_query_template=0)
+
+		self.assertEqual(runtime._resolve_read_query(config, object()), "select * from sync_table")
+
+	def test_resolve_read_query_renders_safe_helpers(self):
+		connector = SimpleNamespace(
+			quote_identifier=lambda value: f'"{value}"',
+			list_source_tables=lambda: [
+				PartnerSourceTable(schema="public", name="sync_2026", full_name="public.sync_2026", quoted_name='"public"."sync_2026"'),
+				PartnerSourceTable(schema="audit", name="sync_log", full_name="audit.sync_log", quoted_name='"audit"."sync_log"'),
+			],
+		)
+		config = SimpleNamespace(
+			read_query=(
+				"select * from {{ source_tables(schema='public', filter='2026')[0].quoted_name }} "
+				"where {{ quote_identifier('year') }} = {{ current_year }}"
+			),
+			render_read_query_template=1,
+		)
+
+		rendered = runtime._resolve_read_query(config, connector)
+
+		self.assertIn('from "public"."sync_2026"', rendered)
+		self.assertIn('where "year" = ', rendered)
+
+	def test_resolve_read_query_rejects_undefined_and_empty_templates(self):
+		connector = SimpleNamespace(quote_identifier=lambda value: value, list_source_tables=lambda: [])
+
+		with self.assertRaisesRegex(frappe.ValidationError, "rendering failed"):
+			runtime._resolve_read_query(
+				SimpleNamespace(read_query="select {{ missing_value }}", render_read_query_template=1),
+				connector,
+			)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "empty query"):
+			runtime._resolve_read_query(
+				SimpleNamespace(read_query="{% if false %}select 1{% endif %}", render_read_query_template=1),
+				connector,
+			)
+
+	def test_source_tables_helper_reports_missing_connector_capability(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "source-table inspection"):
+			runtime._resolve_read_query(
+				SimpleNamespace(read_query="{{ source_tables() }}", render_read_query_template=1),
+				SimpleNamespace(quote_identifier=lambda value: value),
+			)
+
+	def test_iter_partner_source_batches_passes_rendered_query_and_table_source(self):
+		config = SimpleNamespace(
+			table_name="dbo.SyncTable",
+			read_query="select * from {{ quote_identifier('dbo.SyncRead') }}",
+			render_read_query_template=1,
+			batch_size=10,
+			match_fields=["name"],
+			mapping={"name": {"partner_field": "id"}},
+		)
+		connector = SequenceConnector([{"records": [{"id": "TASK-1"}], "next_cursor": None}])
+		connector.quote_identifier = lambda value: f"[{value}]"
+		context = SimpleNamespace(is_delta_sync=False)
+
+		batches = list(runtime._iter_partner_source_batches(config, connector, context))
+
+		self.assertEqual(batches, [[{"id": "TASK-1"}]])
+		self.assertEqual(connector.calls[0]["source"], "dbo.SyncTable")
+		self.assertEqual(connector.calls[0]["query"], "select * from [dbo.SyncRead]")
+
+	def test_build_preview_includes_original_and_rendered_read_query(self):
+		doc = FakeDoc(
+			{
+				"name": "SYNC-PREVIEW",
+				"sync_type": "Frappe <- Partner",
+				"partner": "PARTNER-1",
+				"doctype_name": "Task",
+				"read_query": "select id from {{ quote_identifier('dbo.SourceView') }}",
+				"render_read_query_template": 1,
+				"use_last_sync_date": 0,
+			}
+		)
+		connector = SimpleNamespace(
+			ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}),
+			quote_identifier=lambda value: f"[{value}]",
+		)
+
+		with (
+			patch("sync.sync.service.runtime._get_match_fields", return_value=["name"]),
+			patch(
+				"sync.sync.service.runtime._get_field_mapping",
+				return_value={"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}},
+			),
+			patch("sync.sync.service.runtime._get_value_mapping", return_value={}),
+			patch("sync.sync.service.runtime._get_value_mapping_fallbacks", return_value={}),
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=FakeDoc({"name": "PARTNER-1"})),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=connector),
+			patch("sync.sync.service.runtime._doctype_fieldnames", return_value={"name", "modified"}),
+			patch("sync.sync.service.runtime.frappe.get_all", return_value=[]),
+		):
+			preview = runtime._build_preview(doc, limit=5)
+
+		self.assertEqual(preview["read_query"], "select id from {{ quote_identifier('dbo.SourceView') }}")
+		self.assertTrue(preview["render_read_query_template"])
+		self.assertEqual(preview["rendered_read_query"], "select id from [dbo.SourceView]")
 
 	def test_child_field_mapping_maps_in_both_directions(self):
 		def fake_meta(doctype):

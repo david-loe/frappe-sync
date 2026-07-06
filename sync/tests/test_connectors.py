@@ -13,6 +13,7 @@ from sync.sync.service.connectors import (
 	FirebirdConnector,
 	ConnectorCreateOptions,
 	MssqlConnector,
+	PartnerSourceTable,
 	PostgresConnector,
 	get_connector_for_partner,
 	get_partner_type,
@@ -78,6 +79,10 @@ class TestBasePartnerConnector(unittest.TestCase):
 		self.assertFalse(connector.delete_record(key_values={"id": "A1"}, dry_run=False).ok)
 		with self.assertRaisesRegex(RuntimeError, "does not support source-column inspection"):
 			connector.describe_source_columns(source="table")
+		with self.assertRaisesRegex(RuntimeError, "does not support identifier quoting"):
+			connector.quote_identifier("table")
+		with self.assertRaisesRegex(RuntimeError, "does not support source-table inspection"):
+			connector.list_source_tables()
 
 
 class TestConnectorConfig(unittest.TestCase):
@@ -426,6 +431,55 @@ class TestRelationalConnectorSql(unittest.TestCase):
 		for identifier in ("[01adr_Spender", "dbo[SyncTable]", "dbo]", "[]"):
 			with self.subTest(identifier=identifier), self.assertRaisesRegex(ValueError, "Unsafe SQL identifier|Identifier is empty"):
 				connector._quote_compound_identifier(identifier)
+
+	def test_public_quote_identifier_delegates_to_dialect_quoting(self):
+		self.assertEqual(MssqlConnector(DummyPartner("mssql")).quote_identifier("dbo.SyncTable"), "[dbo].[SyncTable]")
+		self.assertEqual(PostgresConnector(DummyPartner("postgres")).quote_identifier("public.sync_table"), '"public"."sync_table"')
+		self.assertEqual(FirebirdConnector(DummyPartner("firebird")).quote_identifier("sync_table"), '"SYNC_TABLE"')
+
+	def test_list_source_tables_normalizes_mssql_metadata(self):
+		connector = MssqlConnector(DummyPartner("mssql"))
+
+		with patch.object(
+			connector,
+			"_run_select",
+			return_value=[{"schema": "dbo", "name": "SyncTable"}, {"schema": "audit", "name": "Sync Log"}],
+		) as mock_select:
+			tables = connector.list_source_tables()
+
+		self.assertEqual(mock_select.call_args.args[1], [])
+		self.assertIn("sys.tables", mock_select.call_args.args[0])
+		self.assertEqual(
+			tables,
+			[
+				PartnerSourceTable(schema="dbo", name="SyncTable", full_name="dbo.SyncTable", quoted_name="[dbo].[SyncTable]"),
+				PartnerSourceTable(schema="audit", name="Sync Log", full_name="audit.Sync Log", quoted_name="[audit].[Sync Log]"),
+			],
+		)
+
+	def test_list_source_tables_normalizes_postgres_metadata(self):
+		connector = PostgresConnector(DummyPartner("postgres"))
+
+		with patch.object(connector, "_run_select", return_value=[{"table_schema": "public", "table_name": "sync_table"}]) as mock_select:
+			tables = connector.list_source_tables()
+
+		self.assertIn("information_schema.tables", mock_select.call_args.args[0])
+		self.assertEqual(
+			tables,
+			[PartnerSourceTable(schema="public", name="sync_table", full_name="public.sync_table", quoted_name='"public"."sync_table"')],
+		)
+
+	def test_list_source_tables_normalizes_firebird_metadata(self):
+		connector = FirebirdConnector(DummyPartner("firebird"))
+
+		with patch.object(connector, "_run_select", return_value=[{"NAME": "SYNC_TABLE"}]) as mock_select:
+			tables = connector.list_source_tables()
+
+		self.assertIn("RDB$RELATIONS", mock_select.call_args.args[0])
+		self.assertEqual(
+			tables,
+			[PartnerSourceTable(schema=None, name="SYNC_TABLE", full_name="SYNC_TABLE", quoted_name='"SYNC_TABLE"')],
+		)
 
 	def test_cursor_helpers_reject_invalid_values(self):
 		self.assertIsNone(_encode_keyset_cursor({}, ["id"]))

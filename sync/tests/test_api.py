@@ -98,11 +98,36 @@ class TestSyncApi(ApiTestCase):
 		self.assertEqual(response["sync_partner"], partner.name)
 		self.assertEqual(response["table_name"], "dbo.SyncTable")
 		self.assertEqual(response["read_query"], "select id as external_id from dbo.SyncTable")
+		self.assertEqual(response["rendered_read_query"], "select id as external_id from dbo.SyncTable")
 		self.assertEqual(response["columns"], ["id", "status", "updated_at"])
 		self.assertEqual(
 			calls,
 			[{"source": "dbo.SyncTable", "query": "select id as external_id from dbo.SyncTable"}],
 		)
+
+	def test_get_sync_partner_table_columns_renders_read_query_server_side(self):
+		partner = _doc_stub("Sync Partner", "PARTNER-1")
+		calls = []
+		connector = SimpleNamespace(
+			quote_identifier=lambda value: f"[{value}]",
+			describe_source_columns=lambda **kwargs: calls.append(kwargs) or ["id"],
+		)
+
+		with (
+			patch.object(self.api.frappe, "get_doc", return_value=partner),
+			patch.object(self.api, "get_connector_for_partner", return_value=connector),
+		):
+			response = self.api.get_sync_partner_table_columns(
+				partner.name,
+				table_name="dbo.TargetTable",
+				read_query="select id from {{ quote_identifier('dbo.SourceView') }}",
+				render_read_query_template=1,
+			)
+
+		self.assertTrue(response["render_read_query_template"])
+		self.assertEqual(response["read_query"], "select id from {{ quote_identifier('dbo.SourceView') }}")
+		self.assertEqual(response["rendered_read_query"], "select id from [dbo.SourceView]")
+		self.assertEqual(calls, [{"source": "dbo.TargetTable", "query": "select id from [dbo.SourceView]"}])
 
 	def test_get_sync_partner_table_columns_raises_validation_error_on_connector_error(self):
 		partner = _doc_stub("Sync Partner", "PARTNER-1")

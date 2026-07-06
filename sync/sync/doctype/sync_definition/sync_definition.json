@@ -16,6 +16,7 @@
   "section_partner_source",
   "table_name",
   "read_query",
+  "render_read_query_template",
   "partner_columns_status",
   "partner_columns",
   "partner_columns_signature",
@@ -230,6 +231,13 @@
    "fieldtype": "Code",
    "label": "Read Query",
    "description": "Optional SELECT query used to read partner records."
+  },
+  {
+   "default": "0",
+   "description": "Render Read Query as a safe Jinja template before partner reads.",
+   "fieldname": "render_read_query_template",
+   "fieldtype": "Check",
+   "label": "Render Read Query Template"
   },
   {
    "fieldname": "partner_columns_status",
@@ -521,7 +529,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-07-01 12:00:00.000000",
+ "modified": "2026-07-06 00:00:00.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

@@ -41,6 +41,11 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.setupDefinitionPartnerColumnPanel(frm);
 		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
 	},
+	render_read_query_template(frm) {
+		sync.helpers.refreshDefinitionPartnerColumnState(frm);
+		sync.helpers.setupDefinitionPartnerColumnPanel(frm);
+		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
+	},
 	table_name(frm) {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.toggleSourceFields(frm);
@@ -348,6 +353,7 @@ sync.helpers.getDefinitionPartnerColumnSignatureSource = function (frm) {
 		String(frm.doc?.partner || ""),
 		String(frm.doc?.table_name || ""),
 		String(frm.doc?.read_query || ""),
+		frm.doc?.render_read_query_template ? "1" : "0",
 	];
 };
 
@@ -389,6 +395,7 @@ sync.helpers.getDefinitionPartnerColumnRequestArgs = function (frm) {
 	if (readQuery) {
 		args.read_query = readQuery;
 	}
+	args.render_read_query_template = frm.doc?.render_read_query_template ? 1 : 0;
 	return args;
 };
 

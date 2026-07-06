@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import frappe
@@ -28,6 +29,7 @@ from sync.sync.service import (
 from sync.sync.service.connectors import get_connector_for_partner
 from sync.sync.service.runtime import (
 	preview_import_sync_definition_yaml as service_preview_import_sync_definition_yaml,
+	_resolve_read_query,
 )
 
 
@@ -264,6 +266,7 @@ def get_sync_partner_table_columns(
 	sync_partner_name: str,
 	table_name: str | None = None,
 	read_query: str | None = None,
+	render_read_query_template: bool = False,
 ) -> dict[str, Any]:
 	_require_system_manager()
 	partner_doc = _require_doc_permission(SYNC_PARTNER_DOCTYPE, sync_partner_name, permtype="write")
@@ -271,13 +274,22 @@ def get_sync_partner_table_columns(
 	normalized_table_name = _clean_string(table_name)
 	normalized_read_query = _clean_string(read_query)
 	try:
-		columns = connector.describe_source_columns(source=normalized_table_name, query=normalized_read_query)
+		rendered_read_query = _resolve_read_query(
+			SimpleNamespace(
+				read_query=normalized_read_query,
+				render_read_query_template=_as_bool(render_read_query_template),
+			),
+			connector,
+		)
+		columns = connector.describe_source_columns(source=normalized_table_name, query=rendered_read_query)
 	except Exception as exc:
 		frappe.throw(str(exc), exc=frappe.ValidationError)
 	return {
 		"sync_partner": partner_doc.name,
 		"table_name": normalized_table_name,
 		"read_query": normalized_read_query,
+		"render_read_query_template": _as_bool(render_read_query_template),
+		"rendered_read_query": rendered_read_query,
 		"columns": columns,
 	}
 

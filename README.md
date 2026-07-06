@@ -34,6 +34,21 @@ Each sync entry links to a `Sync Partner` (host / port / credentials) plus a `Sy
 
 The app ships with Desk helpers (Run, Preview, Export YAML, Import YAML, Open Latest Run, Test Connection). Use the YAML export/import as a transport format, but keep secret values out of shared exports.
 
+### Read Query templating
+
+`Read Query` can optionally be rendered as a safe Jinja template before partner reads by enabling `Render Read Query Template` on the `Sync Definition`. Templating only affects `read_query`; `table_name` remains the partner write target. `delete_missing` still cannot be combined with any `read_query`, templated or not.
+
+Available template values and helpers:
+
+| Name | Returns |
+| --- | --- |
+| `current_year` | Current calendar year as an integer. |
+| `previous_year` | Previous calendar year as an integer. |
+| `quote_identifier(value)` | The connector-quoted SQL identifier for the active partner dialect. |
+| `source_tables(schema=None, filter=None)` | A list of source table objects with `schema`, `name`, `full_name` and `quoted_name`. Optional filters match schema exactly and table name/full name by substring. |
+
+No Frappe objects, database handles, connector objects or Python globals are exposed to templates.
+
 ### Production operation
 
 `Sync Settings` controls production housekeeping. `stale_run_timeout_minutes` lets the scheduler and the Desk action recover old `Queued` or `Running` runs that would otherwise block a definition. `run_retention_days_success` and `run_retention_days_error` prune `Sync Run` and `Sync Run Item` audit rows; failures, review runs, and skipped runs are retained longer by default.

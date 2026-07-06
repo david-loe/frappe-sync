@@ -55,6 +55,14 @@ class ConnectorCreateOptions:
 	scope_where: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PartnerSourceTable:
+	schema: str | None
+	name: str
+	full_name: str
+	quoted_name: str
+
+
 class BasePartnerConnector(ABC):
 	partner_type = "base"
 
@@ -174,6 +182,12 @@ class BasePartnerConnector(ABC):
 		query: str | None = None,
 	) -> list[str]:
 		raise RuntimeError("Connector does not support source-column inspection")
+
+	def quote_identifier(self, identifier: str) -> str:
+		raise RuntimeError("Connector does not support identifier quoting")
+
+	def list_source_tables(self) -> list[PartnerSourceTable]:
+		raise RuntimeError("Connector does not support source-table inspection")
 
 
 class RelationalConnector(BasePartnerConnector):
@@ -555,6 +569,56 @@ class RelationalConnector(BasePartnerConnector):
 			with suppress(Exception):
 				db_cursor.close()
 		return [str(column) for column in columns if column]
+
+	def quote_identifier(self, identifier: str) -> str:
+		return self._quote_compound_identifier(identifier)
+
+	def list_source_tables(self) -> list[PartnerSourceTable]:
+		sql = self._source_tables_sql()
+		rows = self._run_select(sql, [])
+		tables: list[PartnerSourceTable] = []
+		for row in rows:
+			schema = _first_present(row, "schema", "table_schema", "owner")
+			name = _first_present(row, "name", "table_name", "relation_name")
+			if not name:
+				continue
+			schema_text = str(schema).strip() if schema not in (None, "") else None
+			name_text = str(name).strip()
+			full_name = f"{schema_text}.{name_text}" if schema_text else name_text
+			tables.append(
+				PartnerSourceTable(
+					schema=schema_text,
+					name=name_text,
+					full_name=full_name,
+					quoted_name=self._quote_compound_identifier(full_name),
+				)
+			)
+		return tables
+
+	def _source_tables_sql(self) -> str:
+		if self.dialect == "mssql":
+			return (
+				"SELECT s.name AS schema, t.name AS name "
+				"FROM sys.tables t INNER JOIN sys.schemas s ON t.schema_id = s.schema_id "
+				"ORDER BY s.name, t.name"
+			)
+		if self.dialect == "postgres":
+			return (
+				"SELECT table_schema AS schema, table_name AS name "
+				"FROM information_schema.tables "
+				"WHERE table_type = 'BASE TABLE' "
+				"AND table_schema NOT IN ('pg_catalog', 'information_schema') "
+				"ORDER BY table_schema, table_name"
+			)
+		if self.dialect == "firebird":
+			return (
+				"SELECT TRIM(RDB$RELATION_NAME) AS name "
+				"FROM RDB$RELATIONS "
+				"WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 "
+				"AND RDB$VIEW_BLR IS NULL "
+				"ORDER BY RDB$RELATION_NAME"
+			)
+		raise RuntimeError(f"{self.dialect} source-table inspection is not supported")
 
 	def _build_describe_source_columns_sql(self, *, source: str | None, query: str | None) -> str:
 		if query:
@@ -1009,6 +1073,16 @@ def _to_non_negative_int(value: Any) -> int:
 		parsed = int(value)
 		return max(parsed, 0)
 	return 0
+
+
+def _first_present(row: dict[str, Any], *keys: str) -> Any:
+	for key in keys:
+		if key in row and row[key] not in (None, ""):
+			return row[key]
+		for existing_key, value in row.items():
+			if str(existing_key).lower() == key.lower() and value not in (None, ""):
+				return value
+	return None
 
 
 def _strip_trailing_semicolon(query: str) -> str:

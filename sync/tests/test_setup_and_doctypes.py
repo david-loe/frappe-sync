@@ -28,6 +28,7 @@ class FakeSyncDefinitionDoc:
 		self.preview_limit = values.get("preview_limit", 50)
 		self.delete_missing = values.get("delete_missing", 0)
 		self.read_query = values.get("read_query")
+		self.render_read_query_template = values.get("render_read_query_template", 0)
 		self.table_name = values.get("table_name")
 		self.use_last_sync_date = values.get("use_last_sync_date", 1)
 		self.title = values.get("title", "SYNC-DEF")
@@ -458,7 +459,12 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 				)
 
 	def test_validate_source_settings_rejects_delete_missing_with_read_query(self):
-		doc = FakeSyncDefinitionDoc(table_name="people", read_query="select * from people where active = 1", delete_missing=1)
+		doc = FakeSyncDefinitionDoc(
+			table_name="people",
+			read_query="select * from people where active = 1",
+			render_read_query_template=1,
+			delete_missing=1,
+		)
 
 		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("unsafe-source")):
 			with self.assertRaises(frappe.ValidationError):
@@ -612,6 +618,7 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			partner_modified_field="updated_at",
 			preview_limit="invalid",
 			one_way_match_mode="all_matches",
+			render_read_query_template=1,
 		)
 
 		self.assertEqual(sync_definition_module.SyncDefinition.get_preview_limit(doc), 50)
@@ -627,6 +634,7 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			{"action": "fallback", "value": "UNKNOWN"},
 		)
 		self.assertEqual(exported["one_way_match_mode"], "all_matches")
+		self.assertTrue(exported["render_read_query_template"])
 		self.assertNotIn("next_run_at", exported)
 		self.assertNotIn("last_run_status", exported)
 		self.assertNotIn("last_run_summary", exported)
