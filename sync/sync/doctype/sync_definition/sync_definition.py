@@ -11,6 +11,13 @@ from sync.sync.constants import (
 	FRAPPE_WRITE_ACTION_NONE,
 	FRAPPE_WRITE_ACTION_SUBMIT,
 	FRAPPE_WRITE_ACTIONS,
+	FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT,
+	FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH,
+	FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE,
+	FRAPPE_WRITE_HOOK_EVENTS,
+	FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION,
+	FRAPPE_WRITE_HOOK_TYPE_CUSTOM_SCRIPT,
+	FRAPPE_WRITE_HOOK_TYPES,
 	MAPPING_DIRECTION_BOTH,
 	MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
 	MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
@@ -48,6 +55,7 @@ class SyncDefinition(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 		from sync.sync.doctype.sync_field_mapping.sync_field_mapping import SyncFieldMapping
+		from sync.sync.doctype.sync_frappe_write_hook.sync_frappe_write_hook import SyncFrappeWriteHook
 		from sync.sync.doctype.sync_key_field.sync_key_field import SyncKeyField
 		from sync.sync.doctype.sync_value_mapping.sync_value_mapping import SyncValueMapping
 
@@ -61,11 +69,10 @@ class SyncDefinition(Document):
 		export_mask_credentials: DF.Check
 		field_mapping: DF.Table[SyncFieldMapping]
 		filter_expression: DF.Code | None
-		frappe_after_insert_action: DF.Literal["None", "Submit"]
-		frappe_after_update_action: DF.Literal["None", "Submit"]
 		frappe_creation_field: DF.Data
 		frappe_modified_field: DF.Literal[None]
 		frappe_partner_identity_field: DF.Literal[None]
+		frappe_write_hooks: DF.Table[SyncFrappeWriteHook]
 		frequency_cron: DF.Data
 		last_run: DF.Link | None
 		last_run_status: DF.Literal["", "Queued", "Running", "Success", "Partial Error", "Needs Review", "Error", "Preview", "Skipped"]
@@ -316,19 +323,45 @@ class SyncDefinition(Document):
 
 	def validate_write_behavior(self):
 		self.update_existing = 1 if getattr(self, "update_existing", 1) else 0
-		self.frappe_after_insert_action = _normalize_frappe_write_action(
-			getattr(self, "frappe_after_insert_action", None)
-		)
-		self.frappe_after_update_action = _normalize_frappe_write_action(
-			getattr(self, "frappe_after_update_action", None)
-		)
-		if (
-			self.frappe_after_insert_action == FRAPPE_WRITE_ACTION_SUBMIT
-			or self.frappe_after_update_action == FRAPPE_WRITE_ACTION_SUBMIT
-		):
+		active_submit_events: set[str] = set()
+		custom_script_found = False
+		custom_script_has_code = False
+		submit_found = False
+		for row in getattr(self, "frappe_write_hooks", None) or []:
+			enabled = _row_flag(row, "enabled")
+			_assign_row_value(row, "enabled", int(enabled))
+			event = _normalize_frappe_write_hook_event(_get_row_value(row, "event"))
+			hook_type = _normalize_frappe_write_hook_type(_get_row_value(row, "hook_type"))
+			_assign_row_value(row, "event", event)
+			_assign_row_value(row, "hook_type", hook_type)
+			if hook_type == FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION:
+				action = _normalize_frappe_write_action(_get_row_value(row, "action"))
+				_assign_row_value(row, "action", "" if action == FRAPPE_WRITE_ACTION_NONE else action)
+				_assign_row_value(row, "script", None)
+				if enabled and action == FRAPPE_WRITE_ACTION_SUBMIT:
+					submit_found = True
+					if event not in {FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT, FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE}:
+						frappe.throw("Built-in Submit is only allowed for After Insert and After Update hooks.")
+					if event in active_submit_events:
+						frappe.throw(f"Only one active built-in Submit hook is allowed for {event}.")
+					active_submit_events.add(event)
+			elif hook_type == FRAPPE_WRITE_HOOK_TYPE_CUSTOM_SCRIPT:
+				_assign_row_value(row, "action", "")
+				script = _clean_value(_get_raw_row_value(row, "script"))
+				_assign_row_value(row, "script", script)
+				if enabled:
+					custom_script_found = True
+				if script:
+					custom_script_has_code = True
+
+		if submit_found:
 			doctype_name = _clean_value(getattr(self, "doctype_name", None))
 			if doctype_name and not getattr(frappe.get_meta(doctype_name), "is_submittable", False):
-				frappe.throw(f"Frappe write action Submit requires submittable DocType {doctype_name}.")
+				frappe.throw(f"Built-in Submit hook requires submittable DocType {doctype_name}.")
+		if custom_script_found and not _server_script_enabled():
+			frappe.throw("Custom Script hooks require server_script_enabled.")
+		if custom_script_has_code and not _current_user_is_system_manager():
+			frappe.throw("Only System Manager can save non-empty Custom Script hooks.")
 
 	def validate_match_mode(self):
 		mode = _clean_value(getattr(self, "match_mode", None)) or MATCH_MODE_MATCH_FIELDS
@@ -420,16 +453,7 @@ class SyncDefinition(Document):
 			"create_new": self.create_new,
 			"update_existing": getattr(self, "update_existing", 1),
 			"delete_missing": self.delete_missing,
-			"frappe_after_insert_action": getattr(
-				self,
-				"frappe_after_insert_action",
-				FRAPPE_WRITE_ACTION_NONE,
-			),
-			"frappe_after_update_action": getattr(
-				self,
-				"frappe_after_update_action",
-				FRAPPE_WRITE_ACTION_NONE,
-			),
+			"frappe_write_hooks": SyncDefinition.get_frappe_write_hooks(self),
 			"match_mode": getattr(self, "match_mode", MATCH_MODE_MATCH_FIELDS),
 			"one_way_match_mode": getattr(self, "one_way_match_mode", ONE_WAY_MATCH_FIRST),
 			"conflict_policy": self.conflict_policy or CONFLICT_POLICY_NEWEST_WINS,
@@ -466,6 +490,14 @@ class SyncDefinition(Document):
 			"sync_definition": self.as_export_dict(),
 			"mask_credentials": bool(self.export_mask_credentials),
 		}
+
+	def get_frappe_write_hooks(self) -> list[dict]:
+		result: list[dict] = []
+		for row in getattr(self, "frappe_write_hooks", None) or []:
+			entry = _normalize_frappe_write_hook_row(row, strict=False)
+			if entry:
+				result.append(entry)
+		return result
 
 
 def _split_lines(value: str | None) -> list[str]:
@@ -566,6 +598,73 @@ def _normalize_frappe_write_action(value) -> str:
 			+ ", ".join((FRAPPE_WRITE_ACTION_NONE, FRAPPE_WRITE_ACTION_SUBMIT))
 		)
 	return action
+
+
+def _normalize_frappe_write_hook_event(value) -> str:
+	event = _clean_value(value) or FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT
+	if event not in FRAPPE_WRITE_HOOK_EVENTS:
+		frappe.throw(f"Frappe write hook event must be one of: {', '.join(FRAPPE_WRITE_HOOK_EVENTS)}.")
+	return event
+
+
+def _normalize_frappe_write_hook_type(value) -> str:
+	hook_type = _clean_value(value) or FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION
+	if hook_type not in FRAPPE_WRITE_HOOK_TYPES:
+		frappe.throw(f"Frappe write hook type must be one of: {', '.join(FRAPPE_WRITE_HOOK_TYPES)}.")
+	return hook_type
+
+
+def _normalize_frappe_write_hook_row(row, *, strict: bool) -> dict | None:
+	enabled = _row_flag(row, "enabled")
+	event = _normalize_frappe_write_hook_event(_get_row_value(row, "event"))
+	hook_type = _normalize_frappe_write_hook_type(_get_row_value(row, "hook_type"))
+	description = _clean_value(_get_raw_row_value(row, "description"))
+	entry: dict = {
+		"enabled": int(enabled),
+		"event": event,
+		"hook_type": hook_type,
+	}
+	if description:
+		entry["description"] = description
+	if hook_type == FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION:
+		action = _normalize_frappe_write_action(_get_row_value(row, "action"))
+		if action == FRAPPE_WRITE_ACTION_NONE and strict:
+			frappe.throw("Built-in Action hooks require an action.")
+		entry["action"] = "" if action == FRAPPE_WRITE_ACTION_NONE else action
+	else:
+		script = _clean_value(_get_raw_row_value(row, "script"))
+		if not script and strict:
+			frappe.throw("Custom Script hooks require a script.")
+		entry["script"] = script
+	return entry
+
+
+def _server_script_enabled() -> bool:
+	get_common_site_config = getattr(frappe, "get_common_site_config", None)
+	if callable(get_common_site_config):
+		try:
+			return _truthy(get_common_site_config(cached=True).get("server_script_enabled"))
+		except Exception:
+			return False
+	return _truthy(getattr(getattr(frappe, "conf", None), "server_script_enabled", None))
+
+
+def _current_user_is_system_manager() -> bool:
+	has_role = getattr(frappe, "has_role", None)
+	if callable(has_role):
+		try:
+			return bool(has_role("System Manager"))
+		except TypeError:
+			return bool(has_role(getattr(getattr(frappe, "session", None), "user", None), "System Manager"))
+		except Exception:
+			return False
+	get_roles = getattr(frappe, "get_roles", None)
+	if callable(get_roles):
+		try:
+			return "System Manager" in set(get_roles())
+		except Exception:
+			return False
+	return False
 
 
 def _partner_timestamps_required(doc) -> bool:

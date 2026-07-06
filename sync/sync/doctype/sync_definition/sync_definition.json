@@ -37,8 +37,7 @@
   "create_new",
   "update_existing",
   "delete_missing",
-  "frappe_after_insert_action",
-  "frappe_after_update_action",
+  "frappe_write_hooks",
   "column_write_behavior",
   "one_way_match_mode",
   "section_execution",
@@ -179,22 +178,12 @@
    "description": "Deletes target records that are missing from a complete source load."
   },
   {
-   "default": "None",
    "depends_on": "eval:doc.sync_type != 'Frappe -> Partner'",
-   "description": "Optional action after a Frappe document is inserted by sync.",
-   "fieldname": "frappe_after_insert_action",
-   "fieldtype": "Select",
-   "label": "Frappe After Insert Action",
-   "options": "None\nSubmit"
-  },
-  {
-   "default": "None",
-   "depends_on": "eval:doc.sync_type != 'Frappe -> Partner'",
-   "description": "Optional action after a Frappe document is updated by sync.",
-   "fieldname": "frappe_after_update_action",
-   "fieldtype": "Select",
-   "label": "Frappe After Update Action",
-   "options": "None\nSubmit"
+   "description": "Ordered hooks executed after partner-to-Frappe matches, inserts, and updates.",
+   "fieldname": "frappe_write_hooks",
+   "fieldtype": "Table",
+   "label": "Frappe Write Hooks",
+   "options": "Sync Frappe Write Hook"
   },
   {
    "default": "first_match",

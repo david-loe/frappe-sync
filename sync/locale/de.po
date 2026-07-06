@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sync VERSION\n"
 "Report-Msgid-Bugs-To: kontak@david-loe.de\n"
-"POT-Creation-Date: 2026-07-06 07:30+0000\n"
+"POT-Creation-Date: 2026-07-06 14:08+0000\n"
 "PO-Revision-Date: 2026-05-21 07:35+0000\n"
 "Last-Translator: kontak@david-loe.de\n"
 "Language: de\n"
@@ -48,9 +48,11 @@ msgstr "Frappe-Änderungen übernehmen"
 msgid "Accept Partner Changes"
 msgstr "Partner-Änderungen übernehmen"
 
+#. Label of the action (Select) field in DocType 'Sync Frappe Write Hook'
 #. Label of the action (Select) field in DocType 'Sync Run Item'
 #: sync/public/js/sync_helpers.js:1145 sync/public/js/sync_run.js:240
 #: sync/public/js/sync_run.js:414
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
 #: sync/sync/doctype/sync_run_item/sync_run_item.json
 msgid "Action"
 msgstr "Aktion"
@@ -77,6 +79,21 @@ msgstr "YAML anpassen"
 msgid "Advanced Identity"
 msgstr "Erweiterte Identität"
 
+#. Option for the 'Event' (Select) field in DocType 'Sync Frappe Write Hook'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
+msgid "After Insert"
+msgstr "Nach Einfügen"
+
+#. Option for the 'Event' (Select) field in DocType 'Sync Frappe Write Hook'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
+msgid "After Match"
+msgstr "Nach Abgleich"
+
+#. Option for the 'Event' (Select) field in DocType 'Sync Frappe Write Hook'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
+msgid "After Update"
+msgstr "Nach Aktualisierung"
+
 #. Label of the section_break_auth (Section Break) field in DocType 'Sync
 #. Partner'
 #: sync/sync/doctype/sync_partner/sync_partner.json
@@ -100,6 +117,12 @@ msgstr "Basierend auf den letzten {0} geladenen Lauf-Elementen."
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Batch Size"
 msgstr "Batchgröße"
+
+#. Option for the 'Hook Type' (Select) field in DocType 'Sync Frappe Write
+#. Hook'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
+msgid "Built-in Action"
+msgstr "Eingebaute Aktion"
 
 #. Label of the capture_audit_payloads (Check) field in DocType 'Sync
 #. Definition'
@@ -297,6 +320,12 @@ msgstr "Aktuell in Frappe"
 msgid "Current Partner"
 msgstr "Aktuell beim Partner"
 
+#. Option for the 'Hook Type' (Select) field in DocType 'Sync Frappe Write
+#. Hook'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
+msgid "Custom Script"
+msgstr "Benutzerdefiniertes Skript"
+
 #. Label of the db_api_module (Data) field in DocType 'Sync Partner Type'
 #: sync/sync/doctype/sync_partner_type/sync_partner_type.json
 msgid "DB API Module"
@@ -360,7 +389,10 @@ msgstr "Anzahl gelöscht"
 msgid "Deletes target records that are missing from a complete source load."
 msgstr "Löscht Zieldatensätze, die in einem vollständig geladenen Quelldatenbestand fehlen."
 
+#. Label of the description (Small Text) field in DocType 'Sync Frappe Write
+#. Hook'
 #. Label of the description (Small Text) field in DocType 'Sync Partner Type'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
 #: sync/sync/doctype/sync_partner_type/sync_partner_type.json
 msgid "Description"
 msgstr "Beschreibung"
@@ -424,8 +456,10 @@ msgid "Enable only for trusted internal certificates or self-signed SQL Server e
 msgstr "Nur für vertrauenswürdige interne Zertifikate oder selbstsignierte SQL-Server-Endpunkte aktivieren."
 
 #. Label of the enabled (Check) field in DocType 'Sync Definition'
+#. Label of the enabled (Check) field in DocType 'Sync Frappe Write Hook'
 #. Label of the enabled (Check) field in DocType 'Sync Partner'
 #: sync/sync/doctype/sync_definition/sync_definition.json
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
 #: sync/sync/doctype/sync_partner/sync_partner.json
 msgid "Enabled"
 msgstr "Aktiviert"
@@ -464,6 +498,11 @@ msgstr "Sync Runs mit Fehler, Prüfbedarf, Teilfehler oder Übersprungen werden 
 #: sync/public/js/sync_run_item_list.js:5 sync/public/js/sync_run_list.js:14
 msgid "Errors"
 msgstr "Fehler"
+
+#. Label of the event (Select) field in DocType 'Sync Frappe Write Hook'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
+msgid "Event"
+msgstr "Ereignis"
 
 #. Label of the section_execution (Section Break) field in DocType 'Sync
 #. Definition'
@@ -606,18 +645,6 @@ msgstr "Frappe <- Partner"
 msgid "Frappe <-> Partner"
 msgstr "Frappe <-> Partner"
 
-#. Label of the frappe_after_insert_action (Select) field in DocType 'Sync
-#. Definition'
-#: sync/sync/doctype/sync_definition/sync_definition.json
-msgid "Frappe After Insert Action"
-msgstr "Frappe-Aktion nach Einfügen"
-
-#. Label of the frappe_after_update_action (Select) field in DocType 'Sync
-#. Definition'
-#: sync/sync/doctype/sync_definition/sync_definition.json
-msgid "Frappe After Update Action"
-msgstr "Frappe-Aktion nach Aktualisierung"
-
 #. Label of the frappe_before_payload (Long Text) field in DocType 'Sync Run
 #. Item'
 #: sync/sync/doctype/sync_run_item/sync_run_item.json
@@ -678,6 +705,11 @@ msgstr "Frappe-Wert ist NULL"
 msgid "Frappe Wins"
 msgstr "Frappe gewinnt"
 
+#. Label of the frappe_write_hooks (Table) field in DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Frappe Write Hooks"
+msgstr "Frappe-Schreib-Hooks"
+
 #. Description of the 'Frappe Creation Field' (Data) field in DocType 'Sync
 #. Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
@@ -704,6 +736,11 @@ msgstr "Allgemein"
 #: sync/public/js/sync_helpers.js:1146
 msgid "Hint"
 msgstr "Hinweis"
+
+#. Label of the hook_type (Select) field in DocType 'Sync Frappe Write Hook'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
+msgid "Hook Type"
+msgstr "Hook-Typ"
 
 #. Label of the host (Data) field in DocType 'Sync Partner'
 #: sync/public/js/sync_partner.js:59
@@ -1089,15 +1126,11 @@ msgstr "Keine Warnungen gemeldet."
 msgid "No write"
 msgstr "Kein Schreibvorgang"
 
-#. Option for the 'Frappe After Insert Action' (Select) field in DocType 'Sync
-#. Definition'
-#. Option for the 'Frappe After Update Action' (Select) field in DocType 'Sync
 #. Option for the 'Authentication Type' (Select) field in DocType 'Sync
 #. Partner'
 #: sync/public/js/sync_helpers.js:418 sync/public/js/sync_helpers.js:680
 #: sync/public/js/sync_helpers.js:894 sync/public/js/sync_helpers.js:1131
 #: sync/public/js/sync_run_item.js:258
-#: sync/sync/doctype/sync_definition/sync_definition.json
 #: sync/sync/doctype/sync_partner/sync_partner.json
 msgid "None"
 msgstr "Keine"
@@ -1204,18 +1237,6 @@ msgstr "Optionale SQL-Server-/ODBC-Verbindungsoptionen, eine pro Zeile oder als 
 msgid "Optional SQL predicate that limits ID allocation, for example NR BETWEEN 1 AND 89999."
 msgstr "Optionales SQL-Prädikat, das die ID-Zuweisung begrenzt, z. B. NR BETWEEN 1 AND 89999."
 
-#. Description of the 'Frappe After Insert Action' (Select) field in DocType
-#. 'Sync Definition'
-#: sync/sync/doctype/sync_definition/sync_definition.json
-msgid "Optional action after a Frappe document is inserted by sync."
-msgstr "Optionale Aktion, nachdem Sync ein Frappe-Dokument eingefügt hat."
-
-#. Description of the 'Frappe After Update Action' (Select) field in DocType
-#. 'Sync Definition'
-#: sync/sync/doctype/sync_definition/sync_definition.json
-msgid "Optional action after a Frappe document is updated by sync."
-msgstr "Optionale Aktion, nachdem Sync ein Frappe-Dokument aktualisiert hat."
-
 #: sync/public/js/sync_partner.js:95
 msgid "Optional connector-specific options, one per line or JSON."
 msgstr "Optionale connector-spezifische Optionen, eine pro Zeile oder als JSON."
@@ -1243,6 +1264,12 @@ msgstr "Optionale partnerseitige Spalte, die den Namen des Frappe-Dokuments für
 #: sync/public/js/sync_helpers.js:232
 msgid "Optional query used to load partner rows. Leave blank to read from Table Name."
 msgstr "Optionale Abfrage zum Laden von Partnerzeilen. Leer lassen, um aus Table Name zu lesen."
+
+#. Description of the 'Frappe Write Hooks' (Table) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Ordered hooks executed after partner-to-Frappe matches, inserts, and updates."
+msgstr "Geordnete Hooks, die nach Partner-zu-Frappe-Abgleichen, Einfügungen und Aktualisierungen ausgeführt werden."
 
 #: sync/public/js/sync_helpers.js:1253
 msgid "Overwrite existing"
@@ -1724,6 +1751,11 @@ msgstr "Speichern Sie diese Sync Definition, bevor Sie veraltete Runs wiederhers
 msgid "Schedule & Sync State"
 msgstr "Zeitplan & Sync-Status"
 
+#. Label of the script (Code) field in DocType 'Sync Frappe Write Hook'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
+msgid "Script"
+msgstr "Skript"
+
 #. Label of the secret_fields (Small Text) field in DocType 'Sync Partner'
 #. Label of the secret_fields (Small Text) field in DocType 'Sync Partner Type'
 #: sync/sync/doctype/sync_partner/sync_partner.json
@@ -1875,10 +1907,8 @@ msgstr "Wird noch ausgeführt"
 msgid "Strategy-specific source value, for example a database sequence name."
 msgstr "Strategiespezifischer Quellwert, z. B. der Name einer Datenbanksequenz."
 
-#. Option for the 'Frappe After Insert Action' (Select) field in DocType 'Sync
-#. Definition'
-#. Option for the 'Frappe After Update Action' (Select) field in DocType 'Sync
-#: sync/sync/doctype/sync_definition/sync_definition.json
+#. Option for the 'Action' (Select) field in DocType 'Sync Frappe Write Hook'
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
 msgid "Submit"
 msgstr "Einreichen"
 
@@ -1945,6 +1975,11 @@ msgstr "Das Feld-Mapping der Sync-Definition konnte nicht geladen werden."
 #: sync/sync/doctype/sync_field_mapping/sync_field_mapping.json
 msgid "Sync Field Mapping"
 msgstr "Sync-Feldzuordnung"
+
+#. Name of a DocType
+#: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
+msgid "Sync Frappe Write Hook"
+msgstr "Sync Frappe-Schreib-Hook"
 
 #. Name of a DocType
 #: sync/sync/doctype/sync_key_field/sync_key_field.json

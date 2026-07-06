@@ -147,7 +147,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			}
 		)
 
-		with patch("sync.sync.service.runtime.frappe.get_meta", return_value=SimpleNamespace(fields=[])):
+		with patch("sync.sync.service.runtime.frappe.get_meta", return_value=SimpleNamespace(fields=[], is_submittable=True)):
 			config = runtime._build_definition_config(doc)
 
 		self.assertEqual(config.match_fields, ["name"])
@@ -166,8 +166,10 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(config.table_name, "tabTask")
 		self.assertFalse(config.render_read_query_template)
 		self.assertFalse(config.update_existing)
-		self.assertEqual(config.frappe_after_insert_action, "Submit")
-		self.assertEqual(config.frappe_after_update_action, "None")
+		self.assertEqual(len(config.frappe_write_hooks), 1)
+		self.assertEqual(config.frappe_write_hooks[0].event, "After Insert")
+		self.assertEqual(config.frappe_write_hooks[0].hook_type, "Built-in Action")
+		self.assertEqual(config.frappe_write_hooks[0].action, "Submit")
 
 	def test_build_definition_config_includes_read_query_template_flag(self):
 		doc = FakeDoc(
@@ -1120,6 +1122,44 @@ class TestRuntimeHelpers(unittest.TestCase):
 		db.rollback.assert_not_called()
 		db.release_savepoint.assert_called_once_with("sync_frappe_write_abc123")
 
+	def test_upsert_frappe_record_runs_builtin_submit_hook(self):
+		doc = MutableDoc(name="TASK-NEW")
+		db = _db_stub(set_value=Mock())
+		db.savepoint = Mock()
+		db.rollback = Mock()
+		db.release_savepoint = Mock()
+		hooks = (
+			runtime.SyncFrappeWriteHookConfig(
+				enabled=True,
+				event="After Insert",
+				hook_type="Built-in Action",
+				action="Submit",
+			),
+		)
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				_runtime_frappe_stub(
+					new_doc=Mock(return_value=doc),
+					db=db,
+					generate_hash=Mock(return_value="abc123"),
+				),
+			),
+			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
+		):
+			name = runtime._upsert_frappe_record(
+				doctype="Task",
+				existing_name=None,
+				payload={"subject": "Created"},
+				dry_run=False,
+				write_hooks=hooks,
+			)
+
+		self.assertEqual(name, "TASK-NEW")
+		self.assertTrue(doc.submitted)
+		db.savepoint.assert_called_once_with("sync_frappe_write_abc123")
+
 	def test_upsert_frappe_record_submits_after_existing_save(self):
 		doc = MutableDoc(name="TASK-1")
 
@@ -1231,6 +1271,29 @@ class TestRuntimeHelpers(unittest.TestCase):
 		mock_get_doc.assert_not_called()
 		mock_new_doc.assert_not_called()
 		mock_set_value.assert_not_called()
+
+	def test_execute_custom_script_hook_uses_result_changed_and_message(self):
+		doc = MutableDoc(name="TASK-1")
+		hook = runtime.SyncFrappeWriteHookConfig(
+			enabled=True,
+			event="After Match",
+			hook_type="Custom Script",
+			script="result = {'changed': True}",
+		)
+
+		with patch(
+			"frappe.utils.safe_exec.safe_exec",
+			return_value=({}, {"result": {"changed": True, "message": "handled"}}),
+		):
+			result = runtime._execute_frappe_write_script_hook(
+				event="After Match",
+				hook=hook,
+				doc=doc,
+				context={"doctype": "Task", "docname": "TASK-1", "dry_run": False},
+			)
+
+		self.assertTrue(result.changed)
+		self.assertEqual(result.messages, ("handled",))
 
 	def test_update_existing_disabled_skips_partner_and_frappe_update_helpers(self):
 		config = SimpleNamespace(update_existing=0)
@@ -1738,6 +1801,43 @@ class TestRuntimeHelpers(unittest.TestCase):
 		mock_delete.assert_called_once_with("Task", "TASK-2", ignore_permissions=True, force=True)
 		self.assertEqual([entry["action"] for entry in logged], ["updated", "deleted"])
 
+	def test_sync_partner_to_frappe_after_match_changed_logs_success_without_field_changes(self):
+		config = SimpleNamespace(
+			name="SYNC-P2F-MATCH",
+			doctype="Task",
+			match_fields=["name"],
+			mapping={"name": "id", "status": "state"},
+			value_mapping={},
+			create_new=True,
+			delete_missing=False,
+		)
+		logged = []
+
+		with (
+			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
+			patch(
+				"sync.sync.service.runtime._run_after_match_frappe_write_hooks",
+				return_value=runtime.FrappeWriteHookResult(changed=True, messages=("Reverse Journal Entry erstellt",)),
+			),
+			patch("sync.sync.service.runtime._upsert_frappe_record") as mock_upsert,
+		):
+			runtime._sync_partner_to_frappe(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=object(),
+				partner_records=[{"id": "TASK-1", "state": "Open"}],
+				frappe_records=[{"name": "TASK-1", "status": "Open"}],
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				label_direction="Frappe <- Partner",
+				full_sync=False,
+			)
+
+		mock_upsert.assert_not_called()
+		self.assertEqual(logged[0]["action"], "updated")
+		self.assertEqual(logged[0]["status"], "success")
+		self.assertIn("Reverse Journal Entry erstellt", logged[0]["message"])
+
 	def test_sync_partner_to_frappe_creates_new_document_when_no_match_exists(self):
 		config = SimpleNamespace(
 			name="SYNC-P2F-CREATE",
@@ -1775,6 +1875,45 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual([entry["action"] for entry in logged], ["created"])
 		self.assertEqual(logged[0]["frappe_record"], {"name": "TASK-NEW", "status": "Open"})
 		self.assertEqual(logged[0]["partner_record"], {"id": "TASK-NEW", "state": "Open"})
+
+	def test_sync_partner_to_frappe_dry_run_logs_planned_hooks(self):
+		config = SimpleNamespace(
+			name="SYNC-P2F-DRY",
+			doctype="Task",
+			match_fields=["name"],
+			mapping={"name": "id", "status": "state"},
+			value_mapping={},
+			create_new=True,
+			delete_missing=False,
+			frappe_write_hooks=(
+				runtime.SyncFrappeWriteHookConfig(
+					enabled=True,
+					event="After Insert",
+					hook_type="Built-in Action",
+					action="Submit",
+				),
+			),
+		)
+		logged = []
+
+		with (
+			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
+			patch("sync.sync.service.runtime._apply_frappe_write_action") as mock_submit,
+		):
+			runtime._sync_partner_to_frappe(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=config,
+				connector=object(),
+				partner_records=[{"id": "TASK-NEW", "state": "Open"}],
+				frappe_records=[],
+				dry_run=True,
+				stats=runtime.SyncStats(),
+				label_direction="Frappe <- Partner",
+				full_sync=False,
+			)
+
+		mock_submit.assert_not_called()
+		self.assertIn("Dry run: Frappe write hooks would run: After Insert: Submit", logged[0]["message"])
 
 	def test_run_engine_partner_delta_uses_unchanged_frappe_target_lookup(self):
 		config = SimpleNamespace(

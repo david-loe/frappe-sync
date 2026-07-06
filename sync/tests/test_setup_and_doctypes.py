@@ -45,6 +45,7 @@ class FakeSyncDefinitionDoc:
 		self.update_existing = values.get("update_existing", 1)
 		self.frappe_after_insert_action = values.get("frappe_after_insert_action", "None")
 		self.frappe_after_update_action = values.get("frappe_after_update_action", "None")
+		self.frappe_write_hooks = values.get("frappe_write_hooks", [])
 		self.one_way_match_mode = values.get("one_way_match_mode", "first_match")
 		self.conflict_policy = values.get("conflict_policy", "newest_wins")
 		self.export_mask_credentials = values.get("export_mask_credentials", 1)
@@ -369,17 +370,28 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 	def test_validate_write_behavior_normalizes_actions_and_requires_submittable_doctype(self):
 		doc = FakeSyncDefinitionDoc(
 			update_existing=0,
-			frappe_after_insert_action="Submit",
-			frappe_after_update_action="",
+			frappe_write_hooks=[
+				SimpleNamespace(
+					enabled=1,
+					event="After Insert",
+					hook_type="Built-in Action",
+					action="Submit",
+					script="ignored",
+				)
+			],
 		)
 		with patch.object(sync_definition_module.frappe, "get_meta", return_value=SimpleNamespace(is_submittable=True)):
 			sync_definition_module.SyncDefinition.validate_write_behavior(doc)
 
 		self.assertEqual(doc.update_existing, 0)
-		self.assertEqual(doc.frappe_after_insert_action, "Submit")
-		self.assertEqual(doc.frappe_after_update_action, "None")
+		self.assertEqual(doc.frappe_write_hooks[0].action, "Submit")
+		self.assertIsNone(doc.frappe_write_hooks[0].script)
 
-		non_submittable = FakeSyncDefinitionDoc(frappe_after_insert_action="Submit")
+		non_submittable = FakeSyncDefinitionDoc(
+			frappe_write_hooks=[
+				SimpleNamespace(enabled=1, event="After Insert", hook_type="Built-in Action", action="Submit")
+			]
+		)
 		with (
 			patch.object(sync_definition_module.frappe, "get_meta", return_value=SimpleNamespace(is_submittable=False)),
 			patch.object(
@@ -627,8 +639,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		self.assertEqual(exported["value_mapping"]["status"], {'{"a": 1}': '["x"]'})
 		self.assertEqual(exported["timestamp_buffer_ms"], 100)
 		self.assertEqual(exported["update_existing"], 1)
-		self.assertEqual(exported["frappe_after_insert_action"], "None")
-		self.assertEqual(exported["frappe_after_update_action"], "None")
+		self.assertEqual(exported["frappe_write_hooks"], [])
+		self.assertNotIn("frappe_after_insert_action", exported)
+		self.assertNotIn("frappe_after_update_action", exported)
 		self.assertEqual(
 			exported["value_mapping_fallbacks"]["name"],
 			{"action": "fallback", "value": "UNKNOWN"},

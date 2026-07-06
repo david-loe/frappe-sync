@@ -598,7 +598,7 @@ class RelationalConnector(BasePartnerConnector):
 	def _source_tables_sql(self) -> str:
 		if self.dialect == "mssql":
 			return (
-				"SELECT s.name AS schema, t.name AS name "
+				"SELECT s.name AS table_schema, t.name AS name "
 				"FROM sys.tables t INNER JOIN sys.schemas s ON t.schema_id = s.schema_id "
 				"ORDER BY s.name, t.name"
 			)

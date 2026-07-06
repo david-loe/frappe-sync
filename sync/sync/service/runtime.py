@@ -20,6 +20,13 @@ from sync.sync.constants import (
 	FRAPPE_WRITE_ACTION_NONE,
 	FRAPPE_WRITE_ACTION_SUBMIT,
 	FRAPPE_WRITE_ACTIONS,
+	FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT,
+	FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH,
+	FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE,
+	FRAPPE_WRITE_HOOK_EVENTS,
+	FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION,
+	FRAPPE_WRITE_HOOK_TYPE_CUSTOM_SCRIPT,
+	FRAPPE_WRITE_HOOK_TYPES,
 	MAPPING_DIRECTION_BOTH,
 	MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
 	MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
@@ -36,6 +43,7 @@ from sync.sync.constants import (
 	RUN_STATUS_SKIPPED,
 	RUN_STATUS_SUCCESS,
 	SYNC_DEFINITION,
+	SYNC_FRAPPE_WRITE_HOOK,
 	SYNC_PARTNER,
 	SYNC_PARTNER_TYPE,
 	SYNC_RUN,
@@ -85,6 +93,8 @@ SYSTEM_KEYS = {
 	"_liked_by",
 }
 SYNC_DEFINITION_RUNTIME_STATE_FIELDS = {
+	"frappe_after_insert_action",
+	"frappe_after_update_action",
 	"last_run",
 	"last_run_status",
 	"last_run_summary",
@@ -107,6 +117,23 @@ AUDIT_RECORD_UNSET = object()
 VALUE_MAPPING_UNSET = object()
 DEFAULT_TIMESTAMP_BUFFER_MS = 100
 CHILD_FIELD_PATH_SEPARATOR = "."
+
+
+@dataclass(slots=True)
+class SyncFrappeWriteHookConfig:
+	enabled: bool
+	event: str
+	hook_type: str
+	action: str | None = None
+	script: str | None = None
+	description: str | None = None
+	idx: int = 0
+
+
+@dataclass(slots=True)
+class FrappeWriteHookResult:
+	changed: bool = False
+	messages: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -145,8 +172,7 @@ class SyncDefinitionConfig:
 	one_way_match_mode: str = ONE_WAY_MATCH_FIRST
 	capture_audit_payloads: bool = False
 	update_existing: bool = True
-	frappe_after_insert_action: str = FRAPPE_WRITE_ACTION_NONE
-	frappe_after_update_action: str = FRAPPE_WRITE_ACTION_NONE
+	frappe_write_hooks: tuple[SyncFrappeWriteHookConfig, ...] = ()
 	render_read_query_template: bool = False
 
 @dataclass(slots=True)
@@ -1108,11 +1134,10 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 				value_mapping_fallbacks=_normalize_value_mapping_fallbacks(config.value_mapping_fallbacks),
 				update_existing=_as_bool(getattr(config, "update_existing", 1)),
 				render_read_query_template=_as_bool(getattr(config, "render_read_query_template", 0)),
-				frappe_after_insert_action=_normalize_frappe_write_action(
-					getattr(config, "frappe_after_insert_action", None)
-				),
-				frappe_after_update_action=_normalize_frappe_write_action(
-					getattr(config, "frappe_after_update_action", None)
+				frappe_write_hooks=_normalize_frappe_write_hooks(
+					getattr(config, "frappe_write_hooks", None),
+					legacy_after_insert_action=getattr(config, "frappe_after_insert_action", None),
+					legacy_after_update_action=getattr(config, "frappe_after_update_action", None),
 				),
 			)
 			_validate_runtime_mapping(normalized_config)
@@ -1163,11 +1188,10 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		capture_audit_payloads=_as_bool(getattr(config, "capture_audit_payloads", 0)),
 		update_existing=_as_bool(getattr(config, "update_existing", 1)),
 		render_read_query_template=_as_bool(getattr(config, "render_read_query_template", 0)),
-		frappe_after_insert_action=_normalize_frappe_write_action(
-			getattr(config, "frappe_after_insert_action", None)
-		),
-		frappe_after_update_action=_normalize_frappe_write_action(
-			getattr(config, "frappe_after_update_action", None)
+		frappe_write_hooks=_normalize_frappe_write_hooks(
+			getattr(config, "frappe_write_hooks", None),
+			legacy_after_insert_action=getattr(config, "frappe_after_insert_action", None),
+			legacy_after_update_action=getattr(config, "frappe_after_update_action", None),
 		),
 	)
 	_validate_runtime_mapping(normalized)
@@ -1673,7 +1697,16 @@ def _sync_partner_to_frappe(
 					existing_name=None,
 					payload=write_payload,
 					dry_run=dry_run,
-					**_frappe_write_action_kwargs(config),
+					**_frappe_write_hook_kwargs(
+						config=config,
+						run_doc=run_doc,
+						event=FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT,
+						partner_record=partner_record,
+						frappe_payload=write_payload,
+						frappe_before_record=None,
+						changes=[],
+						dry_run=dry_run,
+					),
 				)
 				if doc_name:
 					write_payload["name"] = doc_name
@@ -1698,7 +1731,12 @@ def _sync_partner_to_frappe(
 				config=config,
 				action="created",
 				status="success",
-				message="Dry run upsert." if dry_run else "Upserted frappe record.",
+				message=_append_hook_message(
+					"Dry run upsert." if dry_run else "Upserted frappe record.",
+					planned=_planned_frappe_write_hook_message(config, FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT)
+					if dry_run
+					else None,
+				),
 				direction=label_direction,
 				frappe_record=write_payload,
 				partner_record=partner_record,
@@ -1710,6 +1748,30 @@ def _sync_partner_to_frappe(
 			continue
 
 		for matched_frappe in existing_frappe_records:
+			try:
+				after_match_result = _run_after_match_frappe_write_hooks(
+					config=config,
+					run_doc=run_doc,
+					partner_record=partner_record,
+					frappe_record=matched_frappe,
+					frappe_payload=frappe_payload,
+					changes=None,
+					dry_run=dry_run,
+				)
+			except Exception as exc:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="error",
+					status="error",
+					message=str(exc),
+					direction=label_direction,
+					frappe_record=matched_frappe,
+					partner_record=partner_record,
+					commit=False,
+				)
+				continue
 			changes = _diff_target_values(
 				new_record=frappe_payload,
 				old_record=matched_frappe or {},
@@ -1722,13 +1784,33 @@ def _sync_partner_to_frappe(
 				target_time_zone=mapping_context.site_time_zone,
 			)
 			if not changes:
+				if after_match_result.changed:
+					_register_and_log(
+						stats=stats,
+						run_doc=run_doc,
+						config=config,
+						action="updated",
+						status="success",
+						message=_append_hook_message("After Match hook changed matched frappe record.", after_match_result),
+						direction=label_direction,
+						frappe_record=matched_frappe,
+						partner_record=partner_record,
+						commit=False,
+					)
+					continue
 				_register_and_log(
 					stats=stats,
 					run_doc=run_doc,
 					config=config,
 					action="skipped",
 					status="skipped",
-					message="No changes detected.",
+					message=_append_hook_message(
+						"No changes detected.",
+						after_match_result if not dry_run else None,
+						planned=_planned_frappe_write_hook_message(config, FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH)
+						if dry_run
+						else None,
+					),
 					direction=label_direction,
 					frappe_record=matched_frappe,
 					partner_record=partner_record,
@@ -1763,7 +1845,16 @@ def _sync_partner_to_frappe(
 					existing_name=matched_frappe.get("name"),
 					payload=target_payload,
 					dry_run=dry_run,
-					**_frappe_write_action_kwargs(config),
+					**_frappe_write_hook_kwargs(
+						config=config,
+						run_doc=run_doc,
+						event=FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE,
+						partner_record=partner_record,
+						frappe_payload=target_payload,
+						frappe_before_record=matched_frappe,
+						changes=changes,
+						dry_run=dry_run,
+					),
 				)
 				if doc_name:
 					target_payload["name"] = doc_name
@@ -1788,7 +1879,12 @@ def _sync_partner_to_frappe(
 				config=config,
 				action="updated",
 				status="success",
-				message="Dry run upsert." if dry_run else "Upserted frappe record.",
+				message=_append_hook_message(
+					"Dry run upsert." if dry_run else "Upserted frappe record.",
+					planned=_planned_frappe_write_hook_message(config, FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE)
+					if dry_run
+					else None,
+				),
 				direction=label_direction,
 				frappe_record=target_payload,
 				partner_record=partner_record,
@@ -1986,6 +2082,31 @@ def _sync_bidirectional(
 		if not frappe_record or not partner_record:
 			continue
 
+		try:
+			after_match_result = _run_after_match_frappe_write_hooks(
+				config=config,
+				run_doc=run_doc,
+				partner_record=partner_record,
+				frappe_record=frappe_record,
+				frappe_payload=None,
+				changes=None,
+				dry_run=dry_run,
+			)
+		except Exception as exc:
+			_register_and_log(
+				stats=stats,
+				run_doc=run_doc,
+				config=config,
+				action="error",
+				status="error",
+				message=str(exc),
+				direction="Frappe <-> Partner",
+				frappe_record=frappe_record,
+				partner_record=partner_record,
+				commit=False,
+			)
+			continue
+
 		frappe_payload = _map_partner_to_frappe(
 			partner_record,
 			config.mapping,
@@ -2029,13 +2150,33 @@ def _sync_bidirectional(
 			target_time_zone=mapping_context.site_time_zone,
 		)
 		if not to_partner_changes and not to_frappe_changes:
+			if after_match_result.changed:
+				_register_and_log(
+					stats=stats,
+					run_doc=run_doc,
+					config=config,
+					action="updated",
+					status="success",
+					message=_append_hook_message("After Match hook changed matched frappe record.", after_match_result),
+					direction="Frappe <-> Partner",
+					frappe_record=frappe_record,
+					partner_record=partner_record,
+					commit=False,
+				)
+				continue
 			_register_and_log(
 				stats=stats,
 				run_doc=run_doc,
 				config=config,
 				action="skipped",
 				status="skipped",
-				message="No differences between both sides.",
+				message=_append_hook_message(
+					"No differences between both sides.",
+					after_match_result if not dry_run else None,
+					planned=_planned_frappe_write_hook_message(config, FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH)
+					if dry_run
+					else None,
+				),
 				direction="Frappe <-> Partner",
 				frappe_record=frappe_record,
 				partner_record=partner_record,
@@ -2599,6 +2740,30 @@ def _sync_bidirectional_identity_pair(
 	partner_record: dict[str, Any],
 	mapping_context: RuntimeMappingContext,
 ) -> None:
+	try:
+		after_match_result = _run_after_match_frappe_write_hooks(
+			config=config,
+			run_doc=run_doc,
+			partner_record=partner_record,
+			frappe_record=frappe_record,
+			frappe_payload=None,
+			changes=None,
+			dry_run=dry_run,
+		)
+	except Exception as exc:
+		_register_and_log(
+			stats=stats,
+			run_doc=run_doc,
+			config=config,
+			action="error",
+			status="error",
+			message=str(exc),
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			commit=False,
+		)
+		return
 	frappe_payload = _map_partner_to_frappe(
 		partner_record,
 		config.mapping,
@@ -2640,13 +2805,33 @@ def _sync_bidirectional_identity_pair(
 		target_time_zone=mapping_context.site_time_zone,
 	)
 	if not to_partner_changes and not to_frappe_changes:
+		if after_match_result.changed:
+			_register_and_log(
+				stats=stats,
+				run_doc=run_doc,
+				config=config,
+				action="updated",
+				status="success",
+				message=_append_hook_message("After Match hook changed matched frappe record.", after_match_result),
+				direction=SYNC_TYPE_BIDIRECTIONAL,
+				frappe_record=frappe_record,
+				partner_record=partner_record,
+				commit=False,
+			)
+			return
 		_register_and_log(
 			stats=stats,
 			run_doc=run_doc,
 			config=config,
 			action="skipped",
 			status="skipped",
-			message="No differences between both sides.",
+			message=_append_hook_message(
+				"No differences between both sides.",
+				after_match_result if not dry_run else None,
+				planned=_planned_frappe_write_hook_message(config, FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH)
+				if dry_run
+				else None,
+			),
 			direction=SYNC_TYPE_BIDIRECTIONAL,
 			frappe_record=frappe_record,
 			partner_record=partner_record,
@@ -2933,7 +3118,16 @@ def _create_identity_frappe_from_partner(
 			existing_name=None,
 			payload=frappe_payload,
 			dry_run=dry_run,
-			**_frappe_write_action_kwargs(config),
+			**_frappe_write_hook_kwargs(
+				config=config,
+				run_doc=run_doc,
+				event=FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT,
+				partner_record=partner_record,
+				frappe_payload=frappe_payload,
+				frappe_before_record=None,
+				changes=[],
+				dry_run=dry_run,
+			),
 		)
 		if doc_name:
 			frappe_payload["name"] = doc_name
@@ -2943,7 +3137,12 @@ def _create_identity_frappe_from_partner(
 			config=config,
 			action="created",
 			status="success",
-			message="Dry run create." if dry_run else "Created frappe record.",
+			message=_append_hook_message(
+				"Dry run create." if dry_run else "Created frappe record.",
+				planned=_planned_frappe_write_hook_message(config, FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT)
+				if dry_run
+				else None,
+			),
 			direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
 			frappe_record=frappe_payload,
 			partner_record=partner_record,
@@ -3318,7 +3517,16 @@ def _apply_frappe_update(
 			existing_name=(frappe_record or {}).get("name"),
 			payload=frappe_payload,
 			dry_run=dry_run,
-			**_frappe_write_action_kwargs(config),
+			**_frappe_write_hook_kwargs(
+				config=config,
+				run_doc=run_doc,
+				event=FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE,
+				partner_record=partner_record,
+				frappe_payload=frappe_payload,
+				frappe_before_record=frappe_record,
+				changes=changes,
+				dry_run=dry_run,
+			),
 		)
 		if doc_name:
 			frappe_payload["name"] = doc_name
@@ -3328,7 +3536,12 @@ def _apply_frappe_update(
 			config=config,
 			action=action,
 			status=status,
-			message=("Dry run update." if dry_run else message),
+			message=_append_hook_message(
+				"Dry run update." if dry_run else message,
+				planned=_planned_frappe_write_hook_message(config, FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE)
+				if dry_run
+				else None,
+			),
 			direction=direction,
 			frappe_record=frappe_payload,
 			partner_record=partner_record,
@@ -3600,6 +3813,8 @@ def _upsert_frappe_record(
 	existing_name: str | None,
 	payload: dict[str, Any],
 	dry_run: bool,
+	write_hooks: tuple[SyncFrappeWriteHookConfig, ...] | None = None,
+	hook_context: dict[str, Any] | None = None,
 	after_insert_action: str | None = None,
 	after_update_action: str | None = None,
 ) -> str | None:
@@ -3607,10 +3822,14 @@ def _upsert_frappe_record(
 		return existing_name
 	mapped_modified = payload["modified"] if "modified" in payload else AUDIT_RECORD_UNSET
 	doctype_fieldnames = _doctype_fieldnames(doctype)
-	insert_action = _normalize_frappe_write_action(after_insert_action)
-	update_action = _normalize_frappe_write_action(after_update_action)
-	write_action = update_action if existing_name else insert_action
-	with _frappe_write_savepoint(enabled=write_action != FRAPPE_WRITE_ACTION_NONE):
+	write_hooks = _normalize_frappe_write_hooks(
+		write_hooks,
+		legacy_after_insert_action=after_insert_action,
+		legacy_after_update_action=after_update_action,
+	)
+	event = FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE if existing_name else FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT
+	event_hooks = _enabled_frappe_write_hooks(write_hooks, event)
+	with _frappe_write_savepoint(enabled=bool(event_hooks)):
 		if existing_name:
 			doc = frappe.get_doc(doctype, existing_name)
 			for key, value in payload.items():
@@ -3619,7 +3838,12 @@ def _upsert_frappe_record(
 				if _doctype_payload_allows_field(doctype, key, doctype_fieldnames):
 					_set_frappe_doc_payload_value(doc, doctype, key, value, merge_child_rows=True)
 			doc.save(ignore_permissions=True)
-			_apply_frappe_write_action(doc, update_action)
+			_execute_frappe_write_hooks(
+				event=event,
+				hooks=event_hooks,
+				doc=doc,
+				context={**(hook_context or {}), "doc": doc, "docname": doc.name, "frappe_payload": payload},
+			)
 			_set_mapped_frappe_modified(doctype, doc.name, mapped_modified)
 			return doc.name
 
@@ -3630,7 +3854,12 @@ def _upsert_frappe_record(
 			if _doctype_payload_allows_field(doctype, key, doctype_fieldnames):
 				_set_frappe_doc_payload_value(doc, doctype, key, value, merge_child_rows=False)
 		doc.insert(ignore_permissions=True)
-		_apply_frappe_write_action(doc, insert_action)
+		_execute_frappe_write_hooks(
+			event=event,
+			hooks=event_hooks,
+			doc=doc,
+			context={**(hook_context or {}), "doc": doc, "docname": doc.name, "frappe_payload": payload},
+		)
 		_set_mapped_frappe_modified(doctype, doc.name, mapped_modified)
 		return doc.name
 
@@ -3683,6 +3912,264 @@ def _apply_frappe_write_action(doc: Any, action: str) -> None:
 	if not callable(submit):
 		raise frappe.ValidationError("Frappe document does not support submit.")
 	submit()
+
+
+def _enabled_frappe_write_hooks(
+	hooks: tuple[SyncFrappeWriteHookConfig, ...] | None,
+	event: str,
+) -> tuple[SyncFrappeWriteHookConfig, ...]:
+	return tuple(hook for hook in hooks or () if hook.enabled and hook.event == event)
+
+
+def _execute_frappe_write_hooks(
+	*,
+	event: str,
+	hooks: tuple[SyncFrappeWriteHookConfig, ...],
+	doc: Any,
+	context: dict[str, Any],
+) -> FrappeWriteHookResult:
+	changed = False
+	messages: list[str] = []
+	for hook in hooks:
+		if hook.hook_type == FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION:
+			_apply_frappe_write_action(doc, hook.action or FRAPPE_WRITE_ACTION_NONE)
+			messages.append(_frappe_write_hook_label(hook))
+			continue
+		if hook.hook_type == FRAPPE_WRITE_HOOK_TYPE_CUSTOM_SCRIPT:
+			result = _execute_frappe_write_script_hook(event=event, hook=hook, doc=doc, context=context)
+			changed = changed or result.changed
+			messages.extend(result.messages)
+	return FrappeWriteHookResult(changed=changed, messages=tuple(messages))
+
+
+def _execute_frappe_write_script_hook(
+	*,
+	event: str,
+	hook: SyncFrappeWriteHookConfig,
+	doc: Any,
+	context: dict[str, Any],
+) -> FrappeWriteHookResult:
+	from frappe.utils.safe_exec import safe_exec
+
+	helper_messages: list[str] = []
+	helpers = _FrappeWriteHookHelpers(helper_messages)
+	script_context = {
+		"event": event,
+		"sync_definition": context.get("sync_definition"),
+		"sync_run": context.get("sync_run"),
+		"doctype": context.get("doctype") or getattr(doc, "doctype", None),
+		"docname": context.get("docname") or getattr(doc, "name", None),
+		"doc": doc,
+		"partner_record": context.get("partner_record"),
+		"frappe_payload": context.get("frappe_payload"),
+		"frappe_before_record": context.get("frappe_before_record"),
+		"changes": context.get("changes"),
+		"dry_run": bool(context.get("dry_run")),
+		"helpers": helpers,
+		"result": None,
+	}
+	_globals, locals_ = safe_exec(
+		hook.script or "",
+		_globals=script_context,
+		_locals=script_context,
+		restrict_commit_rollback=True,
+		script_filename=f"sync_frappe_write_hook_{hook.idx}",
+	)
+	result = (locals_ or {}).get("result") or (_globals or {}).get("result")
+	changed = False
+	message = None
+	if isinstance(result, dict):
+		changed = _as_bool(result.get("changed"))
+		message = _clean_string(result.get("message"))
+	elif result is not None and hasattr(result, "get"):
+		changed = _as_bool(result.get("changed"))
+		message = _clean_string(result.get("message"))
+	messages = list(helper_messages)
+	if message:
+		messages.append(message)
+	if not messages:
+		messages.append(_frappe_write_hook_label(hook))
+	return FrappeWriteHookResult(changed=changed, messages=tuple(messages))
+
+
+class _FrappeWriteHookHelpers:
+	def __init__(self, messages: list[str]):
+		self._messages = messages
+
+	def db_exists(self, doctype: str, name: str) -> Any:
+		return frappe.db.exists(doctype, name)
+
+	def db_get_value(self, doctype: str, filters: Any, fieldname: str) -> Any:
+		return frappe.db.get_value(doctype, filters, fieldname)
+
+	def get_doc(self, doctype: str, name: str) -> Any:
+		return frappe.get_doc(doctype, name)
+
+	def log(self, message: Any) -> None:
+		text = _clean_string(message)
+		if text:
+			self._messages.append(text)
+
+	def reverse_journal_entry(
+		self,
+		source_name: str,
+		posting_date: Any = None,
+		submit: bool = True,
+		idempotency_key: str | None = None,
+	) -> str | None:
+		return _reverse_journal_entry(
+			source_name=source_name,
+			posting_date=posting_date,
+			submit=submit,
+			idempotency_key=idempotency_key,
+		)
+
+
+def _reverse_journal_entry(
+	*,
+	source_name: str,
+	posting_date: Any = None,
+	submit: bool = True,
+	idempotency_key: str | None = None,
+) -> str | None:
+	if not source_name:
+		raise frappe.ValidationError("source_name is required.")
+	existing_filters = {"reversal_of": source_name, "docstatus": ["!=", 2]}
+	if idempotency_key and frappe.get_meta("Journal Entry").has_field("sync_idempotency_key"):
+		existing_filters["sync_idempotency_key"] = idempotency_key
+	existing = frappe.db.exists("Journal Entry", existing_filters) or frappe.db.exists(
+		"Journal Entry",
+		{"reversal_of": source_name, "docstatus": 1},
+	)
+	if existing:
+		return str(existing)
+
+	from erpnext.accounts.doctype.journal_entry.journal_entry import make_reverse_journal_entry
+
+	doc = make_reverse_journal_entry(source_name)
+	if posting_date is not None:
+		doc.posting_date = posting_date
+	if idempotency_key and frappe.get_meta("Journal Entry").has_field("sync_idempotency_key"):
+		doc.sync_idempotency_key = idempotency_key
+	doc.insert(ignore_permissions=True)
+	if submit:
+		doc.submit()
+	return doc.name
+
+
+def _frappe_write_hook_label(hook: SyncFrappeWriteHookConfig) -> str:
+	if hook.hook_type == FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION:
+		return f"{hook.event}: {hook.action}"
+	return f"{hook.event}: Custom Script"
+
+
+def _planned_frappe_write_hook_message(config: SyncDefinitionConfig, event: str) -> str | None:
+	labels = [_frappe_write_hook_label(hook) for hook in _enabled_frappe_write_hooks(_config_frappe_write_hooks(config), event)]
+	if not labels:
+		return None
+	return "Dry run: Frappe write hooks would run: " + "; ".join(labels)
+
+
+def _append_hook_message(message: str, hook_result: FrappeWriteHookResult | None = None, planned: str | None = None) -> str:
+	parts = [message]
+	if hook_result and hook_result.messages:
+		parts.append("Hooks: " + "; ".join(hook_result.messages))
+	if planned:
+		parts.append(planned)
+	return " ".join(part for part in parts if part)
+
+
+def _frappe_write_hook_context(
+	*,
+	config: SyncDefinitionConfig,
+	run_doc: Any,
+	event: str,
+	partner_record: dict[str, Any] | None,
+	frappe_payload: dict[str, Any] | None,
+	frappe_before_record: dict[str, Any] | None,
+	changes: list[tuple[str, Any, Any]] | None,
+	dry_run: bool,
+) -> dict[str, Any]:
+	return {
+		"event": event,
+		"sync_definition": config,
+		"sync_run": run_doc,
+		"doctype": config.doctype,
+		"partner_record": partner_record,
+		"frappe_payload": frappe_payload,
+		"frappe_before_record": frappe_before_record,
+		"changes": changes,
+		"dry_run": dry_run,
+	}
+
+
+def _frappe_write_hook_kwargs(
+	*,
+	config: SyncDefinitionConfig,
+	run_doc: Any,
+	event: str,
+	partner_record: dict[str, Any] | None,
+	frappe_payload: dict[str, Any] | None,
+	frappe_before_record: dict[str, Any] | None,
+	changes: list[tuple[str, Any, Any]] | None,
+	dry_run: bool,
+) -> dict[str, Any]:
+	hooks = _config_frappe_write_hooks(config)
+	if not _enabled_frappe_write_hooks(hooks, event):
+		return {}
+	return {
+		"write_hooks": hooks,
+		"hook_context": _frappe_write_hook_context(
+			config=config,
+			run_doc=run_doc,
+			event=event,
+			partner_record=partner_record,
+			frappe_payload=frappe_payload,
+			frappe_before_record=frappe_before_record,
+			changes=changes,
+			dry_run=dry_run,
+		),
+	}
+
+
+def _run_after_match_frappe_write_hooks(
+	*,
+	config: SyncDefinitionConfig,
+	run_doc: Any,
+	partner_record: dict[str, Any],
+	frappe_record: dict[str, Any],
+	frappe_payload: dict[str, Any] | None,
+	changes: list[tuple[str, Any, Any]] | None,
+	dry_run: bool,
+) -> FrappeWriteHookResult:
+	hooks = _enabled_frappe_write_hooks(_config_frappe_write_hooks(config), FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH)
+	if not hooks:
+		return FrappeWriteHookResult()
+	if dry_run:
+		return FrappeWriteHookResult(messages=tuple(_frappe_write_hook_label(hook) for hook in hooks))
+	docname = frappe_record.get("name")
+	if not docname:
+		raise frappe.ValidationError("After Match hook requires a matched Frappe document name.")
+	doc = frappe.get_doc(config.doctype, docname)
+	return _execute_frappe_write_hooks(
+		event=FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH,
+		hooks=hooks,
+		doc=doc,
+		context={
+			**_frappe_write_hook_context(
+				config=config,
+				run_doc=run_doc,
+				event=FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH,
+				partner_record=partner_record,
+				frappe_payload=frappe_payload,
+				frappe_before_record=frappe_record,
+				changes=changes,
+				dry_run=dry_run,
+			),
+			"doc": doc,
+			"docname": doc.name,
+		},
+	)
 
 
 def _docstatus_value(doc: Any) -> int:
@@ -3771,7 +4258,16 @@ def _resolve_item_to_frappe(item_doc: Any, config: SyncDefinitionConfig) -> dict
 		existing_name=existing_name,
 		payload=payload,
 		dry_run=False,
-		**_frappe_write_action_kwargs(config),
+		**_frappe_write_hook_kwargs(
+			config=config,
+			run_doc=None,
+			event=FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE,
+			partner_record=None,
+			frappe_payload=payload,
+			frappe_before_record=None,
+			changes=None,
+			dry_run=False,
+		),
 	)
 	result = dict(payload)
 	if doc_name:
@@ -3893,12 +4389,7 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		delete_missing=delete_missing,
 		one_way_match_mode=_clean_string(_first_value(sync_definition_doc, ["one_way_match_mode"])) or ONE_WAY_MATCH_FIRST,
 		update_existing=_as_bool(_first_value(sync_definition_doc, ["update_existing"], default=1)),
-		frappe_after_insert_action=_normalize_frappe_write_action(
-			_first_value(sync_definition_doc, ["frappe_after_insert_action"])
-		),
-		frappe_after_update_action=_normalize_frappe_write_action(
-			_first_value(sync_definition_doc, ["frappe_after_update_action"])
-		),
+		frappe_write_hooks=_get_frappe_write_hooks(sync_definition_doc),
 		use_last_sync_date=use_last_sync_date,
 		conflict_policy=conflict_policy,
 		timestamp_buffer_ms=timestamp_buffer_ms,
@@ -4210,6 +4701,36 @@ def _validate_runtime_mapping(config: SyncDefinitionConfig) -> None:
 	duplicate_partner = partner_timestamp_fields & mapped_partner_fields
 	if duplicate_frappe or duplicate_partner:
 		raise frappe.ValidationError("Dedicated timestamp fields must not also exist in Field Mapping.")
+	_validate_frappe_write_hooks(config)
+
+
+def _validate_frappe_write_hooks(config: SyncDefinitionConfig) -> None:
+	active_submit_events: set[str] = set()
+	submit_found = False
+	for hook in config.frappe_write_hooks:
+		if not hook.enabled:
+			continue
+		if hook.hook_type == FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION and hook.action == FRAPPE_WRITE_ACTION_SUBMIT:
+			submit_found = True
+			if hook.event not in {FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT, FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE}:
+				raise frappe.ValidationError("Built-in Submit is only allowed for After Insert and After Update hooks.")
+			if hook.event in active_submit_events:
+				raise frappe.ValidationError(f"Only one active built-in Submit hook is allowed for {hook.event}.")
+			active_submit_events.add(hook.event)
+		if hook.hook_type == FRAPPE_WRITE_HOOK_TYPE_CUSTOM_SCRIPT and not _server_script_enabled():
+			raise frappe.ValidationError("Custom Script hooks require server_script_enabled.")
+	if submit_found and not getattr(frappe.get_meta(config.doctype), "is_submittable", False):
+		raise frappe.ValidationError(f"Built-in Submit hook requires submittable DocType {config.doctype}.")
+
+
+def _server_script_enabled() -> bool:
+	get_common_site_config = getattr(frappe, "get_common_site_config", None)
+	if callable(get_common_site_config):
+		try:
+			return _as_bool(get_common_site_config(cached=True).get("server_script_enabled"))
+		except Exception:
+			return False
+	return _as_bool(getattr(getattr(frappe, "conf", None), "server_script_enabled", None))
 
 
 def _validate_child_mapping_paths(config: SyncDefinitionConfig, mapping: dict[str, dict[str, str]]) -> None:
@@ -5302,23 +5823,105 @@ def _normalize_frappe_write_action(value: Any) -> str:
 	return FRAPPE_WRITE_ACTION_NONE
 
 
-def _config_frappe_after_insert_action(config: Any) -> str:
-	return _normalize_frappe_write_action(getattr(config, "frappe_after_insert_action", None))
+def _normalize_frappe_write_hook_event(value: Any) -> str | None:
+	normalized = _clean_string(value)
+	if normalized in FRAPPE_WRITE_HOOK_EVENTS:
+		return normalized
+	return None
 
 
-def _config_frappe_after_update_action(config: Any) -> str:
-	return _normalize_frappe_write_action(getattr(config, "frappe_after_update_action", None))
+def _normalize_frappe_write_hook_type(value: Any) -> str | None:
+	normalized = _clean_string(value)
+	if normalized in FRAPPE_WRITE_HOOK_TYPES:
+		return normalized
+	return None
 
 
-def _frappe_write_action_kwargs(config: Any) -> dict[str, str]:
-	kwargs: dict[str, str] = {}
-	insert_action = _config_frappe_after_insert_action(config)
-	update_action = _config_frappe_after_update_action(config)
-	if insert_action != FRAPPE_WRITE_ACTION_NONE:
-		kwargs["after_insert_action"] = insert_action
-	if update_action != FRAPPE_WRITE_ACTION_NONE:
-		kwargs["after_update_action"] = update_action
-	return kwargs
+def _normalize_frappe_write_hooks(
+	value: Any,
+	*,
+	legacy_after_insert_action: Any = None,
+	legacy_after_update_action: Any = None,
+) -> tuple[SyncFrappeWriteHookConfig, ...]:
+	rows = list(value or [])
+	hooks = [_normalize_frappe_write_hook_row(row, fallback_idx=index + 1) for index, row in enumerate(rows)]
+	hooks = [hook for hook in hooks if hook is not None]
+	if not hooks:
+		hooks.extend(_legacy_frappe_write_action_hooks(legacy_after_insert_action, legacy_after_update_action))
+	return tuple(sorted(hooks, key=lambda hook: hook.idx))
+
+
+def _config_frappe_write_hooks(config: Any) -> tuple[SyncFrappeWriteHookConfig, ...]:
+	return _normalize_frappe_write_hooks(
+		getattr(config, "frappe_write_hooks", None),
+		legacy_after_insert_action=getattr(config, "frappe_after_insert_action", None),
+		legacy_after_update_action=getattr(config, "frappe_after_update_action", None),
+	)
+
+
+def _normalize_frappe_write_hook_row(row: Any, *, fallback_idx: int) -> SyncFrappeWriteHookConfig | None:
+	event = _normalize_frappe_write_hook_event(_first_value(row, ["event"]))
+	hook_type = _normalize_frappe_write_hook_type(_first_value(row, ["hook_type"]))
+	if not event or not hook_type:
+		return None
+	action = None
+	script = None
+	if hook_type == FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION:
+		action = _normalize_frappe_write_action(_first_value(row, ["action"]))
+		if action == FRAPPE_WRITE_ACTION_NONE:
+			return None
+	else:
+		script = _clean_string(_first_value(row, ["script"]))
+		if not script:
+			return None
+	return SyncFrappeWriteHookConfig(
+		enabled=_as_bool(_first_value(row, ["enabled"], default=1)),
+		event=event,
+		hook_type=hook_type,
+		action=action,
+		script=script,
+		description=_clean_string(_first_value(row, ["description"])),
+		idx=cint(_first_value(row, ["idx"], default=fallback_idx)) or fallback_idx,
+	)
+
+
+def _legacy_frappe_write_action_hooks(
+	after_insert_action: Any,
+	after_update_action: Any,
+) -> list[SyncFrappeWriteHookConfig]:
+	result: list[SyncFrappeWriteHookConfig] = []
+	for idx, (event, action_value) in enumerate(
+		(
+			(FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT, after_insert_action),
+			(FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE, after_update_action),
+		),
+		start=1,
+	):
+		action = _normalize_frappe_write_action(action_value)
+		if action == FRAPPE_WRITE_ACTION_NONE:
+			continue
+		result.append(
+			SyncFrappeWriteHookConfig(
+				enabled=True,
+				event=event,
+				hook_type=FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION,
+				action=action,
+				idx=idx,
+			)
+		)
+	return result
+
+
+def _get_frappe_write_hooks(sync_definition_doc: Any) -> tuple[SyncFrappeWriteHookConfig, ...]:
+	try:
+		rows = _get_child_rows_by_options(sync_definition_doc, SYNC_FRAPPE_WRITE_HOOK)
+	except Exception:
+		rows = []
+	return _normalize_frappe_write_hooks(
+		rows,
+		legacy_after_insert_action=_first_value(sync_definition_doc, ["frappe_after_insert_action"]),
+		legacy_after_update_action=_first_value(sync_definition_doc, ["frappe_after_update_action"]),
+	)
 
 
 def _config_timestamp_buffer_ms(config: Any) -> int:
@@ -6189,7 +6792,7 @@ def _first_value(doc: Any, candidates: list[str], default: Any = None) -> Any:
 		try:
 			value = doc.get(candidate)
 		except Exception:
-			value = None
+			value = getattr(doc, candidate, None)
 		if value not in (None, ""):
 			return value
 	return default
@@ -6493,6 +7096,8 @@ def _sanitize_child_row(child_doctype: str, row: dict[str, Any]) -> dict[str, An
 
 def _normalize_doc_payload(doctype: str, payload: dict[str, Any]) -> dict[str, Any]:
 	meta = frappe.get_meta(doctype)
+	if doctype == SYNC_DEFINITION:
+		payload = _sync_definition_payload_with_legacy_hooks(payload)
 	table_fields = {field.fieldname: field.options for field in meta.fields if field.fieldtype == "Table"}
 	excluded_fields = _portable_excluded_fields(doctype)
 	result: dict[str, Any] = {"doctype": doctype}
@@ -6523,6 +7128,48 @@ def _normalize_doc_payload(doctype: str, payload: dict[str, Any]) -> dict[str, A
 			child_rows.append(child_row)
 		result[table_field] = child_rows
 	return result
+
+
+def _sync_definition_payload_with_legacy_hooks(payload: dict[str, Any]) -> dict[str, Any]:
+	if isinstance(payload.get("frappe_write_hooks"), list) and payload.get("frappe_write_hooks"):
+		return payload
+	legacy_rows = _legacy_frappe_write_action_hook_rows(
+		payload.get("frappe_after_insert_action"),
+		payload.get("frappe_after_update_action"),
+	)
+	if not legacy_rows:
+		return payload
+	result = dict(payload)
+	result["frappe_write_hooks"] = legacy_rows
+	return result
+
+
+def _legacy_frappe_write_action_hook_rows(
+	after_insert_action: Any,
+	after_update_action: Any,
+) -> list[dict[str, Any]]:
+	rows: list[dict[str, Any]] = []
+	for idx, (event, action_value) in enumerate(
+		(
+			(FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT, after_insert_action),
+			(FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE, after_update_action),
+		),
+		start=1,
+	):
+		action = _normalize_frappe_write_action(action_value)
+		if action == FRAPPE_WRITE_ACTION_NONE:
+			continue
+		rows.append(
+			{
+				"doctype": SYNC_FRAPPE_WRITE_HOOK,
+				"enabled": 1,
+				"event": event,
+				"hook_type": FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION,
+				"action": action,
+				"idx": idx,
+			}
+		)
+	return rows
 
 
 def _portable_excluded_fields(doctype: str) -> set[str]:

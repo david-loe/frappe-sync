@@ -584,38 +584,65 @@ class TestRuntimeManagement(unittest.TestCase):
 		with self.assertRaises(ValueError):
 			runtime._run_engine(SimpleNamespace(name="SYNC-1"), SimpleNamespace(name="RUN-1"))
 
-		coerced = runtime._coerce_config(
-			SimpleNamespace(
-				name="SYNC-1",
-				doctype="Task",
-				partner="PARTNER-1",
-				sync_type="Frappe <- Partner",
-				batch_size="25",
-				create_new="0",
-				update_existing="0",
-				frappe_after_insert_action="Submit",
-				frappe_after_update_action="bad value",
-				delete_missing="1",
-				one_way_match_mode="all_matches",
-				use_last_sync_date="0",
-				timestamp_buffer_ms="3",
-				match_fields=("name",),
-				mapping={"name": "id"},
-				value_mapping={"status": {"Open": "1"}},
+		with patch("sync.sync.service.runtime.frappe.get_meta", return_value=SimpleNamespace(is_submittable=True, fields=[])):
+			coerced = runtime._coerce_config(
+				SimpleNamespace(
+					name="SYNC-1",
+					doctype="Task",
+					partner="PARTNER-1",
+					sync_type="Frappe <- Partner",
+					batch_size="25",
+					create_new="0",
+					update_existing="0",
+					frappe_after_insert_action="Submit",
+					frappe_after_update_action="bad value",
+					delete_missing="1",
+					one_way_match_mode="all_matches",
+					use_last_sync_date="0",
+					timestamp_buffer_ms="3",
+					match_fields=("name",),
+					mapping={"name": "id"},
+					value_mapping={"status": {"Open": "1"}},
+				)
 			)
-		)
 
 		self.assertEqual(coerced.sync_type, "Frappe <- Partner")
 		self.assertEqual(coerced.batch_size, 25)
 		self.assertFalse(coerced.create_new)
 		self.assertFalse(coerced.update_existing)
-		self.assertEqual(coerced.frappe_after_insert_action, "Submit")
-		self.assertEqual(coerced.frappe_after_update_action, "None")
+		self.assertEqual(len(coerced.frappe_write_hooks), 1)
+		self.assertEqual(coerced.frappe_write_hooks[0].event, "After Insert")
+		self.assertEqual(coerced.frappe_write_hooks[0].action, "Submit")
 		self.assertTrue(coerced.delete_missing)
 		self.assertEqual(coerced.one_way_match_mode, "all_matches")
 		self.assertFalse(coerced.use_last_sync_date)
 		self.assertEqual(coerced.timestamp_buffer_ms, 3)
 		self.assertEqual(coerced.mapping, {"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}})
+
+	def test_legacy_sync_definition_payload_actions_convert_to_write_hooks(self):
+		payload = runtime._sync_definition_payload_with_legacy_hooks(
+			{
+				"doctype": "Sync Definition",
+				"name": "SYNC-1",
+				"frappe_after_insert_action": "Submit",
+				"frappe_after_update_action": "None",
+			}
+		)
+
+		self.assertNotIn("frappe_after_insert_action", payload["frappe_write_hooks"][0])
+		self.assertEqual(
+			payload["frappe_write_hooks"],
+			[
+				{
+					"doctype": "Sync Frappe Write Hook",
+					"enabled": 1,
+					"event": "After Insert",
+					"hook_type": "Built-in Action",
+					"action": "Submit",
+					"idx": 1,
+				}
+			],
+		)
 
 	def test_coerce_config_clears_delete_missing_for_bidirectional_sync(self):
 		coerced = runtime._coerce_config(
