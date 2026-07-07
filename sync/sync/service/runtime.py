@@ -3711,7 +3711,7 @@ def _iter_partner_source_batches(
 	record_batches = _iter_partner_record_batches(
 		connector=connector,
 		source=config.table_name,
-		query=_resolve_read_query(config, connector),
+		query=_resolve_read_query(config, connector, context=_read_query_runtime_context(context)),
 		batch_size=config.batch_size,
 		key_fields=_partner_fetch_key_fields(config),
 	)
@@ -3734,6 +3734,14 @@ def _iter_partner_source_batches(
 			if filtered:
 				yield filtered
 	return _filtered_batches()
+
+
+def _read_query_runtime_context(context: SyncContext) -> dict[str, str | None]:
+	delta_since = context.delta_since
+	return {
+		"delta_since": delta_since.isoformat(sep=" ") if delta_since else None,
+		"delta_since_date": delta_since.date().isoformat() if delta_since else None,
+	}
 
 
 def _fetch_partner_records(
@@ -6667,7 +6675,8 @@ def _get_last_successful_sync(sync_definition_name: str) -> datetime | None:
 		limit=1,
 	)
 	if not runs:
-		return None
+		definition_value = frappe.db.get_value(SYNC_DEFINITION, sync_definition_name, "last_successful_sync")
+		return _parse_datetime(definition_value)
 	for fieldname in ("last_sync_at", "finished_at", "started_at", "modified"):
 		value = runs[0].get(fieldname)
 		parsed = _parse_datetime(value)
