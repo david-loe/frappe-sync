@@ -23,6 +23,8 @@
   "partner_columns_loaded_at",
   "section_source_filters",
   "filter_expression",
+  "frappe_source_mode",
+  "frappe_source_script",
   "section_change_detection",
   "frappe_modified_field",
   "frappe_creation_field",
@@ -34,17 +36,6 @@
   "conflict_policy",
   "timestamp_tie_breaker",
   "section_write_behavior",
-  "partner_write_mode",
-  "aggregate_target_table_name",
-  "aggregate_target_key_field",
-  "aggregate_target_key_value",
-  "column_aggregate_write",
-  "aggregate_json_column",
-  "aggregate_json_array_path",
-  "aggregate_item_key_field",
-  "aggregate_sort_field",
-  "aggregate_sort_order",
-  "aggregate_preserve_unmatched",
   "create_new",
   "update_existing",
   "delete_missing",
@@ -275,6 +266,20 @@
    "label": "Filter Expression"
   },
   {
+   "default": "DocType Query",
+   "fieldname": "frappe_source_mode",
+   "fieldtype": "Select",
+   "label": "Frappe Source Mode",
+   "options": "DocType Query\nPython Script"
+  },
+  {
+   "depends_on": "eval:doc.frappe_source_mode == 'Python Script'",
+   "fieldname": "frappe_source_script",
+   "fieldtype": "Code",
+   "label": "Frappe Source Script",
+   "mandatory_depends_on": "eval:doc.frappe_source_mode == 'Python Script'"
+  },
+  {
    "fieldname": "section_change_detection",
    "fieldtype": "Section Break",
    "label": "Change Detection & Conflicts"
@@ -331,80 +336,6 @@
    "fieldname": "section_write_behavior",
    "fieldtype": "Section Break",
    "label": "Write Behavior"
-  },
-  {
-   "default": "Row Upsert",
-   "fieldname": "partner_write_mode",
-   "fieldtype": "Select",
-   "label": "Partner Write Mode",
-   "options": "Row Upsert\nJSON Array Aggregate"
-  },
-  {
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "aggregate_target_table_name",
-   "fieldtype": "Data",
-   "label": "Aggregate Target Table Name",
-   "description": "Partner table containing the target JSON document row. Defaults to Table Name when blank."
-  },
-  {
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "aggregate_target_key_field",
-   "fieldtype": "Data",
-   "label": "Aggregate Target Key Field",
-   "mandatory_depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'"
-  },
-  {
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "aggregate_target_key_value",
-   "fieldtype": "Data",
-   "label": "Aggregate Target Key Value",
-   "mandatory_depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'"
-  },
-  {
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "column_aggregate_write",
-   "fieldtype": "Column Break"
-  },
-  {
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "aggregate_json_column",
-   "fieldtype": "Data",
-   "label": "Aggregate JSON Column",
-   "mandatory_depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'"
-  },
-  {
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "aggregate_json_array_path",
-   "fieldtype": "Data",
-   "label": "Aggregate JSON Array Path",
-   "mandatory_depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'"
-  },
-  {
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "aggregate_item_key_field",
-   "fieldtype": "Data",
-   "label": "Aggregate Item Key Field",
-   "mandatory_depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'"
-  },
-  {
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "aggregate_sort_field",
-   "fieldtype": "Data",
-   "label": "Aggregate Sort Field"
-  },
-  {
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "aggregate_sort_order",
-   "fieldtype": "Select",
-   "label": "Aggregate Sort Order",
-   "options": "\nAscending\nDescending"
-  },
-  {
-   "default": "1",
-   "depends_on": "eval:doc.partner_write_mode == 'JSON Array Aggregate'",
-   "fieldname": "aggregate_preserve_unmatched",
-   "fieldtype": "Check",
-   "label": "Preserve Unmatched Existing Items"
   },
   {
    "fieldname": "column_write_behavior",
@@ -610,7 +541,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-07-07 00:00:00.000000",
+ "modified": "2026-07-07 00:00:02.000000",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

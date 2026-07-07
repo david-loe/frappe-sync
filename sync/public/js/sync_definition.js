@@ -21,14 +21,8 @@ frappe.ui.form.on("Sync Definition", {
 	},
 	sync_type(frm) {
 		sync.helpers.normalizeDefinitionDeleteMissing(frm);
-		sync.helpers.normalizeDefinitionAggregateSettings(frm);
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
-		sync.helpers.refreshDefinitionSourceValidation(frm);
-	},
-	partner_write_mode(frm) {
-		sync.helpers.normalizeDefinitionAggregateSettings(frm);
-		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 	},
 	match_mode(frm) {
@@ -308,21 +302,6 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields, tableFields = 
 	frm.set_df_property("frappe_modified_field", "options", options);
 	frm.set_df_property("frappe_modified_field", "description", description);
 	frm.refresh_field("frappe_modified_field");
-};
-
-sync.helpers.normalizeDefinitionAggregateSettings = function (frm) {
-	if (frm.doc.partner_write_mode !== "JSON Array Aggregate") {
-		return;
-	}
-	if (frm.doc.sync_type && frm.doc.sync_type !== "Frappe -> Partner") {
-		frm.set_value("sync_type", "Frappe -> Partner");
-	}
-	if (frm.doc.delete_missing) {
-		frm.set_value("delete_missing", 0);
-	}
-	if (frm.doc.use_last_sync_date) {
-		frm.set_value("use_last_sync_date", 0);
-	}
 };
 
 sync.helpers.parseDefinitionPartnerColumns = function (rawColumns) {

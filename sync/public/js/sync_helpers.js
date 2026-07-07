@@ -172,10 +172,6 @@ sync.helpers.canDefinitionReadQueryReplaceTableName = function (frm) {
 	return sync.helpers.isDefinitionPartnerToFrappe(frm) && Boolean(sync.helpers.getDefinitionSourceReadQuery(frm));
 };
 
-sync.helpers.isDefinitionAggregateWrite = function (frm) {
-	return String(frm.doc?.partner_write_mode || "Row Upsert") === "JSON Array Aggregate";
-};
-
 sync.helpers.setDefinitionFieldProperty = function (frm, fieldname, property, value) {
 	if (!fieldname || !frm?.fields_dict?.[fieldname]) {
 		return;
@@ -195,8 +191,7 @@ sync.helpers.toggleDefinitionField = function (frm, fieldname, visible, reqd) {
 
 sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 	const tableNameRequired = !sync.helpers.canDefinitionReadQueryReplaceTableName(frm);
-	const aggregateWrite = sync.helpers.isDefinitionAggregateWrite(frm);
-	const canWritePartner = !sync.helpers.isDefinitionPartnerToFrappe(frm) && !aggregateWrite;
+	const canWritePartner = !sync.helpers.isDefinitionPartnerToFrappe(frm);
 	const isIdentityMode = sync.helpers.isDefinitionIdentityMatchMode(frm);
 	const identityRequired = String(frm.doc?.sync_type || "") === "Frappe <-> Partner" && isIdentityMode;
 	const identityFieldNames = [
@@ -251,9 +246,9 @@ sync.helpers.refreshDefinitionFieldPresentation = function (frm) {
 			: __("Logical fields used to match source and partner records. These are not the partner's technical identity field.")
 	);
 	sync.helpers.toggleDefinitionField(frm, "match_fields", !isIdentityMode, !isIdentityMode);
-	sync.helpers.toggleDefinitionField(frm, "create_new", !aggregateWrite, false);
-	sync.helpers.toggleDefinitionField(frm, "update_existing", !aggregateWrite, false);
-	sync.helpers.toggleDefinitionField(frm, "delete_missing", !aggregateWrite, false);
+	sync.helpers.toggleDefinitionField(frm, "create_new", true, false);
+	sync.helpers.toggleDefinitionField(frm, "update_existing", true, false);
+	sync.helpers.toggleDefinitionField(frm, "delete_missing", true, false);
 
 	identityFieldNames.forEach((fieldname) => {
 		if (!frm?.fields_dict?.[fieldname]) {
@@ -1306,7 +1301,6 @@ sync.helpers.testPartnerConnection = function (frm) {
 
 sync.helpers.toggleSourceFields = function (frm) {
 	const tableNameRequired = !sync.helpers.canDefinitionReadQueryReplaceTableName(frm);
-	const aggregateWrite = sync.helpers.isDefinitionAggregateWrite(frm);
 
 	sync.helpers.toggleDefinitionField(frm, "read_query", true, false);
 	sync.helpers.toggleDefinitionField(frm, "table_name", true, tableNameRequired);
@@ -1325,9 +1319,9 @@ sync.helpers.toggleSourceFields = function (frm) {
 		!sync.helpers.isDefinitionIdentityMatchMode(frm),
 		!sync.helpers.isDefinitionIdentityMatchMode(frm)
 	);
-	sync.helpers.toggleDefinitionField(frm, "create_new", !aggregateWrite, false);
-	sync.helpers.toggleDefinitionField(frm, "update_existing", !aggregateWrite, false);
-	sync.helpers.toggleDefinitionField(frm, "delete_missing", !aggregateWrite, false);
+	sync.helpers.toggleDefinitionField(frm, "create_new", true, false);
+	sync.helpers.toggleDefinitionField(frm, "update_existing", true, false);
+	sync.helpers.toggleDefinitionField(frm, "delete_missing", true, false);
 };
 
 sync.helpers.normalizeDefinitionDeleteMissing = function (frm) {

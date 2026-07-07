@@ -18,6 +18,9 @@ from sync.sync.constants import (
 	FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION,
 	FRAPPE_WRITE_HOOK_TYPE_CUSTOM_SCRIPT,
 	FRAPPE_WRITE_HOOK_TYPES,
+	FRAPPE_SOURCE_MODE_DOCTYPE_QUERY,
+	FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+	FRAPPE_SOURCE_MODES,
 	MAPPING_DIRECTION_BOTH,
 	MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
 	MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
@@ -27,9 +30,6 @@ from sync.sync.constants import (
 	MATCH_MODES,
 	ONE_WAY_MATCH_FIRST,
 	ONE_WAY_MATCH_MODES,
-	PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE,
-	PARTNER_WRITE_MODE_ROW_UPSERT,
-	PARTNER_WRITE_MODES,
 	SYNC_RUN,
 	SYNC_RUN_ITEM,
 	TIMESTAMP_TIE_BREAKERS,
@@ -63,15 +63,6 @@ class SyncDefinition(Document):
 		from sync.sync.doctype.sync_key_field.sync_key_field import SyncKeyField
 		from sync.sync.doctype.sync_value_mapping.sync_value_mapping import SyncValueMapping
 
-		aggregate_item_key_field: DF.Data | None
-		aggregate_json_array_path: DF.Data | None
-		aggregate_json_column: DF.Data | None
-		aggregate_preserve_unmatched: DF.Check
-		aggregate_sort_field: DF.Data | None
-		aggregate_sort_order: DF.Literal["", "Ascending", "Descending"]
-		aggregate_target_key_field: DF.Data | None
-		aggregate_target_key_value: DF.Data | None
-		aggregate_target_table_name: DF.Data | None
 		batch_size: DF.Int
 		capture_audit_payloads: DF.Check
 		computed_fields: DF.Table[SyncComputedField]
@@ -86,6 +77,8 @@ class SyncDefinition(Document):
 		frappe_creation_field: DF.Data
 		frappe_modified_field: DF.Literal[None]
 		frappe_partner_identity_field: DF.Literal[None]
+		frappe_source_mode: DF.Literal["DocType Query", "Python Script"]
+		frappe_source_script: DF.Code | None
 		frappe_write_hooks: DF.Table[SyncFrappeWriteHook]
 		frequency_cron: DF.Data
 		last_run: DF.Link | None
@@ -108,7 +101,6 @@ class SyncDefinition(Document):
 		partner_frappe_identity_field: DF.Literal[None]
 		partner_identity_field: DF.Literal[None]
 		partner_modified_field: DF.Literal[None]
-		partner_write_mode: DF.Literal["Row Upsert", "JSON Array Aggregate"]
 		preview_limit: DF.Int
 		read_query: DF.Code | None
 		render_read_query_template: DF.Check
@@ -129,6 +121,7 @@ class SyncDefinition(Document):
 		SyncDefinition.validate_match_fields(self)
 		SyncDefinition.validate_source_settings(self)
 		SyncDefinition.validate_filter_expression(self)
+		SyncDefinition.validate_frappe_source_settings(self)
 		SyncDefinition.validate_modified_fields(self)
 		SyncDefinition.validate_identity_settings(self)
 		SyncDefinition.validate_one_way_match_mode(self)
@@ -218,9 +211,6 @@ class SyncDefinition(Document):
 		read_query = _clean_value(getattr(self, "read_query", None))
 		if not _delete_missing_allowed(getattr(self, "sync_type", None), getattr(self, "match_mode", None)):
 			self.delete_missing = 0
-		if _clean_value(getattr(self, "partner_write_mode", None)) == PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE:
-			self.delete_missing = 0
-			self.use_last_sync_date = 0
 		if not table_name and not _read_query_can_replace_table_name(getattr(self, "sync_type", None), read_query):
 			frappe.throw("Table Name is required.")
 		if read_query and getattr(self, "delete_missing", None):
@@ -330,6 +320,17 @@ class SyncDefinition(Document):
 	def validate_filter_expression(self):
 		self.filter_expression = _normalize_filter_expression(self.filter_expression)
 
+	def validate_frappe_source_settings(self):
+		self.frappe_source_mode = _normalize_frappe_source_mode(getattr(self, "frappe_source_mode", None))
+		self.frappe_source_script = _clean_value(getattr(self, "frappe_source_script", None))
+		if self.frappe_source_mode != FRAPPE_SOURCE_MODE_PYTHON_SCRIPT:
+			self.frappe_source_script = None
+			return
+		if not self.frappe_source_script:
+			frappe.throw("Frappe Source Script is required.")
+		if not _server_script_enabled():
+			frappe.throw("Frappe Source Script requires server_script_enabled.")
+
 	def validate_preview_limit(self):
 		if self.preview_limit is not None and self.preview_limit < 1:
 			frappe.throw("Preview Limit must be at least 1.")
@@ -342,18 +343,6 @@ class SyncDefinition(Document):
 
 	def validate_write_behavior(self):
 		self.update_existing = 1 if getattr(self, "update_existing", 1) else 0
-		self.partner_write_mode = _normalize_partner_write_mode(getattr(self, "partner_write_mode", None))
-		self.aggregate_target_table_name = _clean_value(getattr(self, "aggregate_target_table_name", None))
-		self.aggregate_target_key_field = _clean_value(getattr(self, "aggregate_target_key_field", None))
-		self.aggregate_target_key_value = _clean_value(getattr(self, "aggregate_target_key_value", None))
-		self.aggregate_json_column = _clean_value(getattr(self, "aggregate_json_column", None))
-		self.aggregate_json_array_path = _clean_value(getattr(self, "aggregate_json_array_path", None))
-		self.aggregate_item_key_field = _clean_value(getattr(self, "aggregate_item_key_field", None))
-		self.aggregate_sort_field = _clean_value(getattr(self, "aggregate_sort_field", None))
-		self.aggregate_sort_order = _normalize_aggregate_sort_order(getattr(self, "aggregate_sort_order", None))
-		self.aggregate_preserve_unmatched = 1 if getattr(self, "aggregate_preserve_unmatched", 1) else 0
-		if self.partner_write_mode == PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE:
-			_validate_aggregate_settings(self)
 		active_submit_events: set[str] = set()
 		custom_script_found = False
 		custom_script_has_code = False
@@ -508,16 +497,8 @@ class SyncDefinition(Document):
 			"delete_missing": self.delete_missing,
 			"frappe_write_hooks": SyncDefinition.get_frappe_write_hooks(self),
 			"computed_fields": SyncDefinition.get_computed_fields(self),
-			"partner_write_mode": getattr(self, "partner_write_mode", PARTNER_WRITE_MODE_ROW_UPSERT),
-			"aggregate_target_table_name": getattr(self, "aggregate_target_table_name", None),
-			"aggregate_target_key_field": getattr(self, "aggregate_target_key_field", None),
-			"aggregate_target_key_value": getattr(self, "aggregate_target_key_value", None),
-			"aggregate_json_column": getattr(self, "aggregate_json_column", None),
-			"aggregate_json_array_path": getattr(self, "aggregate_json_array_path", None),
-			"aggregate_item_key_field": getattr(self, "aggregate_item_key_field", None),
-			"aggregate_sort_field": getattr(self, "aggregate_sort_field", None),
-			"aggregate_sort_order": getattr(self, "aggregate_sort_order", None),
-			"aggregate_preserve_unmatched": bool(getattr(self, "aggregate_preserve_unmatched", 1)),
+			"frappe_source_mode": getattr(self, "frappe_source_mode", FRAPPE_SOURCE_MODE_DOCTYPE_QUERY),
+			"frappe_source_script": getattr(self, "frappe_source_script", None),
 			"match_mode": getattr(self, "match_mode", MATCH_MODE_MATCH_FIELDS),
 			"one_way_match_mode": getattr(self, "one_way_match_mode", ONE_WAY_MATCH_FIRST),
 			"conflict_policy": self.conflict_policy or CONFLICT_POLICY_NEWEST_WINS,
@@ -749,8 +730,6 @@ def _current_user_is_system_manager() -> bool:
 
 
 def _partner_timestamps_required(doc) -> bool:
-	if _normalize_partner_write_mode(getattr(doc, "partner_write_mode", None)) == PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE:
-		return False
 	return _clean_value(getattr(doc, "sync_type", None)) == MAPPING_DIRECTION_BOTH or _truthy(
 		getattr(doc, "use_last_sync_date", None)
 	)
@@ -771,43 +750,11 @@ def _normalize_unmapped_action(value) -> str:
 	return action
 
 
-def _normalize_partner_write_mode(value) -> str:
-	mode = _clean_value(value) or PARTNER_WRITE_MODE_ROW_UPSERT
-	if mode not in PARTNER_WRITE_MODES:
-		frappe.throw(f"Partner Write Mode must be one of: {', '.join(PARTNER_WRITE_MODES)}.")
+def _normalize_frappe_source_mode(value) -> str:
+	mode = _clean_value(value) or FRAPPE_SOURCE_MODE_DOCTYPE_QUERY
+	if mode not in FRAPPE_SOURCE_MODES:
+		frappe.throw(f"Frappe Source Mode must be one of: {', '.join(FRAPPE_SOURCE_MODES)}.")
 	return mode
-
-
-def _normalize_aggregate_sort_order(value) -> str | None:
-	order = _clean_value(value)
-	if not order:
-		return None
-	normalized = order.lower()
-	if normalized in {"asc", "ascending"}:
-		return "Ascending"
-	if normalized in {"desc", "descending"}:
-		return "Descending"
-	frappe.throw("Aggregate Sort Order must be Ascending or Descending.")
-	return None
-
-
-def _validate_aggregate_settings(doc) -> None:
-	if _clean_value(getattr(doc, "sync_type", None)) != MAPPING_DIRECTION_FRAPPE_TO_PARTNER:
-		frappe.throw("JSON Array Aggregate writes are only supported for Frappe -> Partner sync.")
-	missing: list[str] = []
-	for fieldname, label in (
-		("aggregate_target_key_field", "Aggregate Target Key Field"),
-		("aggregate_target_key_value", "Aggregate Target Key Value"),
-		("aggregate_json_column", "Aggregate JSON Column"),
-		("aggregate_json_array_path", "Aggregate JSON Array Path"),
-		("aggregate_item_key_field", "Aggregate Item Key Field"),
-	):
-		if not _clean_value(getattr(doc, fieldname, None)):
-			missing.append(label)
-	if not (_clean_value(getattr(doc, "aggregate_target_table_name", None)) or _clean_value(getattr(doc, "table_name", None))):
-		missing.append("Aggregate Target Table Name")
-	if missing:
-		frappe.throw("JSON Array Aggregate requires: " + ", ".join(missing) + ".")
 
 
 def _parse_required_source_fields(value) -> list[str]:

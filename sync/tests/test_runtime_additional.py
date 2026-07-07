@@ -142,21 +142,25 @@ class FakeIdentityConnector:
 		return ConnectorWriteResult(ok=True, message="deleted", action="deleted")
 
 
-class FakeAggregateConnector:
+class FakeScriptSourceConnector:
 	def __init__(self):
-		self.calls = []
+		self.upserts = []
+		self.deletes = []
+		self.partner_records = []
 
 	def ping(self):
 		return ConnectorPingResult(ok=True, message="ok", details={})
 
-	def upsert_json_array_aggregate(self, **kwargs):
-		self.calls.append(kwargs)
-		return ConnectorWriteResult(
-			ok=True,
-			message="ok",
-			action="updated",
-			record={kwargs["json_column"]: {"items": kwargs["items"]}},
-		)
+	def fetch_records(self, **kwargs):
+		return SimpleNamespace(records=list(self.partner_records), next_cursor=None)
+
+	def upsert_record(self, **kwargs):
+		self.upserts.append(kwargs)
+		return ConnectorWriteResult(ok=True, message="ok", action="created", record=dict(kwargs.get("record") or {}))
+
+	def delete_record(self, **kwargs):
+		self.deletes.append(kwargs)
+		return ConnectorWriteResult(ok=True, message="deleted", action="deleted")
 
 
 class TestRuntimeAdditional(unittest.TestCase):
@@ -175,9 +179,9 @@ class TestRuntimeAdditional(unittest.TestCase):
 		mock_recover.assert_called_once_with()
 		mock_run_due.assert_called_once_with(limit=7, queue=False)
 
-	def test_run_engine_routes_json_array_aggregate_write(self):
+	def test_run_engine_routes_frappe_source_script_records_to_partner_upsert(self):
 		config = runtime.SyncDefinitionConfig(
-			name="SYNC-AGG",
+			name="SYNC-SCRIPT",
 			doctype="Task",
 			partner="PARTNER-1",
 			sync_type="Frappe -> Partner",
@@ -189,7 +193,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			use_last_sync_date=True,
 			conflict_policy="newest_wins",
 			timestamp_buffer_ms=0,
-			table_name="public.aggregate_targets",
+			table_name="public.sync_records",
 			read_query=None,
 			match_fields=["name"],
 			mapping={
@@ -197,14 +201,8 @@ class TestRuntimeAdditional(unittest.TestCase):
 				"subject": {"partner_field": "label", "direction": "Frappe -> Partner"},
 			},
 			value_mapping={},
-			partner_write_mode=runtime.PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE,
-			aggregate_target_key_field="target_key",
-			aggregate_target_key_value="main",
-			aggregate_json_column="payload_json",
-			aggregate_json_array_path="items",
-			aggregate_item_key_field="id",
-			aggregate_sort_field="label",
-			aggregate_sort_order="Ascending",
+			frappe_source_mode=runtime.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+			frappe_source_script="records = []",
 		)
 		mapping_context = runtime.RuntimeMappingContext(
 			mapping=config.mapping,
@@ -221,7 +219,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			site_time_zone="UTC",
 			partner_time_zone=None,
 		)
-		connector = FakeAggregateConnector()
+		connector = FakeScriptSourceConnector()
 		created_items = []
 
 		with (
@@ -229,76 +227,129 @@ class TestRuntimeAdditional(unittest.TestCase):
 			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=connector),
 			patch("sync.sync.service.runtime._build_runtime_mapping_context", return_value=mapping_context),
 			patch(
-				"sync.sync.service.runtime._iter_frappe_source_batches",
-				return_value=[[{"name": "TASK-1", "subject": "A"}, {"name": "TASK-2", "subject": "B"}]],
-			) as mock_source,
+				"sync.sync.service.runtime._execute_frappe_source_script",
+				return_value=[{"name": "TASK-1", "subject": "A"}],
+			) as mock_source_script,
 			patch("sync.sync.service.runtime._create_run_item", side_effect=lambda **kwargs: created_items.append(kwargs)),
 			patch("sync.sync.service.runtime._track_pending_run_writes"),
 			patch("sync.sync.service.runtime._flush_pending_run_writes"),
 		):
 			result = runtime._run_engine(
-				SimpleNamespace(name="SYNC-AGG"),
+				SimpleNamespace(name="SYNC-SCRIPT"),
 				SimpleNamespace(name="RUN-1"),
 				context=runtime.SyncContext(config=config, dry_run=False, last_successful_sync=datetime(2026, 1, 1)),
 			)
 
-		self.assertEqual(result["delta_since"], None)
-		self.assertEqual(result["processed_count"], 2)
-		self.assertEqual(result["updated_count"], 1)
-		mock_source.assert_called_once()
-		self.assertFalse(mock_source.call_args.kwargs["apply_delta_filter"])
-		self.assertEqual(
-			connector.calls[0]["items"],
-			[{"id": "TASK-1", "label": "A"}, {"id": "TASK-2", "label": "B"}],
+		self.assertEqual(result["processed_count"], 1)
+		mock_source_script.assert_called_once()
+		self.assertEqual(connector.upserts[0]["record"], {"id": "TASK-1", "label": "A"})
+		self.assertEqual(connector.upserts[0]["source"], "public.sync_records")
+		self.assertEqual(created_items[0]["action"], "created")
+
+	def test_frappe_source_script_batches_records_by_batch_size(self):
+		config = SimpleNamespace(
+			name="SYNC-SCRIPT",
+			doctype="Task",
+			batch_size=2,
+			frappe_source_mode=runtime.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+			frappe_source_script="records = []",
 		)
-		self.assertEqual(connector.calls[0]["source"], "public.aggregate_targets")
-		self.assertEqual(created_items[0]["action"], "updated")
+		context = runtime.SyncContext(config=config, dry_run=True, last_successful_sync=None)
 
-	def test_aggregate_merge_creates_updates_preserves_sorts_and_keeps_unrelated_json(self):
-		document = {
-			"meta": {"version": 1},
-			"payload": {
-				"items": [
-					{"id": "B", "qty": "2", "label": "old"},
-					{"id": "Z", "qty": "9", "label": "keep"},
-				]
-			},
-		}
+		with patch(
+			"sync.sync.service.runtime._execute_frappe_source_script",
+			return_value=[{"name": "TASK-1"}, {"name": "TASK-2"}, {"name": "TASK-3"}],
+		):
+			batches = list(runtime._iter_frappe_source_batches(config, context))
 
-		result = runtime.merge_json_array_document(
-			document,
-			array_path="payload.items",
-			items=[
-				{"id": "A", "qty": "10", "label": "new"},
-				{"id": "B", "qty": "3"},
-			],
-			item_key_field="id",
-			preserve_unmatched=True,
-			sort_field="qty",
-			sort_order="Ascending",
+		self.assertEqual(batches, [[{"name": "TASK-1"}, {"name": "TASK-2"}], [{"name": "TASK-3"}]])
+
+	def test_frappe_source_script_full_lookup_falls_back_to_doctype_query_for_delete_missing(self):
+		config = runtime.SyncDefinitionConfig(
+			name="SYNC-SCRIPT",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe -> Partner",
+			cron=None,
+			filters=None,
+			batch_size=10,
+			create_new=True,
+			delete_missing=True,
+			use_last_sync_date=False,
+			conflict_policy="newest_wins",
+			timestamp_buffer_ms=0,
+			table_name="public.sync_records",
+			read_query=None,
+			match_fields=["name"],
+			mapping={"name": {"partner_field": "id", "direction": "Frappe -> Partner"}},
+			value_mapping={},
+			frappe_source_mode=runtime.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+			frappe_source_script="records = []",
 		)
-
-		self.assertEqual(result["meta"], {"version": 1})
-		self.assertEqual(
-			result["payload"]["items"],
-			[
-				{"id": "B", "qty": "3", "label": "old"},
-				{"id": "Z", "qty": "9", "label": "keep"},
-				{"id": "A", "qty": "10", "label": "new"},
-			],
+		mapping_context = runtime.RuntimeMappingContext(
+			mapping=config.mapping,
+			value_mapping={},
+			value_mapping_fallbacks={},
+			to_partner_entries=(("name", "id"),),
+			to_frappe_entries=(),
+			connector_mapping={"name": "id"},
+			reverse_value_mapping={},
+			frappe_datetime_fields=set(),
+			partner_datetime_fields=set(),
+			frappe_fieldnames={"name"},
+			child_table_options={},
+			site_time_zone="UTC",
+			partner_time_zone=None,
 		)
+		connector = FakeScriptSourceConnector()
+		connector.partner_records = [{"id": "TASK-1"}, {"id": "TASK-2"}]
 
-	def test_aggregate_merge_supports_stable_string_descending_sort(self):
-		result = runtime.merge_json_array_document(
-			{"items": [{"id": "1", "code": "B"}, {"id": "2", "code": "A"}]},
-			array_path="items",
-			items=[{"id": "3", "code": "C"}],
-			item_key_field="id",
-			sort_field="code",
-			sort_order="Descending",
-		)
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(get=lambda key, default=None: None)),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=connector),
+			patch("sync.sync.service.runtime._build_runtime_mapping_context", return_value=mapping_context),
+			patch("sync.sync.service.runtime._execute_frappe_source_script", return_value=[{"name": "TASK-1"}]),
+			patch(
+				"sync.sync.service.runtime.frappe.get_all",
+				return_value=[{"name": "TASK-1", "modified": "2026-01-01"}, {"name": "TASK-2", "modified": "2026-01-01"}],
+			) as mock_get_all,
+			patch("sync.sync.service.runtime._create_run_item"),
+			patch("sync.sync.service.runtime._track_pending_run_writes"),
+			patch("sync.sync.service.runtime._flush_pending_run_writes"),
+		):
+			runtime._run_engine(
+				SimpleNamespace(name="SYNC-SCRIPT"),
+				SimpleNamespace(name="RUN-1"),
+				context=runtime.SyncContext(config=config, dry_run=False, last_successful_sync=None),
+			)
 
-		self.assertEqual([item["id"] for item in result["items"]], ["3", "1", "2"])
+		mock_get_all.assert_called()
+		self.assertEqual(connector.deletes, [])
+
+	def test_frappe_source_script_validation_rejects_invalid_records_and_disabled_server_scripts(self):
+		with self.assertRaises(frappe.ValidationError):
+			runtime._normalize_frappe_source_script_records({"name": "TASK-1"})
+		with self.assertRaises(frappe.ValidationError):
+			runtime._normalize_frappe_source_script_records(["TASK-1"])
+
+		with (
+			patch("sync.sync.service.runtime._server_script_enabled", return_value=False),
+			self.assertRaises(frappe.ValidationError),
+		):
+			runtime._coerce_config(
+				SimpleNamespace(
+					name="SYNC-SCRIPT",
+					doctype="Task",
+					partner="PARTNER-1",
+					sync_type="Frappe -> Partner",
+					table_name="public.sync_records",
+					use_last_sync_date=False,
+					match_fields=["name"],
+					mapping={"name": {"partner_field": "id", "direction": "Frappe -> Partner"}},
+					frappe_source_mode=runtime.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+					frappe_source_script="records = []",
+				)
+			)
 
 	def test_pairing_key_and_identity_index_helpers_cover_mapping_branches(self):
 		config = _identity_match_config()

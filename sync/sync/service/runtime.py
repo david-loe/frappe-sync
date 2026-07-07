@@ -27,6 +27,9 @@ from sync.sync.constants import (
 	FRAPPE_WRITE_HOOK_TYPE_BUILTIN_ACTION,
 	FRAPPE_WRITE_HOOK_TYPE_CUSTOM_SCRIPT,
 	FRAPPE_WRITE_HOOK_TYPES,
+	FRAPPE_SOURCE_MODE_DOCTYPE_QUERY,
+	FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+	FRAPPE_SOURCE_MODES,
 	MAPPING_DIRECTION_BOTH,
 	MAPPING_DIRECTION_FRAPPE_TO_PARTNER,
 	MAPPING_DIRECTION_PARTNER_TO_FRAPPE,
@@ -35,9 +38,6 @@ from sync.sync.constants import (
 	MATCH_MODES,
 	ONE_WAY_MATCH_ALL,
 	ONE_WAY_MATCH_FIRST,
-	PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE,
-	PARTNER_WRITE_MODE_ROW_UPSERT,
-	PARTNER_WRITE_MODES,
 	RUN_STATUS_ERROR,
 	RUN_STATUS_NEEDS_REVIEW,
 	RUN_STATUS_PARTIAL_ERROR,
@@ -66,7 +66,6 @@ from sync.sync.constants import (
 )
 
 from .connectors import ConnectorCreateOptions, get_connector_for_partner
-from .aggregate import merge_json_array_document
 
 try:
 	from jinja2 import StrictUndefined
@@ -187,16 +186,8 @@ class SyncDefinitionConfig:
 	frappe_write_hooks: tuple[SyncFrappeWriteHookConfig, ...] = ()
 	render_read_query_template: bool = False
 	computed_fields: tuple[SyncComputedFieldConfig, ...] = ()
-	partner_write_mode: str = PARTNER_WRITE_MODE_ROW_UPSERT
-	aggregate_target_table_name: str | None = None
-	aggregate_target_key_field: str | None = None
-	aggregate_target_key_value: Any = None
-	aggregate_json_column: str | None = None
-	aggregate_json_array_path: str | None = None
-	aggregate_item_key_field: str | None = None
-	aggregate_sort_field: str | None = None
-	aggregate_sort_order: str | None = None
-	aggregate_preserve_unmatched: bool = True
+	frappe_source_mode: str = FRAPPE_SOURCE_MODE_DOCTYPE_QUERY
+	frappe_source_script: str | None = None
 
 @dataclass(slots=True)
 class PartnerMatchLookup:
@@ -705,7 +696,7 @@ def _build_preview(sync_definition: Any, *, limit: int) -> dict[str, Any]:
 	return {
 		"sync_definition": config.name,
 		"sync_type": config.sync_type,
-		"partner_write_mode": config.partner_write_mode,
+		"frappe_source_mode": config.frappe_source_mode,
 		"partner": config.partner,
 		"connector": type(connector).__name__,
 		"partner_ping": {"ok": ping.ok, "message": ping.message, "details": ping.details},
@@ -949,9 +940,6 @@ def _run_engine(
 	config = context.config
 	partner_doc = frappe.get_doc(SYNC_PARTNER, config.partner)
 	config = _merge_partner_runtime_settings(config, partner_doc)
-	if config.partner_write_mode == PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE:
-		config = replace(config, use_last_sync_date=False, delete_missing=False)
-		context = replace(context, config=config)
 	mapping_context = _build_runtime_mapping_context(config)
 	connector = get_connector_for_partner(partner_doc)
 	ping = connector.ping()
@@ -959,16 +947,7 @@ def _run_engine(
 		raise frappe.ValidationError(f"Partner connector validation failed: {ping.message}")
 
 	stats = SyncStats()
-	if config.partner_write_mode == PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE:
-		_sync_frappe_to_partner_json_array_aggregate(
-			run_doc=run_doc,
-			config=config,
-			connector=connector,
-			mapping_context=mapping_context,
-			dry_run=context.dry_run,
-			stats=stats,
-		)
-	elif config.sync_type == "Frappe -> Partner":
+	if config.sync_type == "Frappe -> Partner":
 		partner_batches = _iter_partner_source_batches(config, connector, context, apply_delta_filter=False)
 		if config.delete_missing and context.is_full_sync:
 			partner_records = [
@@ -991,6 +970,15 @@ def _run_engine(
 				for batch in _iter_frappe_source_batches(config, context)
 				for record in batch
 			]
+			complete_source_keys = _frappe_source_key_set_from_batches(
+				config,
+				_iter_frappe_source_batches(
+					config,
+					context,
+					apply_delta_filter=False,
+					use_script_source=False,
+				),
+			)
 			_sync_frappe_to_partner(
 				run_doc=run_doc,
 				config=config,
@@ -1003,6 +991,7 @@ def _run_engine(
 				stats=stats,
 				label_direction="Frappe -> Partner",
 				full_sync=True,
+				source_keys=complete_source_keys,
 			)
 		else:
 			source_keys: set[tuple[Any, ...]] = set()
@@ -1023,7 +1012,12 @@ def _run_engine(
 				)
 			_flush_pending_run_writes(run_doc, force=True)
 	elif config.sync_type == "Frappe <- Partner":
-		frappe_records = _get_frappe_source_records(config, context, apply_delta_filter=False)
+		frappe_records = _get_frappe_source_records(
+			config,
+			context,
+			apply_delta_filter=False,
+			use_script_source=False,
+		)
 		frappe_lookup = _build_frappe_match_lookup(config, frappe_records)
 		if config.delete_missing and context.is_full_sync:
 			partner_source = [
@@ -1072,10 +1066,15 @@ def _run_engine(
 			frappe_lookup_index = (
 				[
 					record
-					for batch in _iter_frappe_source_batches(config, context, apply_delta_filter=False)
+					for batch in _iter_frappe_source_batches(
+						config,
+						context,
+						apply_delta_filter=False,
+						use_script_source=False,
+					)
 					for record in batch
 				]
-				if context.is_delta_sync
+				if context.is_delta_sync or _config_frappe_source_mode(config) == FRAPPE_SOURCE_MODE_PYTHON_SCRIPT
 				else frappe_index
 			)
 			partner_index = [
@@ -1100,9 +1099,14 @@ def _run_engine(
 			frappe_lookup_index = (
 				_build_frappe_index_from_batches(
 					config,
-					_iter_frappe_source_batches(config, context, apply_delta_filter=False),
+					_iter_frappe_source_batches(
+						config,
+						context,
+						apply_delta_filter=False,
+						use_script_source=False,
+					),
 				)
-				if context.is_delta_sync
+				if context.is_delta_sync or _config_frappe_source_mode(config) == FRAPPE_SOURCE_MODE_PYTHON_SCRIPT
 				else frappe_index
 			)
 			partner_index = _build_partner_index_from_batches(
@@ -1158,16 +1162,8 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 				update_existing=_as_bool(getattr(config, "update_existing", 1)),
 				render_read_query_template=_as_bool(getattr(config, "render_read_query_template", 0)),
 				computed_fields=_normalize_computed_fields(getattr(config, "computed_fields", None)),
-				partner_write_mode=_normalize_partner_write_mode(getattr(config, "partner_write_mode", None)),
-				aggregate_target_table_name=_clean_string(getattr(config, "aggregate_target_table_name", None)),
-				aggregate_target_key_field=_clean_string(getattr(config, "aggregate_target_key_field", None)),
-				aggregate_target_key_value=getattr(config, "aggregate_target_key_value", None),
-				aggregate_json_column=_clean_string(getattr(config, "aggregate_json_column", None)),
-				aggregate_json_array_path=_clean_string(getattr(config, "aggregate_json_array_path", None)),
-				aggregate_item_key_field=_clean_string(getattr(config, "aggregate_item_key_field", None)),
-				aggregate_sort_field=_clean_string(getattr(config, "aggregate_sort_field", None)),
-				aggregate_sort_order=_normalize_aggregate_sort_order(getattr(config, "aggregate_sort_order", None)),
-				aggregate_preserve_unmatched=_as_bool(getattr(config, "aggregate_preserve_unmatched", 1)),
+				frappe_source_mode=_normalize_frappe_source_mode(getattr(config, "frappe_source_mode", None)),
+				frappe_source_script=_clean_string(getattr(config, "frappe_source_script", None)),
 				frappe_write_hooks=_normalize_frappe_write_hooks(
 					getattr(config, "frappe_write_hooks", None),
 					legacy_after_insert_action=getattr(config, "frappe_after_insert_action", None),
@@ -1223,16 +1219,8 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		update_existing=_as_bool(getattr(config, "update_existing", 1)),
 		render_read_query_template=_as_bool(getattr(config, "render_read_query_template", 0)),
 		computed_fields=_normalize_computed_fields(getattr(config, "computed_fields", None)),
-		partner_write_mode=_normalize_partner_write_mode(getattr(config, "partner_write_mode", None)),
-		aggregate_target_table_name=_clean_string(getattr(config, "aggregate_target_table_name", None)),
-		aggregate_target_key_field=_clean_string(getattr(config, "aggregate_target_key_field", None)),
-		aggregate_target_key_value=getattr(config, "aggregate_target_key_value", None),
-		aggregate_json_column=_clean_string(getattr(config, "aggregate_json_column", None)),
-		aggregate_json_array_path=_clean_string(getattr(config, "aggregate_json_array_path", None)),
-		aggregate_item_key_field=_clean_string(getattr(config, "aggregate_item_key_field", None)),
-		aggregate_sort_field=_clean_string(getattr(config, "aggregate_sort_field", None)),
-		aggregate_sort_order=_normalize_aggregate_sort_order(getattr(config, "aggregate_sort_order", None)),
-		aggregate_preserve_unmatched=_as_bool(getattr(config, "aggregate_preserve_unmatched", 1)),
+		frappe_source_mode=_normalize_frappe_source_mode(getattr(config, "frappe_source_mode", None)),
+		frappe_source_script=_clean_string(getattr(config, "frappe_source_script", None)),
 		frappe_write_hooks=_normalize_frappe_write_hooks(
 			getattr(config, "frappe_write_hooks", None),
 			legacy_after_insert_action=getattr(config, "frappe_after_insert_action", None),
@@ -1251,6 +1239,16 @@ def _build_frappe_index_from_batches(
 	for batch in record_batches:
 		index.update(_index_frappe_records(config, batch))
 	return index
+
+
+def _frappe_source_key_set_from_batches(config: SyncDefinitionConfig, record_batches: Any) -> set[tuple[Any, ...]]:
+	source_keys: set[tuple[Any, ...]] = set()
+	for batch in record_batches:
+		for record in batch:
+			key = _key_tuple_from_frappe(record, _config_match_fields(config))
+			if _valid_key(key):
+				source_keys.add(key)
+	return source_keys
 
 
 def _build_partner_index_from_batches(
@@ -1315,100 +1313,6 @@ def _build_frappe_match_lookup(
 		latest_by_key={key: grouped_records[-1] for key, grouped_records in groups.items()},
 		identity_by_value=_build_frappe_partner_identity_index(config, lookup_records),
 	)
-
-
-def _sync_frappe_to_partner_json_array_aggregate(
-	*,
-	run_doc: Any,
-	config: SyncDefinitionConfig,
-	connector: Any,
-	mapping_context: RuntimeMappingContext,
-	dry_run: bool,
-	stats: SyncStats,
-) -> None:
-	aggregate_context = SyncContext(config=config, dry_run=dry_run, last_successful_sync=None)
-	frappe_records = [
-		record
-		for batch in _iter_frappe_source_batches(config, aggregate_context, apply_delta_filter=False)
-		for record in batch
-	]
-	items = [
-		_map_frappe_to_partner(
-			record,
-			config.mapping,
-			config.value_mapping,
-			getattr(config, "value_mapping_fallbacks", None),
-			doctype=getattr(config, "doctype", None),
-			partner_time_zone=getattr(config, "partner_time_zone", None),
-			mapping_context=mapping_context,
-		)
-		for record in frappe_records
-	]
-	for item in items:
-		if item.get(config.aggregate_item_key_field) in (None, ""):
-			raise frappe.ValidationError(
-				f"Aggregate mapped item is missing key field {config.aggregate_item_key_field}."
-			)
-
-	try:
-		write = connector.upsert_json_array_aggregate(
-			source=config.aggregate_target_table_name or config.table_name,
-			key_field=config.aggregate_target_key_field,
-			key_value=config.aggregate_target_key_value,
-			json_column=config.aggregate_json_column,
-			array_path=config.aggregate_json_array_path,
-			items=items,
-			item_key_field=config.aggregate_item_key_field,
-			preserve_unmatched=config.aggregate_preserve_unmatched,
-			sort_field=config.aggregate_sort_field,
-			sort_order=config.aggregate_sort_order,
-			dry_run=dry_run,
-		)
-		if not write.ok:
-			raise RuntimeError(write.message or "Aggregate partner write failed.")
-	except Exception as exc:
-		stats.processed_count = len(frappe_records)
-		stats.error_count = max(stats.error_count, 1)
-		_create_run_item(
-			run_doc=run_doc,
-			config=config,
-			sync_definition_name=config.name,
-			action="error",
-			status="error",
-			message=str(exc),
-			direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
-			write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
-			frappe_record={"aggregate_item_count": len(items)},
-			partner_record=None,
-			commit=False,
-		)
-		_track_pending_run_writes(run_doc, 1)
-		_flush_pending_run_writes(run_doc)
-		return
-
-	stats.processed_count = len(frappe_records)
-	stats.success_count = len(frappe_records)
-	if getattr(write, "action", None) == "created":
-		stats.created_count = 1
-	else:
-		stats.updated_count = 1
-	_create_run_item(
-		run_doc=run_doc,
-		config=config,
-		sync_definition_name=config.name,
-		action=getattr(write, "action", None) or "updated",
-		status="success",
-		message="Dry run aggregate write." if dry_run else "Upserted partner JSON array aggregate.",
-		direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
-		write_direction=SYNC_TYPE_FRAPPE_TO_PARTNER,
-		frappe_record={"aggregate_item_count": len(items), "items": items if _capture_audit_payloads(config) else None},
-		partner_record=getattr(write, "record", None),
-		written_after_record=getattr(write, "record", None),
-		changes=[(config.aggregate_json_column or "json", None, f"{len(items)} aggregate items")],
-		commit=False,
-	)
-	_track_pending_run_writes(run_doc, 1)
-	_flush_pending_run_writes(run_doc)
 
 
 def _sync_frappe_to_partner(
@@ -3711,15 +3615,33 @@ def _get_frappe_source_records(
 	context: SyncContext,
 	*,
 	apply_delta_filter: bool = True,
+	use_script_source: bool = True,
 ) -> list[dict[str, Any]]:
 	return [
 		record
-		for batch in _iter_frappe_source_batches(config, context, apply_delta_filter=apply_delta_filter)
+		for batch in _iter_frappe_source_batches(
+			config,
+			context,
+			apply_delta_filter=apply_delta_filter,
+			use_script_source=use_script_source,
+		)
 		for record in batch
 	]
 
 
 def _iter_frappe_source_batches(
+	config: SyncDefinitionConfig,
+	context: SyncContext,
+	*,
+	apply_delta_filter: bool = True,
+	use_script_source: bool = True,
+):
+	if use_script_source and _config_frappe_source_mode(config) == FRAPPE_SOURCE_MODE_PYTHON_SCRIPT:
+		return _iter_frappe_source_script_batches(config, context)
+	return _iter_frappe_doctype_source_batches(config, context, apply_delta_filter=apply_delta_filter)
+
+
+def _iter_frappe_doctype_source_batches(
 	config: SyncDefinitionConfig,
 	context: SyncContext,
 	*,
@@ -3785,6 +3707,79 @@ def _iter_frappe_source_batches(
 				yield filtered
 
 	return _filtered_batches()
+
+
+def _iter_frappe_source_script_batches(config: SyncDefinitionConfig, context: SyncContext):
+	records = _execute_frappe_source_script(config, context)
+	batch_size = cint(getattr(config, "batch_size", 100)) or 100
+	for start in range(0, len(records), batch_size):
+		yield records[start:start + batch_size]
+
+
+def _execute_frappe_source_script(config: SyncDefinitionConfig, context: SyncContext) -> list[dict[str, Any]]:
+	from frappe.utils.safe_exec import safe_exec
+
+	helper_messages: list[str] = []
+	helpers = _FrappeSourceScriptHelpers(helper_messages)
+	script_context = {
+		"doctype": config.doctype,
+		"sync_definition": config.name,
+		"sync_type": config.sync_type,
+		"dry_run": bool(context.dry_run),
+		"last_successful_sync": context.last_successful_sync,
+		"delta_since": context.delta_since,
+		"is_delta_sync": context.is_delta_sync,
+		"batch_size": config.batch_size,
+		"filters": config.filters,
+		"helpers": helpers,
+		"records": None,
+	}
+	_globals, locals_ = safe_exec(
+		getattr(config, "frappe_source_script", None) or "",
+		_globals=script_context,
+		_locals=script_context,
+		restrict_commit_rollback=True,
+		script_filename=f"sync_frappe_source_{config.name}",
+	)
+	records = (locals_ or {}).get("records")
+	if records is None:
+		records = (_globals or {}).get("records")
+	return _normalize_frappe_source_script_records(records)
+
+
+def _normalize_frappe_source_script_records(records: Any) -> list[dict[str, Any]]:
+	if records is None:
+		raise frappe.ValidationError("Frappe Source Script must set records.")
+	if not isinstance(records, list | tuple):
+		raise frappe.ValidationError("Frappe Source Script records must be a list.")
+	normalized: list[dict[str, Any]] = []
+	for idx, record in enumerate(records, start=1):
+		if not isinstance(record, dict):
+			raise frappe.ValidationError(f"Frappe Source Script record {idx} must be a dictionary.")
+		normalized.append(dict(record))
+	return normalized
+
+
+class _FrappeSourceScriptHelpers:
+	def __init__(self, messages: list[str]):
+		self._messages = messages
+
+	def get_all(self, doctype: str, **kwargs: Any) -> list[dict[str, Any]]:
+		return frappe.get_all(doctype, **kwargs)
+
+	def get_doc(self, doctype: str, name: str) -> Any:
+		return frappe.get_doc(doctype, name)
+
+	def db_get_value(self, doctype: str, filters: Any, fieldname: str) -> Any:
+		return frappe.db.get_value(doctype, filters, fieldname)
+
+	def log(self, message: Any) -> None:
+		text = _clean_string(message)
+		if text:
+			self._messages.append(text)
+
+	def to_json(self, value: Any) -> str:
+		return json.dumps(value, default=str, ensure_ascii=True)
 
 
 def _with_computed_fields(
@@ -4600,20 +4595,10 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		capture_audit_payloads=_as_bool(_first_value(sync_definition_doc, ["capture_audit_payloads"], default=0)),
 		render_read_query_template=_as_bool(_first_value(sync_definition_doc, ["render_read_query_template"], default=0)),
 		computed_fields=computed_fields,
-		partner_write_mode=_normalize_partner_write_mode(
-			_first_value(sync_definition_doc, ["partner_write_mode"], default=PARTNER_WRITE_MODE_ROW_UPSERT)
+		frappe_source_mode=_normalize_frappe_source_mode(
+			_first_value(sync_definition_doc, ["frappe_source_mode"], default=FRAPPE_SOURCE_MODE_DOCTYPE_QUERY)
 		),
-		aggregate_target_table_name=_clean_string(_first_value(sync_definition_doc, ["aggregate_target_table_name"])),
-		aggregate_target_key_field=_clean_string(_first_value(sync_definition_doc, ["aggregate_target_key_field"])),
-		aggregate_target_key_value=_first_value(sync_definition_doc, ["aggregate_target_key_value"]),
-		aggregate_json_column=_clean_string(_first_value(sync_definition_doc, ["aggregate_json_column"])),
-		aggregate_json_array_path=_clean_string(_first_value(sync_definition_doc, ["aggregate_json_array_path"])),
-		aggregate_item_key_field=_clean_string(_first_value(sync_definition_doc, ["aggregate_item_key_field"])),
-		aggregate_sort_field=_clean_string(_first_value(sync_definition_doc, ["aggregate_sort_field"])),
-		aggregate_sort_order=_normalize_aggregate_sort_order(_first_value(sync_definition_doc, ["aggregate_sort_order"])),
-		aggregate_preserve_unmatched=_as_bool(
-			_first_value(sync_definition_doc, ["aggregate_preserve_unmatched"], default=1)
-		),
+		frappe_source_script=_clean_string(_first_value(sync_definition_doc, ["frappe_source_script"])),
 	)
 	if not config.table_name and not _read_query_can_replace_table_name(config.sync_type, config.read_query):
 		raise frappe.ValidationError("Table Name is required.")
@@ -4856,8 +4841,6 @@ def _required_mapping_directions(sync_type: str) -> list[str]:
 
 def _validate_runtime_mapping(config: SyncDefinitionConfig) -> None:
 	mapping = _normalize_field_mapping(config.mapping)
-	if _config_partner_write_mode(config) == PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE:
-		_validate_aggregate_write_config(config)
 	if _config_match_mode(config) == MATCH_MODE_MATCH_FIELDS and mapping and not _config_match_fields(config):
 		raise frappe.ValidationError("Match fields are required in Match Fields mode.")
 	if _config_match_mode(config) == MATCH_MODE_IDENTITY_FIELDS:
@@ -4904,28 +4887,17 @@ def _validate_runtime_mapping(config: SyncDefinitionConfig) -> None:
 	duplicate_partner = partner_timestamp_fields & mapped_partner_fields
 	if duplicate_frappe or duplicate_partner:
 		raise frappe.ValidationError("Dedicated timestamp fields must not also exist in Field Mapping.")
+	_validate_frappe_source_script(config)
 	_validate_frappe_write_hooks(config)
 
 
-def _validate_aggregate_write_config(config: SyncDefinitionConfig) -> None:
-	if config.sync_type != SYNC_TYPE_FRAPPE_TO_PARTNER:
-		raise frappe.ValidationError("JSON Array Aggregate writes are only supported for Frappe -> Partner sync.")
-	if _as_bool(getattr(config, "delete_missing", 0)):
-		raise frappe.ValidationError("Delete Missing is not supported for JSON Array Aggregate writes.")
-	missing = []
-	for fieldname, label in (
-		("aggregate_target_key_field", "Aggregate Target Key Field"),
-		("aggregate_target_key_value", "Aggregate Target Key Value"),
-		("aggregate_json_column", "Aggregate JSON Column"),
-		("aggregate_json_array_path", "Aggregate JSON Array Path"),
-		("aggregate_item_key_field", "Aggregate Item Key Field"),
-	):
-		if getattr(config, fieldname, None) in (None, ""):
-			missing.append(label)
-	if not (getattr(config, "aggregate_target_table_name", None) or getattr(config, "table_name", None)):
-		missing.append("Aggregate Target Table Name")
-	if missing:
-		raise frappe.ValidationError("JSON Array Aggregate requires: " + ", ".join(missing) + ".")
+def _validate_frappe_source_script(config: SyncDefinitionConfig) -> None:
+	if _config_frappe_source_mode(config) != FRAPPE_SOURCE_MODE_PYTHON_SCRIPT:
+		return
+	if not _clean_string(getattr(config, "frappe_source_script", None)):
+		raise frappe.ValidationError("Frappe Source Script is required.")
+	if not _server_script_enabled():
+		raise frappe.ValidationError("Frappe Source Script requires server_script_enabled.")
 
 
 def _validate_frappe_write_hooks(config: SyncDefinitionConfig) -> None:
@@ -5076,23 +5048,11 @@ def _computed_required_source_fields(config: SyncDefinitionConfig | Any) -> set[
 	return result
 
 
-def _normalize_partner_write_mode(value: Any) -> str:
-	mode = _clean_string(value) or PARTNER_WRITE_MODE_ROW_UPSERT
-	if mode not in PARTNER_WRITE_MODES:
-		raise frappe.ValidationError(f"Partner Write Mode must be one of: {', '.join(PARTNER_WRITE_MODES)}.")
+def _normalize_frappe_source_mode(value: Any) -> str:
+	mode = _clean_string(value) or FRAPPE_SOURCE_MODE_DOCTYPE_QUERY
+	if mode not in FRAPPE_SOURCE_MODES:
+		raise frappe.ValidationError(f"Frappe Source Mode must be one of: {', '.join(FRAPPE_SOURCE_MODES)}.")
 	return mode
-
-
-def _normalize_aggregate_sort_order(value: Any) -> str | None:
-	order = _clean_string(value)
-	if not order:
-		return None
-	normalized = order.lower()
-	if normalized in {"asc", "ascending"}:
-		return "Ascending"
-	if normalized in {"desc", "descending"}:
-		return "Descending"
-	raise frappe.ValidationError("Aggregate Sort Order must be Ascending or Descending.")
 
 
 def _get_value_mapping(sync_definition_doc: Any) -> dict[str, dict[Any, Any]]:
@@ -6012,8 +5972,8 @@ def _config_render_read_query_template(config: Any) -> bool:
 	return _as_bool(getattr(config, "render_read_query_template", 0))
 
 
-def _config_partner_write_mode(config: Any) -> str:
-	return _normalize_partner_write_mode(getattr(config, "partner_write_mode", None))
+def _config_frappe_source_mode(config: Any) -> str:
+	return _normalize_frappe_source_mode(getattr(config, "frappe_source_mode", None))
 
 
 def _resolve_read_query(config: Any, connector: Any, context: dict[str, Any] | None = None) -> str | None:
@@ -6136,8 +6096,6 @@ def _config_partner_creation_field(config: Any) -> str | None:
 
 
 def _partner_timestamps_required(config: Any) -> bool:
-	if _config_partner_write_mode(config) == PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE:
-		return False
 	return str(getattr(config, "sync_type", "") or "") == SYNC_TYPE_BIDIRECTIONAL or _as_bool(
 		getattr(config, "use_last_sync_date", 0)
 	)

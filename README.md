@@ -34,6 +34,10 @@ Each sync entry links to a `Sync Partner` (host / port / credentials) plus a `Sy
 
 The app ships with Desk helpers (Run, Preview, Export YAML, Import YAML, Open Latest Run, Test Connection). Use the YAML export/import as a transport format, but keep secret values out of shared exports.
 
+### Frappe source scripts
+
+`Frappe -> Partner` sync definitions normally load Frappe records through the selected DocType plus `Filter Expression`. For custom source shapes, set `Frappe Source Mode` to `Python Script` and assign `records = [...]` in the script. Script sources require `server_script_enabled`. Each record is mapped and written through the normal partner row upsert path, so a script can also emit one record with a prebuilt JSON field when the partner expects aggregated data.
+
 ### Read Query templating
 
 `Read Query` can optionally be rendered as a safe Jinja template before partner reads by enabling `Render Read Query Template` on the `Sync Definition`. Templating only affects `read_query`; `table_name` remains the partner write target. `delete_missing` still cannot be combined with any `read_query`, templated or not.

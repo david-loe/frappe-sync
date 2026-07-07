@@ -39,6 +39,8 @@ class FakeSyncDefinitionDoc:
 		self.doctype_name = values.get("doctype_name", "Task")
 		self.frequency_cron = values.get("frequency_cron", "*/15 * * * *")
 		self.filter_expression = values.get("filter_expression")
+		self.frappe_source_mode = values.get("frappe_source_mode", "DocType Query")
+		self.frappe_source_script = values.get("frappe_source_script")
 		self.batch_size = values.get("batch_size", 50)
 		self.timestamp_buffer_ms = values.get("timestamp_buffer_ms", 100)
 		self.create_new = values.get("create_new", 1)
@@ -458,6 +460,13 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		self.assertEqual(fields["conflict_policy"]["mandatory_depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'")
 		self.assertEqual(fields["timestamp_tie_breaker"]["depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'")
 		self.assertEqual(fields["one_way_match_mode"]["depends_on"], "eval:doc.sync_type != 'Frappe <-> Partner'")
+		self.assertEqual(fields["frappe_source_mode"]["default"], "DocType Query")
+		self.assertEqual(fields["frappe_source_mode"]["options"], "DocType Query\nPython Script")
+		self.assertEqual(fields["frappe_source_script"]["depends_on"], "eval:doc.frappe_source_mode == 'Python Script'")
+		self.assertEqual(
+			fields["frappe_source_script"]["mandatory_depends_on"],
+			"eval:doc.frappe_source_mode == 'Python Script'",
+		)
 
 	def test_validate_one_way_match_mode_normalizes_and_rejects_invalid_values(self):
 		doc = FakeSyncDefinitionDoc(one_way_match_mode=" all_matches ")
@@ -529,6 +538,31 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 				sync_definition_module.SyncDefinition.validate_filter_expression(FakeSyncDefinitionDoc(filter_expression="1"))
 
 		mock_throw.assert_called_once_with("Filter Expression must decode to a JSON array or object.")
+
+	def test_validate_frappe_source_settings_requires_script_and_server_script_flag(self):
+		doc = FakeSyncDefinitionDoc(frappe_source_mode="Python Script", frappe_source_script=" records = [] ")
+		with patch.object(sync_definition_module, "_server_script_enabled", return_value=True):
+			sync_definition_module.SyncDefinition.validate_frappe_source_settings(doc)
+		self.assertEqual(doc.frappe_source_mode, "Python Script")
+		self.assertEqual(doc.frappe_source_script, "records = []")
+
+		blank_doc = FakeSyncDefinitionDoc(frappe_source_mode="Python Script", frappe_source_script="")
+		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("missing-script")):
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_frappe_source_settings(blank_doc)
+
+		disabled_doc = FakeSyncDefinitionDoc(frappe_source_mode="Python Script", frappe_source_script="records = []")
+		with (
+			patch.object(sync_definition_module, "_server_script_enabled", return_value=False),
+			patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("disabled")),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				sync_definition_module.SyncDefinition.validate_frappe_source_settings(disabled_doc)
+
+		query_doc = FakeSyncDefinitionDoc(frappe_source_mode="", frappe_source_script="records = []")
+		sync_definition_module.SyncDefinition.validate_frappe_source_settings(query_doc)
+		self.assertEqual(query_doc.frappe_source_mode, "DocType Query")
+		self.assertIsNone(query_doc.frappe_source_script)
 
 	def test_getters_and_modified_fields_are_normalized(self):
 		doc = FakeSyncDefinitionDoc(
