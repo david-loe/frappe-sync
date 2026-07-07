@@ -4335,25 +4335,26 @@ def _run_after_match_frappe_write_hooks(
 	if not docname:
 		raise frappe.ValidationError("After Match hook requires a matched Frappe document name.")
 	doc = frappe.get_doc(config.doctype, docname)
-	return _execute_frappe_write_hooks(
-		event=FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH,
-		hooks=hooks,
-		doc=doc,
-		context={
-			**_frappe_write_hook_context(
-				config=config,
-				run_doc=run_doc,
-				event=FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH,
-				partner_record=partner_record,
-				frappe_payload=frappe_payload,
-				frappe_before_record=frappe_record,
-				changes=changes,
-				dry_run=dry_run,
-			),
-			"doc": doc,
-			"docname": doc.name,
-		},
-	)
+	with _frappe_write_savepoint(enabled=bool(hooks)):
+		return _execute_frappe_write_hooks(
+			event=FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH,
+			hooks=hooks,
+			doc=doc,
+			context={
+				**_frappe_write_hook_context(
+					config=config,
+					run_doc=run_doc,
+					event=FRAPPE_WRITE_HOOK_EVENT_AFTER_MATCH,
+					partner_record=partner_record,
+					frappe_payload=frappe_payload,
+					frappe_before_record=frappe_record,
+					changes=changes,
+					dry_run=dry_run,
+				),
+				"doc": doc,
+				"docname": doc.name,
+			},
+		)
 
 
 def _docstatus_value(doc: Any) -> int:
@@ -6253,12 +6254,12 @@ def _get_frappe_write_hooks(sync_definition_doc: Any) -> tuple[SyncFrappeWriteHo
 	try:
 		rows = _get_child_rows_by_options(sync_definition_doc, SYNC_FRAPPE_WRITE_HOOK)
 	except Exception:
-		rows = []
-	return _normalize_frappe_write_hooks(
-		rows,
-		legacy_after_insert_action=_first_value(sync_definition_doc, ["frappe_after_insert_action"]),
-		legacy_after_update_action=_first_value(sync_definition_doc, ["frappe_after_update_action"]),
-	)
+		return _normalize_frappe_write_hooks(
+			[],
+			legacy_after_insert_action=_first_value(sync_definition_doc, ["frappe_after_insert_action"]),
+			legacy_after_update_action=_first_value(sync_definition_doc, ["frappe_after_update_action"]),
+		)
+	return _normalize_frappe_write_hooks(rows)
 
 
 def _config_timestamp_buffer_ms(config: Any) -> int:

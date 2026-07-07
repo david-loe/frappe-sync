@@ -1,6 +1,7 @@
 import frappe
 
 from sync.sync.constants import (
+	FRAPPE_WRITE_ACTION_NONE,
 	FRAPPE_WRITE_ACTION_SUBMIT,
 	FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT,
 	FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE,
@@ -39,6 +40,21 @@ def execute():
 			event=FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE,
 			action=row.get("frappe_after_update_action") if has_update_action else None,
 		)
+		_clear_legacy_actions(
+			parent=name,
+			has_insert_action=has_insert_action,
+			has_update_action=has_update_action,
+		)
+
+
+def _clear_legacy_actions(*, parent: str, has_insert_action: bool, has_update_action: bool) -> None:
+	values = {}
+	if has_insert_action:
+		values["frappe_after_insert_action"] = FRAPPE_WRITE_ACTION_NONE
+	if has_update_action:
+		values["frappe_after_update_action"] = FRAPPE_WRITE_ACTION_NONE
+	if values:
+		frappe.db.set_value(SYNC_DEFINITION, parent, values, update_modified=False)
 
 
 def _migrate_action(*, parent: str, event: str, action: str | None) -> None:

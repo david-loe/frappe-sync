@@ -119,6 +119,8 @@ class TestRuntimeHelpers(unittest.TestCase):
 						partner_value="2",
 					),
 				]
+			if childdoctype == "Sync Frappe Write Hook":
+				raise RuntimeError("legacy schema")
 			return []
 
 		mock_children.side_effect = fake_rows
@@ -1344,6 +1346,89 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		self.assertTrue(result.changed)
 		self.assertEqual(result.messages, ("handled",))
+
+	def test_after_match_hooks_run_inside_savepoint_and_release_on_success(self):
+		doc = MutableDoc(name="TASK-1")
+		hook = runtime.SyncFrappeWriteHookConfig(
+			enabled=True,
+			event="After Match",
+			hook_type="Custom Script",
+			script="result = {'changed': True}",
+		)
+		db = _db_stub(savepoint=Mock(), release_savepoint=Mock(), rollback=Mock())
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				_runtime_frappe_stub(
+					db=db,
+					get_doc=Mock(return_value=doc),
+				),
+			),
+			patch(
+				"sync.sync.service.runtime._execute_frappe_write_hooks",
+				return_value=runtime.FrappeWriteHookResult(changed=True, messages=("handled",)),
+			) as mock_execute,
+		):
+			result = runtime._run_after_match_frappe_write_hooks(
+				config=SimpleNamespace(
+					doctype="Task",
+					frappe_write_hooks=(hook,),
+				),
+				run_doc=SimpleNamespace(name="RUN-1"),
+				partner_record={"id": "P-1"},
+				frappe_record={"name": "TASK-1"},
+				frappe_payload={"subject": "Updated"},
+				changes=[("subject", "Old", "Updated")],
+				dry_run=False,
+			)
+
+		self.assertTrue(result.changed)
+		db.savepoint.assert_called_once_with("sync_frappe_write")
+		db.release_savepoint.assert_called_once_with("sync_frappe_write")
+		db.rollback.assert_not_called()
+		mock_execute.assert_called_once()
+
+	def test_after_match_hooks_roll_back_savepoint_on_error(self):
+		doc = MutableDoc(name="TASK-1")
+		hook = runtime.SyncFrappeWriteHookConfig(
+			enabled=True,
+			event="After Match",
+			hook_type="Custom Script",
+			script="frappe.db.set_value('Task', docname, 'subject', 'bad'); raise Exception('boom')",
+		)
+		db = _db_stub(savepoint=Mock(), release_savepoint=Mock(), rollback=Mock())
+
+		with (
+			patch(
+				"sync.sync.service.runtime.frappe",
+				_runtime_frappe_stub(
+					db=db,
+					get_doc=Mock(return_value=doc),
+				),
+			),
+			patch(
+				"sync.sync.service.runtime._execute_frappe_write_hooks",
+				side_effect=RuntimeError("boom"),
+			),
+			self.assertRaisesRegex(RuntimeError, "boom"),
+		):
+			runtime._run_after_match_frappe_write_hooks(
+				config=SimpleNamespace(
+					doctype="Task",
+					frappe_write_hooks=(hook,),
+				),
+				run_doc=SimpleNamespace(name="RUN-1"),
+				partner_record={"id": "P-1"},
+				frappe_record={"name": "TASK-1"},
+				frappe_payload={"subject": "Updated"},
+				changes=[("subject", "Old", "Updated")],
+				dry_run=False,
+			)
+
+		db.savepoint.assert_called_once_with("sync_frappe_write")
+		db.rollback.assert_called_once_with(save_point="sync_frappe_write")
+		db.release_savepoint.assert_not_called()
 
 	def test_update_existing_disabled_skips_partner_and_frappe_update_helpers(self):
 		config = SimpleNamespace(update_existing=0)

@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from sync import setup
+from sync.patches import migrate_frappe_write_hooks
 
 
 class DummyDoc:
@@ -97,3 +98,60 @@ class TestSetupHooks(unittest.TestCase):
 		self.assertEqual(doc.updated["run_retention_days_success"], 90)
 		self.assertEqual(doc.updated["run_retention_days_error"], 365)
 		self.assertTrue(doc.saved)
+
+	def test_migrate_frappe_write_hooks_inserts_child_rows_and_clears_legacy_actions(self):
+		inserted_docs: list[SimpleNamespace] = []
+		set_values: list[tuple[str, str, dict, bool]] = []
+
+		def fake_get_doc(payload):
+			doc = SimpleNamespace(payload=dict(payload))
+			doc.insert = lambda **kwargs: inserted_docs.append(doc)
+			return doc
+
+		def fake_has_column(_doctype, column):
+			return column in {"frappe_after_insert_action", "frappe_after_update_action"}
+
+		db = _db_stub(
+			table_exists=lambda doctype: doctype == "Sync Definition",
+			has_column=fake_has_column,
+			exists=lambda *args, **kwargs: False,
+			count=lambda *args, **kwargs: 0,
+			set_value=lambda doctype, name, values, update_modified=False: set_values.append(
+				(doctype, name, dict(values), update_modified)
+			),
+		)
+
+		with patch.object(
+			migrate_frappe_write_hooks,
+			"frappe",
+			SimpleNamespace(
+				db=db,
+				get_all=lambda doctype, fields: [
+					{
+						"name": "SYNC-1",
+						"frappe_after_insert_action": "Submit",
+						"frappe_after_update_action": "None",
+					}
+				],
+				get_doc=fake_get_doc,
+			),
+		):
+			migrate_frappe_write_hooks.execute()
+
+		self.assertEqual(len(inserted_docs), 1)
+		self.assertEqual(inserted_docs[0].payload["event"], "After Insert")
+		self.assertEqual(inserted_docs[0].payload["action"], "Submit")
+		self.assertEqual(
+			set_values,
+			[
+				(
+					"Sync Definition",
+					"SYNC-1",
+					{
+						"frappe_after_insert_action": "None",
+						"frappe_after_update_action": "None",
+					},
+					False,
+				)
+			],
+		)

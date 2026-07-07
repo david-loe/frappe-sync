@@ -644,6 +644,36 @@ class TestRuntimeManagement(unittest.TestCase):
 			],
 		)
 
+	def test_saved_docs_with_loaded_empty_hook_table_do_not_fall_back_to_legacy_actions(self):
+		doc = DummyDoc(
+			{
+				"name": "SYNC-1",
+				"frappe_after_insert_action": "Submit",
+				"frappe_after_update_action": "Submit",
+			},
+			doctype="Sync Definition",
+		)
+
+		with patch("sync.sync.service.runtime._get_child_rows_by_options", return_value=[]):
+			self.assertEqual(runtime._get_frappe_write_hooks(doc), ())
+
+	def test_legacy_hook_fallback_still_applies_when_child_table_lookup_fails(self):
+		doc = DummyDoc(
+			{
+				"name": "SYNC-1",
+				"frappe_after_insert_action": "Submit",
+				"frappe_after_update_action": "None",
+			},
+			doctype="Sync Definition",
+		)
+
+		with patch("sync.sync.service.runtime._get_child_rows_by_options", side_effect=RuntimeError("legacy schema")):
+			hooks = runtime._get_frappe_write_hooks(doc)
+
+		self.assertEqual(len(hooks), 1)
+		self.assertEqual(hooks[0].event, "After Insert")
+		self.assertEqual(hooks[0].action, "Submit")
+
 	def test_coerce_config_clears_delete_missing_for_bidirectional_sync(self):
 		coerced = runtime._coerce_config(
 			SimpleNamespace(
