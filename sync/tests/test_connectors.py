@@ -915,6 +915,96 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 		self.assertEqual(result.resolved_key_values, {"id": "AUTO-7"})
 		self.assertEqual(result.record, {"id": "AUTO-7", "status": "open"})
 
+	def test_json_array_aggregate_update_merges_postgres_document(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
+		cursor = _FakeCursor(fetchone_row=('{"payload":{"items":[{"id":"A","qty":1}]},"other":true}',))
+		connection = _FakeConnection(cursor)
+
+		with patch.object(connector, "_connect", return_value=connection):
+			result = connector.upsert_json_array_aggregate(
+				source="public.aggregate_targets",
+				key_field="target_key",
+				key_value="main",
+				json_column="payload_json",
+				array_path="payload.items",
+				items=[{"id": "A", "qty": 2}, {"id": "B", "qty": 1}],
+				item_key_field="id",
+				sort_field="qty",
+				sort_order="Ascending",
+			)
+
+		self.assertTrue(result.ok)
+		self.assertEqual(result.action, "updated")
+		self.assertEqual(result.record["payload_json"]["other"], True)
+		self.assertEqual(
+			result.record["payload_json"]["payload"]["items"],
+			[{"id": "B", "qty": 1}, {"id": "A", "qty": 2}],
+		)
+		self.assertEqual(
+			cursor.executed[0],
+			('SELECT "payload_json" FROM "public"."aggregate_targets" WHERE "target_key" = %s FOR UPDATE', ["main"]),
+		)
+		self.assertEqual(connection.commit_count, 1)
+
+	def test_json_array_aggregate_reports_missing_target_row_and_invalid_json(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
+
+		with patch.object(connector, "_connect", return_value=_FakeConnection(_FakeCursor(fetchone_row=None))):
+			missing = connector.upsert_json_array_aggregate(
+				source="public.aggregate_targets",
+				key_field="target_key",
+				key_value="main",
+				json_column="payload_json",
+				array_path="items",
+				items=[],
+				item_key_field="id",
+			)
+		self.assertFalse(missing.ok)
+		self.assertIn("target row was not found", missing.message)
+
+		with patch.object(connector, "_connect", return_value=_FakeConnection(_FakeCursor(fetchone_row=("{not-json",)))):
+			invalid = connector.upsert_json_array_aggregate(
+				source="public.aggregate_targets",
+				key_field="target_key",
+				key_value="main",
+				json_column="payload_json",
+				array_path="items",
+				items=[],
+				item_key_field="id",
+			)
+		self.assertFalse(invalid.ok)
+		self.assertIn("JSON merge failed", invalid.message)
+
+	def test_json_array_aggregate_unsupported_connector_and_dry_run(self):
+		unsupported = FirebirdConnector(
+			DummyPartner("firebird", host="localhost", database_name="sync", username="tester")
+		).upsert_json_array_aggregate(
+			source="SYNC_TABLE",
+			key_field="ID",
+			key_value="main",
+			json_column="PAYLOAD_JSON",
+			array_path="items",
+			items=[],
+			item_key_field="id",
+		)
+		self.assertFalse(unsupported.ok)
+		self.assertIn("does not support JSON array aggregate writes", unsupported.message)
+
+		dry_run = FirebirdConnector(
+			DummyPartner("firebird", host="localhost", database_name="sync", username="tester")
+		).upsert_json_array_aggregate(
+			source="SYNC_TABLE",
+			key_field="ID",
+			key_value="main",
+			json_column="PAYLOAD_JSON",
+			array_path="items",
+			items=[{"id": "A"}],
+			item_key_field="id",
+			dry_run=True,
+		)
+		self.assertTrue(dry_run.ok)
+		self.assertEqual(dry_run.changed_fields, ["PAYLOAD_JSON"])
+
 	def test_delete_record_validates_inputs_and_supports_dry_run(self):
 		connector = FirebirdConnector(DummyPartner("firebird", host="localhost", database_name="sync", username="tester"))
 

@@ -21,8 +21,14 @@ frappe.ui.form.on("Sync Definition", {
 	},
 	sync_type(frm) {
 		sync.helpers.normalizeDefinitionDeleteMissing(frm);
+		sync.helpers.normalizeDefinitionAggregateSettings(frm);
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
+		sync.helpers.refreshDefinitionSourceValidation(frm);
+	},
+	partner_write_mode(frm) {
+		sync.helpers.normalizeDefinitionAggregateSettings(frm);
+		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 	},
 	match_mode(frm) {
@@ -97,6 +103,12 @@ frappe.ui.form.on("Sync Field Mapping", {
 	},
 });
 
+frappe.ui.form.on("Sync Computed Field", {
+	field_name(frm) {
+		sync.helpers.refreshDefinitionFieldChoices(frm);
+	},
+});
+
 sync.helpers.clearNullValueMappingInput = function (frm, cdt, cdn, nullField, valueField) {
 	const row = locals[cdt]?.[cdn];
 	if (!row?.[nullField]) {
@@ -133,6 +145,11 @@ sync.helpers.collectDefinitionFieldChoiceValues = function (frm) {
 				values.push(row.frappe_field);
 			}
 		});
+	});
+	(frm.doc.computed_fields || []).forEach((row) => {
+		if (row?.field_name) {
+			values.push(row.field_name);
+		}
 	});
 	if (frm.doc.frappe_modified_field) {
 		values.push(frm.doc.frappe_modified_field);
@@ -291,6 +308,21 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields, tableFields = 
 	frm.set_df_property("frappe_modified_field", "options", options);
 	frm.set_df_property("frappe_modified_field", "description", description);
 	frm.refresh_field("frappe_modified_field");
+};
+
+sync.helpers.normalizeDefinitionAggregateSettings = function (frm) {
+	if (frm.doc.partner_write_mode !== "JSON Array Aggregate") {
+		return;
+	}
+	if (frm.doc.sync_type && frm.doc.sync_type !== "Frappe -> Partner") {
+		frm.set_value("sync_type", "Frappe -> Partner");
+	}
+	if (frm.doc.delete_missing) {
+		frm.set_value("delete_missing", 0);
+	}
+	if (frm.doc.use_last_sync_date) {
+		frm.set_value("use_last_sync_date", 0);
+	}
 };
 
 sync.helpers.parseDefinitionPartnerColumns = function (rawColumns) {

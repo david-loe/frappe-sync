@@ -14,6 +14,7 @@ from frappe.utils import cint
 from frappe.utils.password import get_decrypted_password
 
 from sync.sync.constants import SYNC_PARTNER_TYPE
+from sync.sync.service.aggregate import encode_json_document, merge_json_array_document
 
 POSTGRES_DELIMITED_IDENTIFIER_RE = re.compile(r"^[^\x00\"]+$")
 FIREBIRD_REGULAR_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$]{0,30}$")
@@ -163,6 +164,32 @@ class BasePartnerConnector(ABC):
 		if dry_run:
 			return ConnectorWriteResult(ok=True, message="dry_run")
 		return ConnectorWriteResult(ok=False, message="Connector does not support write operations")
+
+	def upsert_json_array_aggregate(
+		self,
+		*,
+		source: str | None = None,
+		key_field: str | None,
+		key_value: Any,
+		json_column: str | None,
+		array_path: str | None,
+		items: list[dict[str, Any]],
+		item_key_field: str | None,
+		preserve_unmatched: bool = True,
+		sort_field: str | None = None,
+		sort_order: str | None = None,
+		dry_run: bool = False,
+	) -> ConnectorWriteResult:
+		if dry_run:
+			return ConnectorWriteResult(
+				ok=True,
+				message="dry_run",
+				changed_fields=[field for field in [json_column] if field],
+				action="updated",
+				record={"items": list(items or [])},
+				resolved_key_values={str(key_field): key_value} if key_field else {},
+			)
+		return ConnectorWriteResult(ok=False, message="Connector does not support JSON array aggregate writes")
 
 	def delete_record(
 		self,
@@ -419,6 +446,89 @@ class RelationalConnector(BasePartnerConnector):
 			return ConnectorWriteResult(ok=True, message=f"{self.dialect} delete succeeded")
 		except Exception as err:
 			return ConnectorWriteResult(ok=False, message=f"{self.dialect} delete failed: {err}")
+
+	def upsert_json_array_aggregate(
+		self,
+		*,
+		source: str | None = None,
+		key_field: str | None,
+		key_value: Any,
+		json_column: str | None,
+		array_path: str | None,
+		items: list[dict[str, Any]],
+		item_key_field: str | None,
+		preserve_unmatched: bool = True,
+		sort_field: str | None = None,
+		sort_order: str | None = None,
+		dry_run: bool = False,
+	) -> ConnectorWriteResult:
+		if dry_run:
+			return ConnectorWriteResult(
+				ok=True,
+				message="dry_run",
+				changed_fields=[field for field in [json_column] if field],
+				action="updated",
+				record={str(key_field or "key"): key_value, str(json_column or "json"): {"items": list(items or [])}},
+				resolved_key_values={str(key_field): key_value} if key_field else {},
+			)
+		if self.dialect != "postgres":
+			return ConnectorWriteResult(ok=False, message=f"{self.dialect} does not support JSON array aggregate writes")
+
+		source_name, _ = self._resolve_source(source=source, query=None)
+		if not source_name:
+			return ConnectorWriteResult(ok=False, message="postgres aggregate write missing target table")
+		if not key_field or key_value in (None, ""):
+			return ConnectorWriteResult(ok=False, message="postgres aggregate write requires target key field and value")
+		if not json_column:
+			return ConnectorWriteResult(ok=False, message="postgres aggregate write requires JSON column")
+		if not array_path:
+			return ConnectorWriteResult(ok=False, message="postgres aggregate write requires JSON array path")
+		if not item_key_field:
+			return ConnectorWriteResult(ok=False, message="postgres aggregate write requires item key field")
+
+		table = self._quote_compound_identifier(source_name)
+		key_column = self._quote_compound_identifier(key_field)
+		json_field = self._quote_compound_identifier(json_column)
+		select_sql = f"SELECT {json_field} FROM {table} WHERE {key_column} = {self._placeholder()} FOR UPDATE"
+		update_sql = (
+			f"UPDATE {table} SET {json_field} = CAST({self._placeholder()} AS json) "
+			f"WHERE {key_column} = {self._placeholder()}"
+		)
+		try:
+			with self._connection() as connection:
+				db_cursor = connection.cursor()
+				db_cursor.execute(select_sql, [key_value])
+				row = db_cursor.fetchone()
+				if not row:
+					return ConnectorWriteResult(ok=False, message="postgres aggregate target row was not found")
+				current_document = row[0]
+				try:
+					merged_document = merge_json_array_document(
+						current_document,
+						array_path=array_path,
+						items=items or [],
+						item_key_field=item_key_field,
+						preserve_unmatched=preserve_unmatched,
+						sort_field=sort_field,
+						sort_order=sort_order,
+					)
+				except Exception as err:
+					return ConnectorWriteResult(ok=False, message=f"postgres aggregate JSON merge failed: {err}")
+				encoded_document = encode_json_document(merged_document)
+				db_cursor.execute(update_sql, [encoded_document, key_value])
+				connection.commit()
+				with suppress(Exception):
+					db_cursor.close()
+				return ConnectorWriteResult(
+					ok=True,
+					message="postgres aggregate update succeeded",
+					changed_fields=[json_column],
+					action="updated",
+					record={key_field: key_value, json_column: merged_document},
+					resolved_key_values={key_field: key_value},
+				)
+		except Exception as err:
+			return ConnectorWriteResult(ok=False, message=f"postgres aggregate update failed: {err}")
 
 	def _normalize_key_values(
 		self,

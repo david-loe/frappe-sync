@@ -142,6 +142,23 @@ class FakeIdentityConnector:
 		return ConnectorWriteResult(ok=True, message="deleted", action="deleted")
 
 
+class FakeAggregateConnector:
+	def __init__(self):
+		self.calls = []
+
+	def ping(self):
+		return ConnectorPingResult(ok=True, message="ok", details={})
+
+	def upsert_json_array_aggregate(self, **kwargs):
+		self.calls.append(kwargs)
+		return ConnectorWriteResult(
+			ok=True,
+			message="ok",
+			action="updated",
+			record={kwargs["json_column"]: {"items": kwargs["items"]}},
+		)
+
+
 class TestRuntimeAdditional(unittest.TestCase):
 	def test_run_due_sync_definitions_scheduled_sets_admin_and_delegates(self):
 		delegated = [{"status": "queued", "sync_definition": "SYNC-1"}]
@@ -157,6 +174,131 @@ class TestRuntimeAdditional(unittest.TestCase):
 		mock_set_user.assert_called_once_with("Administrator")
 		mock_recover.assert_called_once_with()
 		mock_run_due.assert_called_once_with(limit=7, queue=False)
+
+	def test_run_engine_routes_json_array_aggregate_write(self):
+		config = runtime.SyncDefinitionConfig(
+			name="SYNC-AGG",
+			doctype="Task",
+			partner="PARTNER-1",
+			sync_type="Frappe -> Partner",
+			cron=None,
+			filters=None,
+			batch_size=10,
+			create_new=True,
+			delete_missing=True,
+			use_last_sync_date=True,
+			conflict_policy="newest_wins",
+			timestamp_buffer_ms=0,
+			table_name="public.aggregate_targets",
+			read_query=None,
+			match_fields=["name"],
+			mapping={
+				"name": {"partner_field": "id", "direction": "Frappe -> Partner"},
+				"subject": {"partner_field": "label", "direction": "Frappe -> Partner"},
+			},
+			value_mapping={},
+			partner_write_mode=runtime.PARTNER_WRITE_MODE_JSON_ARRAY_AGGREGATE,
+			aggregate_target_key_field="target_key",
+			aggregate_target_key_value="main",
+			aggregate_json_column="payload_json",
+			aggregate_json_array_path="items",
+			aggregate_item_key_field="id",
+			aggregate_sort_field="label",
+			aggregate_sort_order="Ascending",
+		)
+		mapping_context = runtime.RuntimeMappingContext(
+			mapping=config.mapping,
+			value_mapping={},
+			value_mapping_fallbacks={},
+			to_partner_entries=(("name", "id"), ("subject", "label")),
+			to_frappe_entries=(),
+			connector_mapping={"name": "id", "subject": "label"},
+			reverse_value_mapping={},
+			frappe_datetime_fields=set(),
+			partner_datetime_fields=set(),
+			frappe_fieldnames={"name", "subject"},
+			child_table_options={},
+			site_time_zone="UTC",
+			partner_time_zone=None,
+		)
+		connector = FakeAggregateConnector()
+		created_items = []
+
+		with (
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(get=lambda key, default=None: None)),
+			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=connector),
+			patch("sync.sync.service.runtime._build_runtime_mapping_context", return_value=mapping_context),
+			patch(
+				"sync.sync.service.runtime._iter_frappe_source_batches",
+				return_value=[[{"name": "TASK-1", "subject": "A"}, {"name": "TASK-2", "subject": "B"}]],
+			) as mock_source,
+			patch("sync.sync.service.runtime._create_run_item", side_effect=lambda **kwargs: created_items.append(kwargs)),
+			patch("sync.sync.service.runtime._track_pending_run_writes"),
+			patch("sync.sync.service.runtime._flush_pending_run_writes"),
+		):
+			result = runtime._run_engine(
+				SimpleNamespace(name="SYNC-AGG"),
+				SimpleNamespace(name="RUN-1"),
+				context=runtime.SyncContext(config=config, dry_run=False, last_successful_sync=datetime(2026, 1, 1)),
+			)
+
+		self.assertEqual(result["delta_since"], None)
+		self.assertEqual(result["processed_count"], 2)
+		self.assertEqual(result["updated_count"], 1)
+		mock_source.assert_called_once()
+		self.assertFalse(mock_source.call_args.kwargs["apply_delta_filter"])
+		self.assertEqual(
+			connector.calls[0]["items"],
+			[{"id": "TASK-1", "label": "A"}, {"id": "TASK-2", "label": "B"}],
+		)
+		self.assertEqual(connector.calls[0]["source"], "public.aggregate_targets")
+		self.assertEqual(created_items[0]["action"], "updated")
+
+	def test_aggregate_merge_creates_updates_preserves_sorts_and_keeps_unrelated_json(self):
+		document = {
+			"meta": {"version": 1},
+			"payload": {
+				"items": [
+					{"id": "B", "qty": "2", "label": "old"},
+					{"id": "Z", "qty": "9", "label": "keep"},
+				]
+			},
+		}
+
+		result = runtime.merge_json_array_document(
+			document,
+			array_path="payload.items",
+			items=[
+				{"id": "A", "qty": "10", "label": "new"},
+				{"id": "B", "qty": "3"},
+			],
+			item_key_field="id",
+			preserve_unmatched=True,
+			sort_field="qty",
+			sort_order="Ascending",
+		)
+
+		self.assertEqual(result["meta"], {"version": 1})
+		self.assertEqual(
+			result["payload"]["items"],
+			[
+				{"id": "B", "qty": "3", "label": "old"},
+				{"id": "Z", "qty": "9", "label": "keep"},
+				{"id": "A", "qty": "10", "label": "new"},
+			],
+		)
+
+	def test_aggregate_merge_supports_stable_string_descending_sort(self):
+		result = runtime.merge_json_array_document(
+			{"items": [{"id": "1", "code": "B"}, {"id": "2", "code": "A"}]},
+			array_path="items",
+			items=[{"id": "3", "code": "C"}],
+			item_key_field="id",
+			sort_field="code",
+			sort_order="Descending",
+		)
+
+		self.assertEqual([item["id"] for item in result["items"]], ["3", "1", "2"])
 
 	def test_pairing_key_and_identity_index_helpers_cover_mapping_branches(self):
 		config = _identity_match_config()

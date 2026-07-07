@@ -197,6 +197,56 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		self.assertTrue(config.render_read_query_template)
 
+	def test_computed_field_rendering_handles_values_and_empty_strings(self):
+		config = SimpleNamespace(
+			computed_fields=(
+				runtime.SyncComputedFieldConfig(
+					field_name="display_name",
+					template="{{ doc.first_name }} {{ doc.last_name }}",
+					required_source_fields=("first_name", "last_name"),
+				),
+				runtime.SyncComputedFieldConfig(
+					field_name="empty_copy",
+					template="{{ doc.empty_value }}",
+					required_source_fields=("empty_value",),
+				),
+			)
+		)
+		record = {"first_name": "Ada", "last_name": "Lovelace", "empty_value": ""}
+
+		runtime._apply_computed_fields(config, record)
+
+		self.assertEqual(record["display_name"], "Ada Lovelace")
+		self.assertEqual(record["empty_copy"], "")
+
+	def test_computed_field_rendering_supports_missing_values_via_doc_get(self):
+		config = SimpleNamespace(
+			computed_fields=(
+				runtime.SyncComputedFieldConfig(
+					field_name="fallback",
+					template="{{ doc.get('missing_value', 'n/a') }}",
+				),
+			)
+		)
+		record = {"name": "TASK-1"}
+
+		runtime._apply_computed_fields(config, record)
+
+		self.assertEqual(record["fallback"], "n/a")
+
+	def test_computed_field_template_errors_are_validation_errors(self):
+		config = SimpleNamespace(
+			computed_fields=(
+				runtime.SyncComputedFieldConfig(
+					field_name="broken",
+					template="{{ doc.missing_value }}",
+				),
+			)
+		)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Computed Field broken rendering failed"):
+			runtime._apply_computed_fields(config, {"name": "TASK-1"})
+
 	def test_resolve_read_query_returns_original_when_template_disabled(self):
 		config = SimpleNamespace(read_query=" select * from sync_table ", render_read_query_template=0)
 
