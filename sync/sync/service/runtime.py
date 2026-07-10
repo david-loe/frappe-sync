@@ -3011,6 +3011,40 @@ def _sync_bidirectional_identity_pair(
 			message="Updated frappe from partner with newest_wins.",
 			commit=False,
 		)
+	elif _config_timestamp_tie_breaker(config) == TIMESTAMP_TIE_PARTNER_WINS:
+		_apply_frappe_update(
+			run_doc=run_doc,
+			config=config,
+			stats=stats,
+			dry_run=dry_run,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			frappe_payload=frappe_payload,
+			changes=to_frappe_changes,
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			action="updated",
+			status="success",
+			message="Updated frappe from partner by timestamp tie breaker.",
+			commit=False,
+		)
+	elif _config_timestamp_tie_breaker(config) == TIMESTAMP_TIE_FRAPPE_WINS:
+		_apply_partner_update(
+			run_doc=run_doc,
+			config=config,
+			connector=connector,
+			stats=stats,
+			dry_run=dry_run,
+			frappe_record=frappe_record,
+			partner_record=partner_record,
+			partner_payload=partner_payload,
+			changes=to_partner_changes,
+			direction=SYNC_TYPE_BIDIRECTIONAL,
+			action="updated",
+			status="success",
+			message="Updated partner from frappe by timestamp tie breaker.",
+			commit=False,
+			mapping_context=mapping_context,
+		)
 	else:
 		_register_and_log(
 			stats=stats,

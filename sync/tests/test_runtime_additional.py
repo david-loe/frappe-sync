@@ -702,6 +702,52 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertEqual(mock_item.call_args.kwargs["action"], "conflict")
 		self.assertEqual(mock_item.call_args.kwargs["status"], "conflict")
 
+	def test_identity_fields_timestamp_tie_breaker_controls_writes(self):
+		frappe_record = {
+			"name": "TASK-1",
+			"partner_nr": "P-1",
+			"subject": "Closed",
+			"modified": "2026-03-17 10:00:00",
+		}
+		partner_record = {
+			"NR": "P-1",
+			"frappe_name": "TASK-1",
+			"title": "Open",
+			"updated_at": "2026-03-17 10:00:00",
+		}
+
+		for tie_breaker, expected in (
+			(runtime.TIMESTAMP_TIE_MANUAL, "log"),
+			(runtime.TIMESTAMP_TIE_FRAPPE_WINS, "partner"),
+			(runtime.TIMESTAMP_TIE_PARTNER_WINS, "frappe"),
+		):
+			with (
+				patch("sync.sync.service.runtime._apply_partner_update") as mock_partner,
+				patch("sync.sync.service.runtime._apply_frappe_update") as mock_frappe,
+				patch("sync.sync.service.runtime._register_and_log") as mock_log,
+				patch("sync.sync.service.runtime._flush_pending_run_writes"),
+				patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+			):
+				runtime._sync_bidirectional(
+					run_doc=SimpleNamespace(name="RUN-1"),
+					config=_identity_fields_config(timestamp_tie_breaker=tie_breaker),
+					connector=FakeIdentityConnector(),
+					frappe_records=[frappe_record],
+					partner_records=[partner_record],
+					dry_run=True,
+					stats=runtime.SyncStats(),
+					last_successful_sync=datetime(2026, 3, 17, 9, 0),
+				)
+
+			self.assertEqual(mock_partner.called, expected == "partner")
+			self.assertEqual(mock_frappe.called, expected == "frappe")
+			if expected == "log":
+				self.assertIn("no write", mock_log.call_args.kwargs["message"])
+			else:
+				applied = mock_partner if expected == "partner" else mock_frappe
+				self.assertEqual(applied.call_args.kwargs["action"], "updated")
+				self.assertEqual(applied.call_args.kwargs["status"], "success")
+
 	def test_identity_fields_full_sync_deletes_frappe_when_linked_partner_is_missing(self):
 		config = _identity_fields_config(delete_missing=True)
 		frappe_record = {"name": "TASK-1", "partner_nr": "P-1", "subject": "A", "modified": "2026-03-17 10:00:00"}
