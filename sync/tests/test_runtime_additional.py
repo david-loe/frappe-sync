@@ -728,9 +728,10 @@ class TestRuntimeAdditional(unittest.TestCase):
 				patch("sync.sync.service.runtime._flush_pending_run_writes"),
 				patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
 			):
+				config = _identity_fields_config(timestamp_tie_breaker=tie_breaker)
 				runtime._sync_bidirectional(
 					run_doc=SimpleNamespace(name="RUN-1"),
-					config=_identity_fields_config(timestamp_tie_breaker=tie_breaker),
+					config=config,
 					connector=FakeIdentityConnector(),
 					frappe_records=[frappe_record],
 					partner_records=[partner_record],
@@ -743,6 +744,14 @@ class TestRuntimeAdditional(unittest.TestCase):
 			self.assertEqual(mock_frappe.called, expected == "frappe")
 			if expected == "log":
 				self.assertIn("no write", mock_log.call_args.kwargs["message"])
+				self.assertEqual(mock_log.call_args.kwargs["frappe_resolution_payload"]["name"], "TASK-1")
+				self.assertEqual(mock_log.call_args.kwargs["frappe_resolution_payload"]["partner_nr"], "P-1")
+				self.assertEqual(mock_log.call_args.kwargs["partner_resolution_payload"]["NR"], "P-1")
+				self.assertEqual(mock_log.call_args.kwargs["partner_resolution_payload"]["frappe_name"], "TASK-1")
+				self.assertEqual(
+					runtime._manual_partner_key_values(config, mock_log.call_args.kwargs["partner_resolution_payload"]),
+					{"NR": "P-1"},
+				)
 			else:
 				applied = mock_partner if expected == "partner" else mock_frappe
 				self.assertEqual(applied.call_args.kwargs["action"], "updated")

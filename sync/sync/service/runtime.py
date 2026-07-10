@@ -2401,36 +2401,17 @@ def _sync_bidirectional(
 				mapping_context=mapping_context,
 			)
 		else:
-			frappe_resolution_payload, partner_resolution_payload = _manual_conflict_resolution_payloads(
+			_log_manual_bidirectional_conflict(
+				stats=stats,
+				run_doc=run_doc,
 				config=config,
 				frappe_record=frappe_record,
 				partner_record=partner_record,
 				frappe_payload=frappe_payload,
 				partner_payload=partner_payload,
 				mapping_context=mapping_context,
-			)
-			conflict_changes = _canonical_conflict_changes(
-				config,
 				to_frappe_changes=to_frappe_changes,
 				to_partner_changes=to_partner_changes,
-			)
-			_register_and_log(
-				stats=stats,
-				run_doc=run_doc,
-				config=config,
-				action="conflict",
-				status="conflict",
-				message="Manual conflict requires review; no write performed.",
-				direction="Frappe <-> Partner",
-				frappe_record=frappe_record,
-				partner_record=partner_record,
-				changes=conflict_changes,
-				frappe_before_record=frappe_record,
-				partner_before_record=partner_record,
-				frappe_resolution_payload=frappe_resolution_payload,
-				partner_resolution_payload=partner_resolution_payload,
-				write_direction=None,
-				commit=False,
 			)
 	_flush_pending_run_writes(run_doc)
 
@@ -3046,18 +3027,17 @@ def _sync_bidirectional_identity_pair(
 			mapping_context=mapping_context,
 		)
 	else:
-		_register_and_log(
+		_log_manual_bidirectional_conflict(
 			stats=stats,
 			run_doc=run_doc,
 			config=config,
-			action="conflict",
-			status="conflict",
-			message="Manual conflict requires review; no write performed.",
-			direction=SYNC_TYPE_BIDIRECTIONAL,
 			frappe_record=frappe_record,
 			partner_record=partner_record,
-			changes=_canonical_conflict_changes(config, to_frappe_changes=to_frappe_changes, to_partner_changes=to_partner_changes),
-			commit=False,
+			frappe_payload=frappe_payload,
+			partner_payload=partner_payload,
+			mapping_context=mapping_context,
+			to_frappe_changes=to_frappe_changes,
+			to_partner_changes=to_partner_changes,
 		)
 
 
@@ -3408,7 +3388,55 @@ def _manual_conflict_resolution_payloads(
 		create=False,
 		mapping_context=mapping_context,
 	)
+	partner_identity_field = _config_partner_identity_field(config)
+	if partner_identity_field and partner_record.get(partner_identity_field) not in (None, ""):
+		partner_resolution_payload[partner_identity_field] = partner_record.get(partner_identity_field)
 	return frappe_resolution_payload, partner_resolution_payload
+
+
+def _log_manual_bidirectional_conflict(
+	*,
+	stats: SyncStats,
+	run_doc: Any,
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any],
+	partner_record: dict[str, Any],
+	frappe_payload: dict[str, Any],
+	partner_payload: dict[str, Any],
+	mapping_context: RuntimeMappingContext,
+	to_frappe_changes: list[tuple[str, Any, Any]],
+	to_partner_changes: list[tuple[str, Any, Any]],
+) -> None:
+	frappe_resolution_payload, partner_resolution_payload = _manual_conflict_resolution_payloads(
+		config=config,
+		frappe_record=frappe_record,
+		partner_record=partner_record,
+		frappe_payload=frappe_payload,
+		partner_payload=partner_payload,
+		mapping_context=mapping_context,
+	)
+	_register_and_log(
+		stats=stats,
+		run_doc=run_doc,
+		config=config,
+		action="conflict",
+		status="conflict",
+		message="Manual conflict requires review; no write performed.",
+		direction=SYNC_TYPE_BIDIRECTIONAL,
+		frappe_record=frappe_record,
+		partner_record=partner_record,
+		changes=_canonical_conflict_changes(
+			config,
+			to_frappe_changes=to_frappe_changes,
+			to_partner_changes=to_partner_changes,
+		),
+		frappe_before_record=frappe_record,
+		partner_before_record=partner_record,
+		frappe_resolution_payload=frappe_resolution_payload,
+		partner_resolution_payload=partner_resolution_payload,
+		write_direction=None,
+		commit=False,
+	)
 
 
 def _canonical_conflict_changes(
