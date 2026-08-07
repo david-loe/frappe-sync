@@ -179,7 +179,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		mock_recover.assert_called_once_with()
 		mock_run_due.assert_called_once_with(limit=7, queue=False)
 
-	def test_run_engine_routes_frappe_source_script_records_to_partner_upsert(self):
+	def test_run_engine_routes_arbitrary_frappe_source_script_fields_to_partner_upsert(self):
 		config = runtime.SyncDefinitionConfig(
 			name="SYNC-SCRIPT",
 			doctype="Task",
@@ -195,10 +195,10 @@ class TestRuntimeAdditional(unittest.TestCase):
 			timestamp_buffer_ms=0,
 			table_name="public.sync_records",
 			read_query=None,
-			match_fields=["name"],
+			match_fields=["record_id"],
 			mapping={
-				"name": {"partner_field": "id", "direction": "Frappe -> Partner"},
-				"subject": {"partner_field": "label", "direction": "Frappe -> Partner"},
+				"record_id": {"partner_field": "id", "direction": "Frappe -> Partner"},
+				"payload": {"partner_field": "label", "direction": "Frappe -> Partner"},
 			},
 			value_mapping={},
 			frappe_source_mode=runtime.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
@@ -208,9 +208,9 @@ class TestRuntimeAdditional(unittest.TestCase):
 			mapping=config.mapping,
 			value_mapping={},
 			value_mapping_fallbacks={},
-			to_partner_entries=(("name", "id"), ("subject", "label")),
+			to_partner_entries=(("record_id", "id"), ("payload", "label")),
 			to_frappe_entries=(),
-			connector_mapping={"name": "id", "subject": "label"},
+			connector_mapping={"record_id": "id", "payload": "label"},
 			reverse_value_mapping={},
 			frappe_datetime_fields=set(),
 			partner_datetime_fields=set(),
@@ -228,7 +228,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			patch("sync.sync.service.runtime._build_runtime_mapping_context", return_value=mapping_context),
 			patch(
 				"sync.sync.service.runtime._execute_frappe_source_script",
-				return_value=[{"name": "TASK-1", "subject": "A"}],
+				return_value=[{"record_id": "TASK-1", "payload": "A"}],
 			) as mock_source_script,
 			patch("sync.sync.service.runtime._create_run_item", side_effect=lambda **kwargs: created_items.append(kwargs)),
 			patch("sync.sync.service.runtime._track_pending_run_writes"),

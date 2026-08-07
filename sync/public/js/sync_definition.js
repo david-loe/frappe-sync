@@ -33,6 +33,9 @@ frappe.ui.form.on("Sync Definition", {
 	doctype_name(frm) {
 		sync.helpers.refreshDefinitionFieldChoices(frm);
 	},
+	frappe_source_mode(frm) {
+		sync.helpers.refreshDefinitionFieldChoices(frm);
+	},
 	read_query(frm) {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.toggleSourceFields(frm);
@@ -239,18 +242,24 @@ sync.helpers.updateDefinitionGridSelect = function (frm, tableField, fieldname, 
 		return;
 	}
 
+	const previousFieldtype = grid.docfields?.find((df) => df.fieldname === fieldname)?.fieldtype;
 	sync.helpers.setupDefinitionGridSelectOverrides(grid);
 	grid.__sync_select_overrides = {
 		...(grid.__sync_select_overrides || {}),
 		[fieldname]: properties,
 	};
 	sync.helpers.applyDefinitionGridSelectOverrides(grid);
+	if (properties.fieldtype && properties.fieldtype !== previousFieldtype && grid.reset_grid) {
+		grid.reset_grid();
+		return;
+	}
 	frm.refresh_field(tableField);
 	sync.helpers.applyDefinitionGridSelectOverrides(grid);
 	setTimeout(() => sync.helpers.applyDefinitionGridSelectOverrides(grid), 0);
 };
 
 sync.helpers.applyDefinitionFieldChoices = function (frm, fields, tableFields = [], childFields = {}) {
+	const usesScriptSource = frm.doc.frappe_source_mode === "Python Script";
 	const fieldnames = [
 		...new Set([
 			...(fields || []).map((field) => field?.fieldname).filter(Boolean),
@@ -258,7 +267,11 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields, tableFields = 
 		]),
 	];
 	const options = ["", ...fieldnames].join("\n");
-	const description = fields?.length
+	const description = usesScriptSource
+		? __("Enter a key returned by Frappe Source Script or choose a field from {0}.", [
+				frm.doc.doctype_name,
+		  ])
+		: fields?.length
 		? __("Field choices loaded from {0}.", [frm.doc.doctype_name])
 		: __("Select a DocType to load guided field choices.");
 	const tableOptions = [
@@ -276,13 +289,12 @@ sync.helpers.applyDefinitionFieldChoices = function (frm, fields, tableFields = 
 	].join("\n");
 
 	["match_fields", "field_mapping", "value_mapping"].forEach((tableField) => {
-		const grid = frm.fields_dict[tableField]?.grid;
-		if (!grid) {
-			return;
-		}
-		grid.update_docfield_property("frappe_field", "options", options);
-		grid.update_docfield_property("frappe_field", "description", description);
-		frm.refresh_field(tableField);
+		sync.helpers.updateDefinitionGridSelect(frm, tableField, "frappe_field", {
+			fieldtype: usesScriptSource ? "Autocomplete" : "Select",
+			ignore_validation: usesScriptSource ? 1 : 0,
+			options,
+			description,
+		});
 	});
 
 	const fieldMappingGrid = frm.fields_dict.field_mapping?.grid;
