@@ -34,17 +34,23 @@ def _db_stub(**overrides):
 
 class TestSetupHooks(unittest.TestCase):
 	def test_after_migrate_delegates_to_default_partner_type_setup(self):
-		with patch("sync.setup.ensure_default_partner_types") as mock_ensure:
-			with patch("sync.setup.ensure_default_sync_settings") as mock_settings:
-				setup.after_migrate()
+		with (
+			patch("sync.setup.ensure_default_partner_types") as mock_ensure,
+			patch("sync.setup.ensure_default_sync_settings") as mock_settings,
+			patch("sync.setup.ensure_sync_run_item_indexes"),
+		):
+			setup.after_migrate()
 
 		mock_ensure.assert_called_once_with()
 		mock_settings.assert_called_once_with()
 
 	def test_before_tests_delegates_to_default_partner_type_setup(self):
-		with patch("sync.setup.ensure_default_partner_types") as mock_ensure:
-			with patch("sync.setup.ensure_default_sync_settings") as mock_settings:
-				setup.before_tests()
+		with (
+			patch("sync.setup.ensure_default_partner_types") as mock_ensure,
+			patch("sync.setup.ensure_default_sync_settings") as mock_settings,
+			patch("sync.setup.ensure_sync_run_item_indexes"),
+		):
+			setup.before_tests()
 
 		mock_ensure.assert_called_once_with()
 		mock_settings.assert_called_once_with()

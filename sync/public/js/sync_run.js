@@ -16,27 +16,22 @@ frappe.ui.form.on("Sync Run", {
 sync.run.clearCaches = function (frm) {
 	frm.__sync_run_health_render_id = (frm.__sync_run_health_render_id || 0) + 1;
 	frm.__sync_run_items_render_id = (frm.__sync_run_items_render_id || 0) + 1;
+	frm.__sync_run_items_request = null;
 };
 
 sync.run.setupButtons = function (frm) {
 	frm.clear_custom_buttons();
 
 	frm.add_custom_button(__("Refresh Monitoring"), () => {
-		sync.run.renderHealth(frm, { force: true });
-		sync.run.renderItems(frm, { force: true });
+		sync.run.clearCaches(frm);
+		sync.run.renderHealth(frm);
+		sync.run.renderItems(frm);
 	});
 
 	if (!frm.is_new()) {
-		frm.add_custom_button(__("Error Items"), () => {
+		frm.add_custom_button(__("Show Items"), () => {
 			frappe.set_route("List", "Sync Run Item", {
 				sync_run: frm.doc.name,
-				status: "error",
-			});
-		});
-		frm.add_custom_button(__("Conflict Items"), () => {
-			frappe.set_route("List", "Sync Run Item", {
-				sync_run: frm.doc.name,
-				status: "conflict",
 			});
 		});
 	}
@@ -47,12 +42,25 @@ sync.run.getDefinitionDoctype = function (frm) {
 };
 
 sync.run.fetchItems = function (frm) {
-	return sync.helpers.getList("Sync Run Item", {
+	const runName = frm.doc.name;
+	const activeRequest = frm.__sync_run_items_request;
+	if (activeRequest?.runName === runName) {
+		return activeRequest.promise;
+	}
+
+	const request = sync.helpers.getList("Sync Run Item", {
 		fields: ["name", "record_key", "document_name", "write_direction", "action", "status", "message", "creation"],
-		filters: { sync_run: frm.doc.name },
+		filters: { sync_run: runName },
 		order_by: "creation desc",
 		limit: 50,
 	});
+	const trackedRequest = request.finally(() => {
+		if (frm.__sync_run_items_request?.promise === trackedRequest) {
+			frm.__sync_run_items_request = null;
+		}
+	});
+	frm.__sync_run_items_request = { runName, promise: trackedRequest };
+	return trackedRequest;
 };
 
 sync.run.renderHealth = function (frm) {

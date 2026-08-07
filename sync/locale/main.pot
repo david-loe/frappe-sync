@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sync VERSION\n"
 "Report-Msgid-Bugs-To: kontak@david-loe.de\n"
-"POT-Creation-Date: 2026-07-07 14:39+0000\n"
-"PO-Revision-Date: 2026-07-07 14:39+0000\n"
+"POT-Creation-Date: 2026-08-07 13:25+0000\n"
+"PO-Revision-Date: 2026-08-07 13:25+0000\n"
 "Last-Translator: kontak@david-loe.de\n"
 "Language-Team: kontak@david-loe.de\n"
 "MIME-Version: 1.0\n"
@@ -48,8 +48,8 @@ msgstr ""
 
 #. Label of the action (Select) field in DocType 'Sync Frappe Write Hook'
 #. Label of the action (Select) field in DocType 'Sync Run Item'
-#: sync/public/js/sync_helpers.js:1148 sync/public/js/sync_run.js:240
-#: sync/public/js/sync_run.js:414
+#: sync/public/js/sync_helpers.js:1148 sync/public/js/sync_run.js:248
+#: sync/public/js/sync_run.js:422
 #: sync/sync/doctype/sync_frappe_write_hook/sync_frappe_write_hook.json
 #: sync/sync/doctype/sync_run_item/sync_run_item.json
 msgid "Action"
@@ -107,7 +107,7 @@ msgstr ""
 msgid "Available"
 msgstr ""
 
-#: sync/public/js/sync_run.js:187
+#: sync/public/js/sync_run.js:195
 msgid "Based on the latest {0} loaded run items."
 msgstr ""
 
@@ -223,10 +223,6 @@ msgstr ""
 msgid "Conflict Hints"
 msgstr ""
 
-#: sync/public/js/sync_run.js:36
-msgid "Conflict Items"
-msgstr ""
-
 #. Label of the conflict_policy (Select) field in DocType 'Sync Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Conflict Policy"
@@ -242,8 +238,8 @@ msgstr ""
 msgid "Conflict for {0}"
 msgstr ""
 
-#: sync/public/js/sync_run.js:130 sync/public/js/sync_run.js:376
-#: sync/public/js/sync_run_item_list.js:9 sync/public/js/sync_run_list.js:18
+#: sync/public/js/sync_run.js:138 sync/public/js/sync_run.js:384
+#: sync/public/js/sync_run_item_list.js:10 sync/public/js/sync_run_list.js:18
 msgid "Conflicts"
 msgstr ""
 
@@ -311,8 +307,8 @@ msgstr ""
 msgid "Create New"
 msgstr ""
 
-#: sync/public/js/sync_run.js:132 sync/public/js/sync_run.js:240
-#: sync/public/js/sync_run.js:414
+#: sync/public/js/sync_run.js:140 sync/public/js/sync_run.js:248
+#: sync/public/js/sync_run.js:422
 msgid "Created"
 msgstr ""
 
@@ -383,7 +379,7 @@ msgstr ""
 msgid "Delete Missing is enabled. Target records absent from a complete source load may be deleted."
 msgstr ""
 
-#: sync/public/js/sync_run.js:134
+#: sync/public/js/sync_run.js:142
 msgid "Deleted"
 msgstr ""
 
@@ -424,7 +420,7 @@ msgid "DocType Query"
 msgstr ""
 
 #: sync/public/js/sync_helpers.js:1132 sync/public/js/sync_helpers.js:1146
-#: sync/public/js/sync_run.js:240 sync/public/js/sync_run.js:414
+#: sync/public/js/sync_run.js:248 sync/public/js/sync_run.js:422
 msgid "Document"
 msgstr ""
 
@@ -450,7 +446,7 @@ msgid "Driver Options"
 msgstr ""
 
 #. Label of the dry_run (Check) field in DocType 'Sync Run'
-#: sync/public/js/sync_definition.js:120 sync/public/js/sync_run.js:143
+#: sync/public/js/sync_definition.js:120 sync/public/js/sync_run.js:151
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Dry Run"
 msgstr ""
@@ -494,10 +490,6 @@ msgstr ""
 msgid "Error Count"
 msgstr ""
 
-#: sync/public/js/sync_run.js:30
-msgid "Error Items"
-msgstr ""
-
 #. Label of the error_message (Long Text) field in DocType 'Sync Run'
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Error Message"
@@ -509,8 +501,8 @@ msgstr ""
 msgid "Error, Needs Review, Partial Error, and Skipped Sync Runs are deleted after this many days."
 msgstr ""
 
-#: sync/public/js/sync_run.js:129 sync/public/js/sync_run.js:371
-#: sync/public/js/sync_run_item_list.js:5 sync/public/js/sync_run_list.js:14
+#: sync/public/js/sync_run.js:137 sync/public/js/sync_run.js:379
+#: sync/public/js/sync_run_item_list.js:6 sync/public/js/sync_run_list.js:14
 msgid "Errors"
 msgstr ""
 
@@ -525,7 +517,7 @@ msgstr ""
 msgid "Execution"
 msgstr ""
 
-#: sync/public/js/sync_run.js:175
+#: sync/public/js/sync_run.js:183
 msgid "Execution Context"
 msgstr ""
 
@@ -604,7 +596,7 @@ msgstr ""
 msgid "Filter Expression"
 msgstr ""
 
-#: sync/public/js/sync_run.js:140
+#: sync/public/js/sync_run.js:148
 msgid "Finished"
 msgstr ""
 
@@ -852,7 +844,7 @@ msgid "JSON filters applied when loading Frappe records."
 msgstr ""
 
 #. Label of the job_id (Data) field in DocType 'Sync Run'
-#: sync/public/js/sync_run.js:144 sync/sync/doctype/sync_run/sync_run.json
+#: sync/public/js/sync_run.js:152 sync/sync/doctype/sync_run/sync_run.json
 msgid "Job ID"
 msgstr ""
 
@@ -891,7 +883,7 @@ msgstr ""
 msgid "Last Successful Sync"
 msgstr ""
 
-#: sync/public/js/sync_run.js:141
+#: sync/public/js/sync_run.js:149
 msgid "Last Sync"
 msgstr ""
 
@@ -913,11 +905,11 @@ msgstr ""
 msgid "Latest Error"
 msgstr ""
 
-#: sync/public/js/sync_run.js:150
+#: sync/public/js/sync_run.js:158
 msgid "Latest issues are shown below."
 msgstr ""
 
-#: sync/public/js/sync_run.js:200
+#: sync/public/js/sync_run.js:208
 msgid "Latest {0} items loaded for quick inspection."
 msgstr ""
 
@@ -947,7 +939,7 @@ msgstr ""
 msgid "Loaded {0} partner columns."
 msgstr ""
 
-#: sync/public/js/sync_run.js:71
+#: sync/public/js/sync_run.js:79
 msgid "Loading monitoring summary…"
 msgstr ""
 
@@ -963,7 +955,7 @@ msgstr ""
 msgid "Loading resolution mapping..."
 msgstr ""
 
-#: sync/public/js/sync_run.js:104
+#: sync/public/js/sync_run.js:112
 msgid "Loading run items…"
 msgstr ""
 
@@ -1020,7 +1012,7 @@ msgstr ""
 #. Label of the section_break_message (Section Break) field in DocType 'Sync
 #. Run Item'
 #. Label of the message (Small Text) field in DocType 'Sync Run Item'
-#: sync/public/js/sync_run.js:240 sync/public/js/sync_run.js:414
+#: sync/public/js/sync_run.js:248 sync/public/js/sync_run.js:422
 #: sync/sync/doctype/sync_run_item/sync_run_item.json
 msgid "Message"
 msgstr ""
@@ -1057,7 +1049,7 @@ msgstr ""
 msgid "Next Run At"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:982 sync/public/js/sync_run.js:143
+#: sync/public/js/sync_helpers.js:982 sync/public/js/sync_run.js:151
 msgid "No"
 msgstr ""
 
@@ -1097,7 +1089,7 @@ msgstr ""
 msgid "No mapped resolution fields are available."
 msgstr ""
 
-#: sync/public/js/sync_run_item_list.js:33
+#: sync/public/js/sync_run_item_list.js:34
 msgid "No message"
 msgstr ""
 
@@ -1105,19 +1097,19 @@ msgstr ""
 msgid "No planned changes returned."
 msgstr ""
 
-#: sync/public/js/sync_run.js:385
+#: sync/public/js/sync_run.js:393
 msgid "No recent error, conflict or skipped items were found."
 msgstr ""
 
-#: sync/public/js/sync_run.js:151
+#: sync/public/js/sync_run.js:159
 msgid "No recent issue items in the latest loaded slice."
 msgstr ""
 
-#: sync/public/js/sync_run_item_list.js:39
+#: sync/public/js/sync_run_item_list.js:40
 msgid "No record key"
 msgstr ""
 
-#: sync/public/js/sync_run.js:209
+#: sync/public/js/sync_run.js:217
 msgid "No run items found yet."
 msgstr ""
 
@@ -1137,11 +1129,11 @@ msgstr ""
 msgid "No summary yet"
 msgstr ""
 
-#: sync/public/js/sync_run.js:146
+#: sync/public/js/sync_run.js:154
 msgid "No summary yet."
 msgstr ""
 
-#: sync/public/js/sync_run_item_list.js:61
+#: sync/public/js/sync_run_item_list.js:62
 msgid "No target DocType configured on the Sync Definition."
 msgstr ""
 
@@ -1149,7 +1141,7 @@ msgstr ""
 msgid "No warnings reported."
 msgstr ""
 
-#: sync/public/js/sync_run.js:227 sync/public/js/sync_run.js:402
+#: sync/public/js/sync_run.js:235 sync/public/js/sync_run.js:410
 msgid "No write"
 msgstr ""
 
@@ -1166,16 +1158,16 @@ msgstr ""
 msgid "Not Null"
 msgstr ""
 
-#: sync/public/js/sync_run.js:218 sync/public/js/sync_run.js:396
-#: sync/public/js/sync_run_item_list.js:27
+#: sync/public/js/sync_run.js:226 sync/public/js/sync_run.js:404
+#: sync/public/js/sync_run_item_list.js:28
 msgid "Not linked"
 msgstr ""
 
-#: sync/public/js/sync_run.js:141
+#: sync/public/js/sync_run.js:149
 msgid "Not recorded"
 msgstr ""
 
-#: sync/public/js/sync_run.js:139
+#: sync/public/js/sync_run.js:147
 msgid "Not started"
 msgstr ""
 
@@ -1207,7 +1199,7 @@ msgstr ""
 msgid "One-Way Match Mode"
 msgstr ""
 
-#: sync/public/js/sync_run_item_list.js:50
+#: sync/public/js/sync_run_item_list.js:51
 msgid "Open Document"
 msgstr ""
 
@@ -1535,7 +1527,7 @@ msgstr ""
 msgid "Preview Limit"
 msgstr ""
 
-#: sync/public/js/sync_run.js:127
+#: sync/public/js/sync_run.js:135
 msgid "Processed"
 msgstr ""
 
@@ -1591,11 +1583,11 @@ msgstr ""
 msgid "Read Query"
 msgstr ""
 
-#: sync/public/js/sync_run.js:187
+#: sync/public/js/sync_run.js:195
 msgid "Recent Errors and Conflicts"
 msgstr ""
 
-#: sync/public/js/sync_run.js:240 sync/public/js/sync_run.js:414
+#: sync/public/js/sync_run.js:248 sync/public/js/sync_run.js:422
 msgid "Record"
 msgstr ""
 
@@ -1632,11 +1624,11 @@ msgstr ""
 msgid "Refresh Columns"
 msgstr ""
 
-#: sync/public/js/sync_run.js:24
+#: sync/public/js/sync_run.js:25
 msgid "Refresh Monitoring"
 msgstr ""
 
-#: sync/public/js/sync_run.js:199
+#: sync/public/js/sync_run.js:207
 msgid "Related Run Items"
 msgstr ""
 
@@ -1673,7 +1665,7 @@ msgstr ""
 msgid "Resolution Preview"
 msgstr ""
 
-#: sync/public/js/sync_run_item_list.js:53
+#: sync/public/js/sync_run_item_list.js:54
 msgid "Resolve the Sync Definition target DocType and open {0}"
 msgstr ""
 
@@ -1706,12 +1698,12 @@ msgstr ""
 msgid "Run Context"
 msgstr ""
 
-#: sync/public/js/sync_run.js:180
+#: sync/public/js/sync_run.js:188
 msgid "Run Error"
 msgstr ""
 
 #. Label of the run_health_html (HTML) field in DocType 'Sync Run'
-#: sync/public/js/sync_run.js:161 sync/sync/doctype/sync_run/sync_run.json
+#: sync/public/js/sync_run.js:169 sync/sync/doctype/sync_run/sync_run.json
 msgid "Run Health"
 msgstr ""
 
@@ -1772,11 +1764,11 @@ msgstr ""
 msgid "Sample Records"
 msgstr ""
 
-#: sync/public/js/sync_run.js:65
+#: sync/public/js/sync_run.js:73
 msgid "Save the run to load monitoring details."
 msgstr ""
 
-#: sync/public/js/sync_run.js:98
+#: sync/public/js/sync_run.js:106
 msgid "Save the run to load related items."
 msgstr ""
 
@@ -1873,13 +1865,17 @@ msgstr ""
 msgid "Set {0} first."
 msgstr ""
 
+#: sync/public/js/sync_run.js:32
+msgid "Show Items"
+msgstr ""
+
 #: sync/public/js/sync_helpers.js:857
 msgid "Showing first {0} of {1} sample records."
 msgstr ""
 
 #. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
 #. Option for the 'Status' (Select) field in DocType 'Sync Run'
-#: sync/public/js/sync_run.js:131 sync/public/js/sync_run_item_list.js:13
+#: sync/public/js/sync_run.js:139 sync/public/js/sync_run_item_list.js:14
 #: sync/sync/doctype/sync_definition/sync_definition.json
 #: sync/sync/doctype/sync_run/sync_run.json
 msgid "Skipped"
@@ -1915,7 +1911,7 @@ msgstr ""
 msgid "Stale Run Timeout Minutes"
 msgstr ""
 
-#: sync/public/js/sync_run.js:139
+#: sync/public/js/sync_run.js:147
 msgid "Started"
 msgstr ""
 
@@ -1929,7 +1925,7 @@ msgstr ""
 #. Label of the status (Select) field in DocType 'Sync Run'
 #. Label of the status (Select) field in DocType 'Sync Run Item'
 #: sync/public/js/sync_helpers.js:1147 sync/public/js/sync_partner.js:209
-#: sync/public/js/sync_run.js:240 sync/public/js/sync_run.js:414
+#: sync/public/js/sync_run.js:248 sync/public/js/sync_run.js:422
 #: sync/sync/doctype/sync_definition/sync_definition.json
 #: sync/sync/doctype/sync_partner/sync_partner.json
 #: sync/sync/doctype/sync_run/sync_run.json
@@ -1937,7 +1933,7 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-#: sync/public/js/sync_run.js:140
+#: sync/public/js/sync_run.js:148
 msgid "Still running"
 msgstr ""
 
@@ -1955,7 +1951,7 @@ msgstr ""
 #. Option for the 'Last Run Status' (Select) field in DocType 'Sync Definition'
 #. Option for the 'Status' (Select) field in DocType 'Sync Partner'
 #. Option for the 'Status' (Select) field in DocType 'Sync Run'
-#: sync/public/js/sync_run.js:128
+#: sync/public/js/sync_run.js:136
 #: sync/sync/doctype/sync_definition/sync_definition.json
 #: sync/sync/doctype/sync_partner/sync_partner.json
 #: sync/sync/doctype/sync_run/sync_run.json
@@ -1975,7 +1971,7 @@ msgstr ""
 
 #. Label of the summary (Small Text) field in DocType 'Sync Run'
 #: sync/public/js/sync_helpers.js:612 sync/public/js/sync_helpers.js:1003
-#: sync/public/js/sync_run.js:177 sync/sync/doctype/sync_run/sync_run.json
+#: sync/public/js/sync_run.js:185 sync/sync/doctype/sync_run/sync_run.json
 msgid "Summary"
 msgstr ""
 
@@ -2128,15 +2124,15 @@ msgstr ""
 msgid "Table Name is required."
 msgstr ""
 
-#: sync/public/js/sync_run.js:204 sync/public/js/sync_run_item.js:322
+#: sync/public/js/sync_run.js:212 sync/public/js/sync_run_item.js:322
 msgid "Target DocType could not be resolved from the Sync Definition."
 msgstr ""
 
-#: sync/public/js/sync_run.js:164
+#: sync/public/js/sync_run.js:172
 msgid "Target DocType unresolved"
 msgstr ""
 
-#: sync/public/js/sync_run.js:163 sync/public/js/sync_run.js:203
+#: sync/public/js/sync_run.js:171 sync/public/js/sync_run.js:211
 msgid "Target DocType: {0}"
 msgstr ""
 
@@ -2181,7 +2177,7 @@ msgstr ""
 msgid "The latest recorded connection test succeeded. Use Test Connection to refresh it."
 msgstr ""
 
-#: sync/public/js/sync_run.js:153
+#: sync/public/js/sync_run.js:161
 msgid "This active run can block new executions until it finishes or is recovered as stale."
 msgstr ""
 
@@ -2222,7 +2218,7 @@ msgstr ""
 msgid "Tolerance in milliseconds for considering Frappe and partner modified timestamps equal during conflict resolution."
 msgstr ""
 
-#: sync/public/js/sync_run.js:142
+#: sync/public/js/sync_run.js:150
 msgid "Trigger"
 msgstr ""
 
@@ -2241,11 +2237,11 @@ msgstr ""
 msgid "Unable to load field choices."
 msgstr ""
 
-#: sync/public/js/sync_run.js:86
+#: sync/public/js/sync_run.js:94
 msgid "Unable to load monitoring details."
 msgstr ""
 
-#: sync/public/js/sync_run.js:119
+#: sync/public/js/sync_run.js:127
 msgid "Unable to load run items."
 msgstr ""
 
@@ -2253,7 +2249,7 @@ msgstr ""
 msgid "Unable to recover stale runs."
 msgstr ""
 
-#: sync/public/js/sync_run_item.js:340 sync/public/js/sync_run_item_list.js:68
+#: sync/public/js/sync_run_item.js:340 sync/public/js/sync_run_item_list.js:69
 msgid "Unable to resolve target DocType."
 msgstr ""
 
@@ -2262,9 +2258,9 @@ msgid "Unable to run sync definition"
 msgstr ""
 
 #. Option for the 'Status' (Select) field in DocType 'Sync Partner'
-#: sync/public/js/sync_helpers.js:1133 sync/public/js/sync_run.js:142
-#: sync/public/js/sync_run.js:161 sync/public/js/sync_run.js:323
-#: sync/public/js/sync_run.js:432 sync/public/js/sync_run_item_list.js:20
+#: sync/public/js/sync_helpers.js:1133 sync/public/js/sync_run.js:150
+#: sync/public/js/sync_run.js:169 sync/public/js/sync_run.js:331
+#: sync/public/js/sync_run.js:440 sync/public/js/sync_run_item_list.js:21
 #: sync/public/js/sync_run_list.js:29
 #: sync/sync/doctype/sync_partner/sync_partner.json
 msgid "Unknown"
@@ -2280,7 +2276,7 @@ msgstr ""
 msgid "Update Existing"
 msgstr ""
 
-#: sync/public/js/sync_run.js:133
+#: sync/public/js/sync_run.js:141
 msgid "Updated"
 msgstr ""
 
@@ -2388,7 +2384,7 @@ msgid "Write Behavior"
 msgstr ""
 
 #. Label of the write_direction (Select) field in DocType 'Sync Run Item'
-#: sync/public/js/sync_run.js:240 sync/public/js/sync_run.js:414
+#: sync/public/js/sync_run.js:248 sync/public/js/sync_run.js:422
 #: sync/sync/doctype/sync_run_item/sync_run_item.json
 msgid "Write Direction"
 msgstr ""
@@ -2415,7 +2411,7 @@ msgstr ""
 msgid "YAML Export"
 msgstr ""
 
-#: sync/public/js/sync_helpers.js:982 sync/public/js/sync_run.js:143
+#: sync/public/js/sync_helpers.js:982 sync/public/js/sync_run.js:151
 msgid "Yes"
 msgstr ""
 
@@ -2545,11 +2541,11 @@ msgstr ""
 msgid "{0} completed: {1}"
 msgstr ""
 
-#: sync/public/js/sync_run.js:426 sync/public/js/sync_run_list.js:80
+#: sync/public/js/sync_run.js:434 sync/public/js/sync_run_list.js:80
 msgid "{0} conflicts"
 msgstr ""
 
-#: sync/public/js/sync_run.js:425 sync/public/js/sync_run_list.js:77
+#: sync/public/js/sync_run.js:433 sync/public/js/sync_run_list.js:77
 msgid "{0} errors"
 msgstr ""
 
@@ -2557,7 +2553,7 @@ msgstr ""
 msgid "{0} ok"
 msgstr ""
 
-#: sync/public/js/sync_run.js:423 sync/public/js/sync_run_list.js:71
+#: sync/public/js/sync_run.js:431 sync/public/js/sync_run_list.js:71
 msgid "{0} processed"
 msgstr ""
 
@@ -2569,7 +2565,7 @@ msgstr ""
 msgid "{0} queued: {1}"
 msgstr ""
 
-#: sync/public/js/sync_run.js:424
+#: sync/public/js/sync_run.js:432
 msgid "{0} successful"
 msgstr ""
 

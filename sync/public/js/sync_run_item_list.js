@@ -1,5 +1,6 @@
 frappe.listview_settings["Sync Run Item"] = {
-	add_fields: ["action", "status", "write_direction", "sync_definition", "document_name", "message", "record_key"],
+	add_fields: ["sync_definition", "document_name"],
+	disable_comment_count: true,
 
 	onload(listview) {
 		listview.page.add_inner_button(__("Errors"), () => {
