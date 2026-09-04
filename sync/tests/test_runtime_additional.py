@@ -1186,7 +1186,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 
 		self.assertEqual(mock_group.call_count, 1)
 
-	def test_run_engine_reuses_frappe_lookup_across_partner_batches(self):
+	def test_run_engine_loads_frappe_candidates_for_each_partner_batch(self):
 		config = SimpleNamespace(
 			name="SYNC-P2F-LOOKUP",
 			doctype="Task",
@@ -1223,14 +1223,164 @@ class TestRuntimeAdditional(unittest.TestCase):
 		with (
 			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_doc=lambda *_args, **_kwargs: SimpleNamespace(), get_meta=lambda *_args, **_kwargs: meta)),
 			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
-			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1", "subject": "A"}, {"name": "TASK-2", "subject": "B"}]])),
 			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-1", "title": "A"}], [{"id": "TASK-2", "title": "B"}]])),
+			patch(
+				"sync.sync.service.runtime._load_frappe_match_candidates",
+				side_effect=[
+					[{"name": "TASK-1", "subject": "A"}],
+					[{"name": "TASK-2", "subject": "B"}],
+				],
+			) as mock_candidates,
 			patch("sync.sync.service.runtime._group_frappe_records", wraps=runtime._group_frappe_records) as mock_group,
 			patch("sync.sync.service.runtime._create_run_item", return_value=SimpleNamespace(name="ITEM-1")),
 		):
 			runtime._run_engine(SimpleNamespace(name="SYNC-P2F-LOOKUP"), SimpleNamespace(name="RUN-1"), config=config)
 
-		self.assertEqual(mock_group.call_count, 1)
+		self.assertEqual(mock_candidates.call_count, 2)
+		self.assertEqual(mock_group.call_count, 2)
+
+	def test_frappe_candidate_lookup_uses_match_field_ins_and_deduplicates_identity_hits(self):
+		config = SimpleNamespace(
+			doctype="Journal Entry",
+			batch_size=100,
+			filters=[["docstatus", "!=", 2]],
+			match_fields=["external_journal_id", "company"],
+			mapping={
+				"external_journal_id": {"partner_field": "journal_no", "direction": "Frappe <- Partner"},
+				"company": {"partner_field": "company", "direction": "Frappe <- Partner"},
+				"accounts.1.debit_in_account_currency": {
+					"partner_field": "debit_1",
+					"direction": "Frappe <- Partner",
+				},
+			},
+			frappe_partner_identity_field="partner_id",
+			partner_identity_field="row_id",
+			update_existing=0,
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+		)
+		partner_batch = [
+			{"journal_no": "2026-1", "company": "A", "row_id": 10},
+			{"journal_no": "2026-2", "company": "B", "row_id": 20},
+		]
+		queries = []
+
+		def candidate_batches(**kwargs):
+			queries.append(kwargs)
+			if any(condition[0] == "partner_id" for condition in kwargs["filters"]):
+				return iter([[
+					{
+						"name": "JE-1",
+						"modified": "2026-01-02",
+						"external_journal_id": "2026-1",
+						"company": "A",
+						"partner_id": 10,
+					}
+				]])
+			return iter(
+				[[
+					{
+						"name": "JE-1",
+						"modified": "2026-01-02",
+						"external_journal_id": "2026-1",
+						"company": "A",
+						"partner_id": 10,
+					},
+					{
+						"name": "JE-CROSS",
+						"modified": "2026-01-01",
+						"external_journal_id": "2026-1",
+						"company": "B",
+					},
+				]]
+			)
+
+		with (
+			patch(
+				"sync.sync.service.runtime._doctype_fieldnames",
+				return_value={
+					"name",
+					"modified",
+					"creation",
+					"external_journal_id",
+					"company",
+					"partner_id",
+				},
+			),
+			patch("sync.sync.service.runtime._iter_frappe_record_batches", side_effect=candidate_batches),
+			patch("sync.sync.service.runtime._enrich_record_with_child_rows") as mock_enrich,
+		):
+			candidates = runtime._load_frappe_match_candidates(config, partner_batch)
+
+		self.assertEqual({record["name"] for record in candidates}, {"JE-1", "JE-CROSS"})
+		self.assertEqual(
+			queries[0]["filters"],
+			[
+				["docstatus", "!=", 2],
+				["external_journal_id", "in", ["2026-1", "2026-2"]],
+				["company", "in", ["A", "B"]],
+			],
+		)
+		self.assertNotIn("accounts", queries[0]["fields"])
+		mock_enrich.assert_not_called()
+		lookup = runtime._build_frappe_match_lookup(config, candidates)
+		self.assertEqual(
+			[record["name"] for record in runtime._find_existing_frappe_records(config, partner_batch[0], lookup.groups, lookup.identity_by_value)],
+			["JE-1"],
+		)
+		without_identity = dict(partner_batch[0], row_id=None)
+		self.assertEqual(
+			[record["name"] for record in runtime._find_existing_frappe_records(config, without_identity, lookup.groups, lookup.identity_by_value)],
+			["JE-1"],
+		)
+
+	def test_frappe_candidate_lookup_loads_update_fields_and_child_rows_only_for_matches(self):
+		config = SimpleNamespace(
+			doctype="Journal Entry",
+			batch_size=100,
+			filters=None,
+			match_fields=["external_journal_id", "company"],
+			mapping={
+				"external_journal_id": {"partner_field": "journal_no", "direction": "Frappe <- Partner"},
+				"company": {"partner_field": "company", "direction": "Frappe <- Partner"},
+				"user_remark": {"partner_field": "remark", "direction": "Frappe <- Partner"},
+				"accounts.1.debit_in_account_currency": {
+					"partner_field": "debit_1",
+					"direction": "Frappe <- Partner",
+				},
+			},
+			update_existing=1,
+			frappe_modified_field="modified",
+			frappe_creation_field="creation",
+		)
+		row = {
+			"name": "JE-1",
+			"modified": "2026-01-01",
+			"external_journal_id": "2026-1",
+			"company": "A",
+			"user_remark": "old",
+		}
+		with (
+			patch(
+				"sync.sync.service.runtime._doctype_fieldnames",
+				return_value={"name", "modified", "creation", "external_journal_id", "company", "user_remark"},
+			),
+			patch("sync.sync.service.runtime._iter_frappe_record_batches", return_value=iter([[row]])) as mock_batches,
+			patch(
+				"sync.sync.service.runtime._child_table_fields_for_mapping",
+				return_value={"accounts"},
+			),
+			patch("sync.sync.service.runtime._enrich_record_with_child_rows") as mock_enrich,
+		):
+			result = runtime._load_frappe_match_candidates(
+				config,
+				[{"journal_no": "2026-1", "company": "A", "remark": "new", "debit_1": 5}],
+			)
+
+		self.assertEqual(result, [row])
+		self.assertIn("user_remark", mock_batches.call_args.kwargs["fields"])
+		self.assertNotIn("accounts", mock_batches.call_args.kwargs["fields"])
+		mock_enrich.assert_called_once_with("Journal Entry", row, {"accounts"})
 
 	def test_run_engine_streams_bidirectional_batches_into_indexes(self):
 		config = SimpleNamespace(

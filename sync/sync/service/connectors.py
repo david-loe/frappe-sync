@@ -148,6 +148,39 @@ class BasePartnerConnector(ABC):
 	) -> ConnectorFetchResult:
 		return ConnectorFetchResult(records=[], next_cursor=None)
 
+	def iter_record_batches(
+		self,
+		*,
+		source: str | None = None,
+		query: str | None = None,
+		batch_size: int = 100,
+		key_fields: list[str] | None = None,
+	):
+		"""Yield records using the connector's existing cursor pagination contract."""
+		cursor = None
+		for _ in range(10_000):
+			page = self.fetch_records(
+				source=source,
+				query=query,
+				batch_size=batch_size,
+				cursor=cursor,
+				key_fields=key_fields,
+			)
+			records = list(getattr(page, "records", None) or [])
+			next_cursor = getattr(page, "next_cursor", None)
+			if isinstance(page, list):
+				records = page
+				next_cursor = None
+			elif isinstance(page, dict):
+				records = list(page.get("records") or [])
+				next_cursor = page.get("next_cursor")
+			if not records:
+				break
+			yield [dict(record) for record in records]
+			if not next_cursor:
+				break
+			cursor = next_cursor
+
 	def upsert_record(
 		self,
 		*,
@@ -269,6 +302,42 @@ class RelationalConnector(BasePartnerConnector):
 		records = rows[:batch_size]
 		next_cursor = self._next_fetch_cursor(records, rows[batch_size] if has_more else None, key_fields)
 		return ConnectorFetchResult(records=records, next_cursor=next_cursor)
+
+	def iter_record_batches(
+		self,
+		*,
+		source: str | None = None,
+		query: str | None = None,
+		batch_size: int = 100,
+		key_fields: list[str] | None = None,
+	):
+		"""Execute a relational source once and stream it with DB-API fetchmany()."""
+		source_name, query_text = self._resolve_source(source=source, query=query)
+		if not source_name and not query_text:
+			raise RuntimeError(f"{self.dialect} fetch requires source table or query")
+
+		key_fields = self._normalize_fetch_key_fields(key_fields or [])
+		if not key_fields:
+			raise RuntimeError(f"{self.dialect} fetch requires stable key fields for pagination")
+		batch_size = max(cint(batch_size) or 100, 1)
+		sql = self._build_stream_sql(source=source_name, query=query_text, key_fields=key_fields)
+
+		with self._connection() as connection:
+			db_cursor = connection.cursor()
+			try:
+				db_cursor.execute(sql, [])
+				columns = [column[0] for column in db_cursor.description or []]
+				while True:
+					rows = db_cursor.fetchmany(batch_size)
+					if not rows:
+						break
+					yield [
+						dict(row) if isinstance(row, dict) else dict(zip(columns, row, strict=False))
+						for row in rows
+					]
+			finally:
+				with suppress(Exception):
+					db_cursor.close()
 
 	def upsert_record(
 		self,
@@ -724,6 +793,27 @@ class RelationalConnector(BasePartnerConnector):
 		if self.dialect == "firebird":
 			return f"SELECT * FROM {table}{where_sql} {order_clause} ROWS 1 TO {batch_size}"
 		return f"SELECT * FROM {table}{where_sql} {order_clause} LIMIT {batch_size}"
+
+	def _build_stream_sql(
+		self,
+		*,
+		source: str | None,
+		query: str | None,
+		key_fields: list[str],
+	) -> str:
+		order_clause = self._order_clause(key_fields)
+		if query:
+			if self.dialect == "mssql":
+				cte_source = self._mssql_cte_source_query(query)
+				if cte_source:
+					return f"{cte_source} {order_clause}"
+				return f"SELECT * FROM ({query}) AS source_rows {order_clause}"
+			if self.dialect == "firebird":
+				return f"SELECT * FROM ({query}) source_rows {order_clause}"
+			return f"SELECT * FROM ({query}) AS source_rows {order_clause}"
+
+		table = self._quote_compound_identifier(source or "")
+		return f"SELECT * FROM {table} {order_clause}"
 
 	def _mssql_cte_source_query(self, query: str) -> str | None:
 		sql = query.strip().rstrip(";")

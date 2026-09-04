@@ -364,6 +364,41 @@ class TestRelationalConnectorSql(unittest.TestCase):
 			'SELECT * FROM (SELECT id FROM sync_table) source_rows ORDER BY "ID" ROWS 1 TO 10',
 		)
 
+	def test_build_stream_sql_preserves_dialect_query_forms_and_stable_order(self):
+		self.assertEqual(
+			MssqlConnector(DummyPartner("mssql"))._build_stream_sql(
+				source=None,
+				query="WITH rows AS (SELECT id FROM dbo.SyncTable) SELECT id FROM rows",
+				key_fields=["id"],
+			),
+			"WITH rows AS (SELECT id FROM dbo.SyncTable), source_rows AS (SELECT id FROM rows) "
+			"SELECT * FROM source_rows ORDER BY [id]",
+		)
+		self.assertEqual(
+			PostgresConnector(DummyPartner("postgres"))._build_stream_sql(
+				source=None,
+				query="SELECT id FROM sync_table",
+				key_fields=["id"],
+			),
+			'SELECT * FROM (SELECT id FROM sync_table) AS source_rows ORDER BY "id"',
+		)
+		self.assertEqual(
+			FirebirdConnector(DummyPartner("firebird"))._build_stream_sql(
+				source=None,
+				query="SELECT ID FROM SYNC_TABLE",
+				key_fields=["id"],
+			),
+			'SELECT * FROM (SELECT ID FROM SYNC_TABLE) source_rows ORDER BY "ID"',
+		)
+		self.assertEqual(
+			MssqlConnector(DummyPartner("mssql"))._build_stream_sql(
+				source="dbo.SyncTable",
+				query=None,
+				key_fields=["id"],
+			),
+			"SELECT * FROM [dbo].[SyncTable] ORDER BY [id]",
+		)
+
 	def test_mssql_order_clause_requires_stable_keys(self):
 		connector = MssqlConnector(DummyPartner("mssql"))
 		with self.assertRaisesRegex(RuntimeError, "stable key fields"):
@@ -543,6 +578,30 @@ class TestRelationalConnectorOperations(unittest.TestCase):
 
 		self.assertEqual(result.records, [{"id": "A1"}, {"id": "A2"}])
 		self.assertIsNone(result.next_cursor)
+
+	def test_iter_record_batches_executes_query_once_and_uses_fetchmany(self):
+		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
+		cursor = _FakeCursor(
+			description=[("id",)],
+			rows=[("A1",), ("A2",), ("A3",)],
+		)
+		connection = _FakeConnection(cursor)
+
+		with patch.object(connector, "_connect", return_value=connection):
+			batches = list(
+				connector.iter_record_batches(
+					query="SELECT id FROM sync_records",
+					batch_size=2,
+					key_fields=["id"],
+				)
+			)
+
+		self.assertEqual(batches, [[{"id": "A1"}, {"id": "A2"}], [{"id": "A3"}]])
+		self.assertEqual(
+			cursor.executed,
+			[('SELECT * FROM (SELECT id FROM sync_records) AS source_rows ORDER BY "id"', [])],
+		)
+		self.assertEqual(cursor.fetchmany_sizes, [2, 2, 2])
 
 	def test_fetch_records_rejects_duplicate_page_boundary_keys(self):
 		connector = PostgresConnector(DummyPartner("postgres", host="localhost", database_name="sync", username="tester"))
@@ -1153,6 +1212,8 @@ class _FakeCursor:
 		self.raise_on_execute = raise_on_execute
 		self.fetchone_row = fetchone_row
 		self.executed = []
+		self.fetchmany_sizes = []
+		self._fetchmany_index = 0
 
 	def execute(self, sql, params=None):
 		if self.raise_on_execute:
@@ -1161,6 +1222,12 @@ class _FakeCursor:
 
 	def fetchall(self):
 		return list(self.rows)
+
+	def fetchmany(self, size):
+		self.fetchmany_sizes.append(size)
+		start = self._fetchmany_index
+		self._fetchmany_index += size
+		return list(self.rows[start:self._fetchmany_index])
 
 	def fetchone(self):
 		return self.fetchone_row

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -12,6 +12,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import frappe
 from frappe.utils import cint, get_datetime, get_system_timezone, now_datetime
 import yaml
+
+try:
+	from rq.timeouts import JobTimeoutException
+except Exception:  # pragma: no cover - RQ is available in normal Frappe workers
+	class JobTimeoutException(Exception):
+		pass
 
 from sync.sync.constants import (
 	ACTIVE_RUN_STATUSES,
@@ -378,14 +384,18 @@ def recover_stale_runs(
 	rows = frappe.get_all(
 		SYNC_RUN,
 		filters=filters,
-		fields=["name", "sync_definition", "status", "started_at", "creation"],
+		fields=["name", "sync_definition", "status", "started_at", "creation", "modified"],
 		order_by="creation asc",
 	)
 
 	for row in rows:
 		run_status = str(_row_value(row, "status") or "")
-		run_started_at = _parse_datetime(_row_value(row, "started_at")) or _parse_datetime(_row_value(row, "creation"))
-		if run_started_at and run_started_at > cutoff:
+		last_activity_at = (
+			_parse_datetime(_row_value(row, "modified"))
+			or _parse_datetime(_row_value(row, "started_at"))
+			or _parse_datetime(_row_value(row, "creation"))
+		)
+		if last_activity_at and last_activity_at > cutoff:
 			continue
 		run_name = str(_row_value(row, "name") or "")
 		if not run_name:
@@ -509,9 +519,14 @@ def enqueue_sync_definition(
 
 	job_id = f"sync:run:{sync_definition_name}:{frappe.generate_hash(length=8)}"
 	_update_doc_fields(run_doc, {"status": RUN_STATUS_QUEUED, "job_id": job_id})
+	job_timeout = _positive_int(
+		_get_sync_settings().stale_run_timeout_minutes,
+		DEFAULT_STALE_RUN_TIMEOUT_MINUTES,
+	) * 60
 	frappe.enqueue(
 		"sync.sync.service.runtime.run_sync_definition_job",
 		queue="long",
+		timeout=job_timeout,
 		job_id=job_id,
 		sync_definition_name=sync_definition_name,
 		run_name=run_doc.name,
@@ -643,14 +658,19 @@ def execute_sync_definition(
 			_set_next_run_at(sync_definition, config.cron, commit=False)
 			frappe.db.commit()
 			return {"status": _api_status_for_run_status(terminal_status), "run": run_doc.name, "result": result_payload}
-		except Exception:
-			frappe.log_error(frappe.get_traceback(), f"Sync execution failed for {sync_definition_name}")
+		except Exception as exc:
+			error_traceback = frappe.get_traceback(with_context=False)
+			if isinstance(exc, JobTimeoutException):
+				_reconnect_database_after_job_timeout()
+				run_doc = frappe.get_doc(SYNC_RUN, run_doc.name)
+				sync_definition = frappe.get_doc(SYNC_DEFINITION, sync_definition_name)
+			frappe.log_error(error_traceback, f"Sync execution failed for {sync_definition_name}")
 			_update_doc_fields(
 				run_doc,
 				{
 					"status": RUN_STATUS_ERROR,
 					"finished_at": now_datetime(),
-					"error_message": frappe.get_traceback(with_context=False),
+					"error_message": error_traceback,
 				},
 				commit=False,
 			)
@@ -658,11 +678,19 @@ def execute_sync_definition(
 				_update_definition_failure(
 					sync_definition,
 					last_run=run_doc.name,
-					error_message=frappe.get_traceback(with_context=False),
+					error_message=error_traceback,
 					commit=False,
 				)
 			frappe.db.commit()
 			raise
+
+
+def _reconnect_database_after_job_timeout() -> None:
+	"""Discard a connection interrupted by RQ's timeout signal before audit writes."""
+	database = frappe.db
+	with suppress(Exception):
+		database.close()
+	database.connect()
 
 
 def test_sync_partner_connection(sync_partner_name: str) -> dict[str, Any]:
@@ -1012,14 +1040,14 @@ def _run_engine(
 				)
 			_flush_pending_run_writes(run_doc, force=True)
 	elif config.sync_type == "Frappe <- Partner":
-		frappe_records = _get_frappe_source_records(
-			config,
-			context,
-			apply_delta_filter=False,
-			use_script_source=False,
-		)
-		frappe_lookup = _build_frappe_match_lookup(config, frappe_records)
 		if config.delete_missing and context.is_full_sync:
+			frappe_records = _get_frappe_source_records(
+				config,
+				context,
+				apply_delta_filter=False,
+				use_script_source=False,
+			)
+			frappe_lookup = _build_frappe_match_lookup(config, frappe_records)
 			partner_source = [
 				record
 				for batch in _iter_partner_source_batches(config, connector, context)
@@ -1041,6 +1069,8 @@ def _run_engine(
 		else:
 			source_keys: set[tuple[Any, ...]] = set()
 			for partner_batch in _iter_partner_source_batches(config, connector, context):
+				frappe_records = _load_frappe_match_candidates(config, partner_batch)
+				frappe_lookup = _build_frappe_match_lookup(config, frappe_records)
 				_sync_partner_to_frappe(
 					run_doc=run_doc,
 					config=config,
@@ -1305,6 +1335,8 @@ def _build_frappe_match_lookup(
 	config: SyncDefinitionConfig,
 	records: list[dict[str, Any]] | dict[tuple[Any, ...], dict[str, Any]],
 ) -> FrappeMatchLookup:
+	if isinstance(records, list):
+		records = sorted(records, key=_frappe_match_sort_key)
 	lookup_records = _normalize_frappe_match_records(config, records)
 	groups = _group_frappe_records(config, lookup_records)
 	return FrappeMatchLookup(
@@ -1313,6 +1345,10 @@ def _build_frappe_match_lookup(
 		latest_by_key={key: grouped_records[-1] for key, grouped_records in groups.items()},
 		identity_by_value=_build_frappe_partner_identity_index(config, lookup_records),
 	)
+
+
+def _frappe_match_sort_key(record: dict[str, Any]) -> tuple[str, str]:
+	return (str(record.get("modified") or ""), str(record.get("name") or ""))
 
 
 def _sync_frappe_to_partner(
@@ -1815,6 +1851,36 @@ def _sync_partner_to_frappe(
 					commit=False,
 				)
 				continue
+			if not _update_existing_enabled(config):
+				if after_match_result.changed:
+					_register_and_log(
+						stats=stats,
+						run_doc=run_doc,
+						config=config,
+						action="updated",
+						status="success",
+						message=_append_hook_message(
+							"After Match hook changed matched frappe record.",
+							after_match_result,
+						),
+						direction=label_direction,
+						frappe_record=matched_frappe,
+						partner_record=partner_record,
+						commit=False,
+					)
+				else:
+					_log_update_existing_disabled(
+						stats=stats,
+						run_doc=run_doc,
+						config=config,
+						direction=label_direction,
+						frappe_record=matched_frappe,
+						partner_record=partner_record,
+						write_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
+						changes=[],
+						commit=False,
+					)
+				continue
 			changes = _diff_target_values(
 				new_record=frappe_payload,
 				old_record=matched_frappe or {},
@@ -1857,20 +1923,6 @@ def _sync_partner_to_frappe(
 					direction=label_direction,
 					frappe_record=matched_frappe,
 					partner_record=partner_record,
-					commit=False,
-				)
-				continue
-
-			if not _update_existing_enabled(config):
-				_log_update_existing_disabled(
-					stats=stats,
-					run_doc=run_doc,
-					config=config,
-					direction=label_direction,
-					frappe_record=matched_frappe,
-					partner_record=partner_record,
-					write_direction=SYNC_TYPE_PARTNER_TO_FRAPPE,
-					changes=changes,
 					commit=False,
 				)
 				continue
@@ -3771,6 +3823,122 @@ def _iter_frappe_doctype_source_batches(
 	return _filtered_batches()
 
 
+def _load_frappe_match_candidates(
+	config: SyncDefinitionConfig,
+	partner_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+	"""Load only Frappe rows that can match the current partner batch."""
+	if not partner_records:
+		return []
+
+	fields = _frappe_match_candidate_fields(config)
+	match_conditions: list[list[Any]] = []
+	for index, frappe_field in enumerate(_config_match_fields(config)):
+		values = _unique_filter_values(
+			_raw_key_tuple_from_partner(record, _config_match_fields(config), config.mapping)[index]
+			for record in partner_records
+		)
+		if values:
+			match_conditions.append([frappe_field, "in", values])
+
+	candidates: list[dict[str, Any]] = []
+	if len(match_conditions) == len(_config_match_fields(config)) and match_conditions:
+		candidates.extend(
+			record
+			for batch in _iter_frappe_record_batches(
+				doctype=config.doctype,
+				fields=fields,
+				filters=_filters_with_conditions(config.filters, match_conditions),
+				or_filters=None,
+				batch_size=config.batch_size,
+			)
+			for record in batch
+		)
+
+	frappe_identity_field = _config_frappe_partner_identity_field(config)
+	partner_identity_field = _config_partner_identity_field(config)
+	if frappe_identity_field and partner_identity_field:
+		identity_values = _unique_filter_values(
+			record.get(partner_identity_field) for record in partner_records
+		)
+		if identity_values:
+			candidates.extend(
+				record
+				for batch in _iter_frappe_record_batches(
+					doctype=config.doctype,
+					fields=fields,
+					filters=_filters_with_conditions(
+						config.filters,
+						[[frappe_identity_field, "in", identity_values]],
+					),
+					or_filters=None,
+					batch_size=config.batch_size,
+				)
+				for record in batch
+			)
+
+	deduplicated: dict[str, dict[str, Any]] = {}
+	for record in candidates:
+		name = _clean_string(record.get("name"))
+		if name:
+			deduplicated[name] = record
+	result = list(deduplicated.values())
+	if _update_existing_enabled(config):
+		for record in result:
+			_enrich_record_with_child_rows(
+				config.doctype,
+				record,
+				_child_table_fields_for_mapping(config.mapping, SYNC_TYPE_PARTNER_TO_FRAPPE),
+			)
+	return result
+
+
+def _frappe_match_candidate_fields(config: SyncDefinitionConfig) -> list[str]:
+	fields = {
+		"name",
+		"modified",
+		_config_frappe_modified_field(config),
+		_config_frappe_creation_field(config),
+		*_config_match_fields(config),
+	}
+	frappe_identity_field = _config_frappe_partner_identity_field(config)
+	if frappe_identity_field:
+		fields.add(frappe_identity_field)
+	if _update_existing_enabled(config):
+		fields.update(_parent_mapping_fields_for_sync_type(config.mapping, SYNC_TYPE_PARTNER_TO_FRAPPE))
+
+	doctype_fieldnames = _doctype_fieldnames(config.doctype)
+	if doctype_fieldnames is not None:
+		return sorted(field for field in fields if field in doctype_fieldnames)
+	return sorted(field for field in fields if _doctype_has_field(config.doctype, field))
+
+
+def _unique_filter_values(values: Any) -> list[Any]:
+	result: list[Any] = []
+	seen: set[Any] = set()
+	for value in values:
+		if value in (None, ""):
+			continue
+		try:
+			key = _normalize_pairing_key_value(value)
+			if key in seen:
+				continue
+			seen.add(key)
+		except TypeError:
+			if value in result:
+				continue
+		result.append(value)
+	return result
+
+
+def _filters_with_conditions(filters: list | dict | None, conditions: list[list[Any]]) -> list[list[Any]]:
+	if isinstance(filters, dict):
+		return [*_dict_filters_as_list(filters), *conditions]
+	if isinstance(filters, list):
+		return [*filters, *conditions]
+	return list(conditions)
+
+
 def _iter_frappe_source_script_batches(config: SyncDefinitionConfig, context: SyncContext):
 	records = _execute_frappe_source_script(config, context)
 	batch_size = cint(getattr(config, "batch_size", 100)) or 100
@@ -4006,6 +4174,27 @@ def _iter_partner_record_batches(
 	batch_size: int,
 	key_fields: list[str],
 ):
+	batch_iterator = getattr(connector, "iter_record_batches", None)
+	if callable(batch_iterator):
+		processed_count = 0
+		try:
+			for batch in batch_iterator(
+				source=source,
+				query=query,
+				batch_size=batch_size,
+				key_fields=key_fields,
+			):
+				records = [dict(record) for record in batch if isinstance(record, dict)]
+				if not records:
+					continue
+				processed_count += len(records)
+				yield records
+		except Exception as exc:
+			raise RuntimeError(
+				f"Partner source load failed after {processed_count} records."
+			) from exc
+		return
+
 	cursor = None
 	processed_count = 0
 	for _ in range(10_000):
@@ -5810,7 +5999,7 @@ def _iter_frappe_record_batches(
 	or_filters: list | None,
 	batch_size: int,
 ):
-	cursor: tuple[Any, Any] | None = None
+	cursor: str | None = None
 	while True:
 		page = _get_frappe_keyset_page(
 			doctype,
@@ -5828,8 +6017,8 @@ def _iter_frappe_record_batches(
 		cursor = _frappe_cursor_tuple(page[-1])
 
 
-def _frappe_cursor_tuple(record: dict[str, Any]) -> tuple[str, str]:
-	return (str(record.get("modified") or ""), str(record.get("name") or ""))
+def _frappe_cursor_tuple(record: dict[str, Any]) -> str:
+	return str(record.get("name") or "")
 
 
 def _get_frappe_keyset_page(
@@ -5839,43 +6028,26 @@ def _get_frappe_keyset_page(
 	filters: list | dict | None,
 	or_filters: list | None,
 	batch_size: int,
-	cursor: tuple[Any, Any] | None,
+	cursor: str | tuple[Any, ...] | None,
 ) -> list[dict[str, Any]]:
-	if not cursor:
-		return frappe.get_all(
-			doctype,
-			fields=fields,
-			filters=filters,
-			or_filters=or_filters,
-			limit_page_length=batch_size,
-			order_by="modified asc, name asc",
-		)
-
-	page: list[dict[str, Any]] = []
-	start = 0
-	while len(page) < batch_size:
-		raw_page = frappe.get_all(
-			doctype,
-			fields=fields,
-			filters=_filters_with_frappe_cursor(filters, cursor),
-			or_filters=or_filters,
-			limit_start=start,
-			limit_page_length=batch_size,
-			order_by="modified asc, name asc",
-		)
-		if not raw_page:
-			break
-		page.extend(record for record in raw_page if _frappe_cursor_tuple(record) > cursor)
-		if len(raw_page) < batch_size:
-			break
-		start += batch_size
-	return page[:batch_size]
+	return frappe.get_all(
+		doctype,
+		fields=fields,
+		filters=_filters_with_frappe_cursor(filters, cursor),
+		or_filters=or_filters,
+		limit_page_length=batch_size,
+		order_by="name asc",
+	)
 
 
-def _filters_with_frappe_cursor(filters: list | dict | None, cursor: tuple[Any, Any] | None) -> list | dict | None:
+def _filters_with_frappe_cursor(
+	filters: list | dict | None,
+	cursor: str | tuple[Any, ...] | None,
+) -> list | dict | None:
 	if not cursor:
 		return filters
-	cursor_filter = ["modified", ">=", cursor[0]]
+	cursor_name = str(cursor[-1] if isinstance(cursor, tuple) else cursor)
+	cursor_filter = ["name", ">", cursor_name]
 	if filters is None:
 		return [cursor_filter]
 	if isinstance(filters, list):
@@ -6723,6 +6895,7 @@ def _create_run_item(
 	doc = frappe.get_doc(payload)
 	doc.insert(ignore_permissions=True)
 	if commit:
+		_touch_run_activity(run_doc)
 		frappe.db.commit()
 	return doc
 
@@ -6893,8 +7066,20 @@ def _flush_pending_run_writes(run_doc: Any, *, threshold: int | None = None, for
 		return
 	if not force and threshold is not None and pending < threshold:
 		return
+	_touch_run_activity(run_doc)
 	frappe.db.commit()
 	setattr(run_doc, RUN_DOC_PENDING_WRITES_ATTR, 0)
+
+
+def _touch_run_activity(run_doc: Any) -> None:
+	run_name = _doc_name(run_doc)
+	set_value = getattr(getattr(frappe, "db", None), "set_value", None)
+	if not run_name or not callable(set_value):
+		return
+	activity_at = now_datetime()
+	set_value(SYNC_RUN, run_name, "modified", activity_at, update_modified=False)
+	with suppress(Exception):
+		setattr(run_doc, "modified", activity_at)
 
 
 def _set_doc_values(doc: Any, values: dict[str, Any]) -> None:

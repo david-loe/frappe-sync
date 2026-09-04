@@ -269,6 +269,31 @@ class TestRuntimeManagement(unittest.TestCase):
 		self.assertEqual(definition_doc.payload["last_run_status"], "Error")
 		self.assertIn("Recovered stale Running", definition_doc.payload["last_run_summary"])
 
+	def test_recover_stale_runs_uses_recent_run_activity(self):
+		now = datetime(2026, 3, 17, 12, 0, 0)
+		with (
+			patch("sync.sync.service.runtime.now_datetime", return_value=now),
+			patch("sync.sync.service.runtime._get_sync_settings", return_value=SimpleNamespace(stale_run_timeout_minutes=60)),
+			patch(
+				"sync.sync.service.runtime.frappe.get_all",
+				return_value=[
+					{
+						"name": "RUN-ACTIVE",
+						"sync_definition": "SYNC-1",
+						"status": "Running",
+						"started_at": datetime(2026, 3, 17, 8, 0, 0),
+						"modified": datetime(2026, 3, 17, 11, 30, 0),
+					}
+				],
+			),
+			patch("sync.sync.service.runtime.frappe.get_doc") as mock_get_doc,
+			patch("sync.sync.service.runtime.frappe.db", _db_stub()),
+		):
+			result = runtime.recover_stale_runs("SYNC-1")
+
+		self.assertEqual(result["recovered_count"], 0)
+		mock_get_doc.assert_not_called()
+
 	def test_cleanup_sync_run_retention_deletes_items_before_runs(self):
 		now = datetime(2026, 3, 17, 12, 0, 0)
 		deleted = []
@@ -324,6 +349,44 @@ class TestRuntimeManagement(unittest.TestCase):
 
 		self.assertEqual(result, {"status": "success"})
 		mock_execute.assert_called_once_with("SYNC-1", trigger="manual", dry_run=True, run_name="RUN-1")
+
+	def test_enqueue_sync_definition_uses_stale_period_as_long_queue_timeout(self):
+		run_doc = SimpleNamespace(name="RUN-1")
+		definition = SimpleNamespace(name="SYNC-1")
+		with (
+			patch("sync.sync.service.runtime._definition_lock", return_value=nullcontext()),
+			patch("sync.sync.service.runtime._has_active_run", return_value=False),
+			patch("sync.sync.service.runtime.frappe.get_doc", return_value=definition),
+			patch("sync.sync.service.runtime._create_run_doc", return_value=run_doc),
+			patch("sync.sync.service.runtime._update_doc_fields"),
+			patch("sync.sync.service.runtime._get_sync_settings", return_value=SimpleNamespace(stale_run_timeout_minutes=45)),
+			patch("sync.sync.service.runtime.frappe.generate_hash", return_value="abcdef12"),
+			patch("sync.sync.service.runtime.frappe.enqueue") as mock_enqueue,
+		):
+			runtime.enqueue_sync_definition("SYNC-1")
+
+		self.assertEqual(mock_enqueue.call_args.kwargs["queue"], "long")
+		self.assertEqual(mock_enqueue.call_args.kwargs["timeout"], 45 * 60)
+
+	def test_audit_flush_updates_run_activity_before_commit(self):
+		set_value = Mock()
+		commit = Mock()
+		run_doc = SimpleNamespace(name="RUN-1")
+		runtime._track_pending_run_writes(run_doc, 2)
+		with (
+			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0, 0)),
+			patch("sync.sync.service.runtime.frappe.db", _db_stub(set_value=set_value, commit=commit)),
+		):
+			runtime._flush_pending_run_writes(run_doc, force=True)
+
+		set_value.assert_called_once_with(
+			"Sync Run",
+			"RUN-1",
+			"modified",
+			datetime(2026, 3, 17, 12, 0, 0),
+			update_modified=False,
+		)
+		commit.assert_called_once_with()
 
 	def test_run_sync_definition_job_delegates_to_execute(self):
 		with patch("sync.sync.service.runtime.execute_sync_definition", return_value={"status": "success"}) as mock_execute:
@@ -579,6 +642,42 @@ class TestRuntimeManagement(unittest.TestCase):
 			self.assertRaises(RuntimeError),
 		):
 			runtime.execute_sync_definition("SYNC-1", run_name="RUN-1")
+
+	def test_execute_sync_definition_reconnects_and_persists_job_timeout_traceback(self):
+		run_doc = SimpleNamespace(name="RUN-1")
+		definition = SimpleNamespace(name="SYNC-1")
+		reloaded_run = SimpleNamespace(name="RUN-1")
+		reloaded_definition = SimpleNamespace(name="SYNC-1")
+		updates = []
+		with (
+			patch("sync.sync.service.runtime._definition_lock", return_value=nullcontext()),
+			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0, 0)),
+			patch(
+				"sync.sync.service.runtime.frappe.get_doc",
+				side_effect=[run_doc, definition, reloaded_run, reloaded_definition],
+			),
+			patch(
+				"sync.sync.service.runtime._update_doc_fields",
+				side_effect=lambda doc, values, **kwargs: updates.append((doc, dict(values))),
+			),
+			patch("sync.sync.service.runtime._build_definition_config", side_effect=runtime.JobTimeoutException("deadline")),
+			patch("sync.sync.service.runtime._reconnect_database_after_job_timeout") as mock_reconnect,
+			patch("sync.sync.service.runtime.frappe.log_error"),
+			patch("sync.sync.service.runtime.frappe.get_traceback", return_value="Traceback\nJobTimeoutException: deadline"),
+			patch("sync.sync.service.runtime._update_definition_failure") as mock_definition_failure,
+			patch("sync.sync.service.runtime.frappe.db", _db_stub()),
+			self.assertRaises(runtime.JobTimeoutException),
+		):
+			runtime.execute_sync_definition("SYNC-1", run_name="RUN-1")
+
+		mock_reconnect.assert_called_once_with()
+		error_update = next(values for doc, values in updates if doc is reloaded_run)
+		self.assertEqual(error_update["status"], "Error")
+		self.assertEqual(error_update["error_message"], "Traceback\nJobTimeoutException: deadline")
+		self.assertEqual(
+			mock_definition_failure.call_args.kwargs["error_message"],
+			"Traceback\nJobTimeoutException: deadline",
+		)
 
 	def test_run_engine_requires_context_or_config_and_coerces_plain_objects(self):
 		with self.assertRaises(ValueError):

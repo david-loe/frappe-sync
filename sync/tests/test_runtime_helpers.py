@@ -602,7 +602,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 
 		self.assertEqual(len(logger.messages), 1)
 
-	def test_filters_with_frappe_cursor_preserves_existing_modified_filters(self):
+	def test_filters_with_frappe_cursor_uses_strict_name_cursor(self):
 		cursor = ("2026-03-17 10:00:00", "TASK-1")
 		self.assertEqual(
 			runtime._filters_with_frappe_cursor(
@@ -612,16 +612,16 @@ class TestRuntimeHelpers(unittest.TestCase):
 			[
 				["status", "=", "Open"],
 				["modified", "<", "2026-03-18 00:00:00"],
-				["modified", ">=", "2026-03-17 10:00:00"],
+				["name", ">", "TASK-1"],
 			],
 		)
 		self.assertEqual(
 			runtime._filters_with_frappe_cursor([["status", "=", "Open"]], cursor),
-			[["status", "=", "Open"], ["modified", ">=", "2026-03-17 10:00:00"]],
+			[["status", "=", "Open"], ["name", ">", "TASK-1"]],
 		)
 		self.assertEqual(
 			runtime._filters_with_frappe_cursor(None, cursor),
-			[["modified", ">=", "2026-03-17 10:00:00"]],
+			[["name", ">", "TASK-1"]],
 		)
 
 	def test_build_record_key_consistent(self):
@@ -1944,6 +1944,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			mapping={"name": "id", "status": "state"},
 			value_mapping={},
 			create_new=True,
+			update_existing=0,
 			delete_missing=False,
 		)
 		logged = []
@@ -1954,6 +1955,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 				"sync.sync.service.runtime._run_after_match_frappe_write_hooks",
 				return_value=runtime.FrappeWriteHookResult(changed=True, messages=("Reverse Journal Entry erstellt",)),
 			),
+			patch("sync.sync.service.runtime._diff_target_values") as mock_diff,
 			patch("sync.sync.service.runtime._upsert_frappe_record") as mock_upsert,
 		):
 			runtime._sync_partner_to_frappe(
@@ -1969,6 +1971,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 			)
 
 		mock_upsert.assert_not_called()
+		mock_diff.assert_not_called()
 		self.assertEqual(logged[0]["action"], "updated")
 		self.assertEqual(logged[0]["status"], "success")
 		self.assertIn("Reverse Journal Entry erstellt", logged[0]["message"])
@@ -3063,23 +3066,13 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertEqual(json.loads(payload["frappe_resolution_payload"]), {"name": "TASK-1", "status": "Open"})
 		self.assertEqual(json.loads(payload["partner_resolution_payload"]), {"id": "PARTNER-1", "state": "Closed"})
 
-	def test_get_frappe_keyset_page_filters_repeated_cursor_rows_and_advances_start(self):
-		pages = [
-			[
-				{"modified": "2026-03-17 10:00:00", "name": "TASK-1"},
-				{"modified": "2026-03-17 10:00:00", "name": "TASK-2"},
-			],
-			[
-				{"modified": "2026-03-17 10:00:00", "name": "TASK-1"},
-				{"modified": "2026-03-17 10:00:00", "name": "TASK-3"},
-			],
-			[
-				{"modified": "2026-03-17 10:00:00", "name": "TASK-4"},
-				{"modified": "2026-03-17 10:00:00", "name": "TASK-5"},
-			],
+	def test_get_frappe_keyset_page_uses_one_strict_name_query(self):
+		rows = [
+			{"modified": "2026-03-17 10:00:00", "name": "TASK-3"},
+			{"modified": "2026-03-17 10:00:00", "name": "TASK-4"},
 		]
 
-		with patch("sync.sync.service.runtime.frappe.get_all", side_effect=pages) as mock_get_all:
+		with patch("sync.sync.service.runtime.frappe.get_all", return_value=rows) as mock_get_all:
 			page = runtime._get_frappe_keyset_page(
 				"Task",
 				fields=["name", "modified"],
@@ -3090,7 +3083,14 @@ class TestRuntimeHelpers(unittest.TestCase):
 			)
 
 		self.assertEqual([record["name"] for record in page], ["TASK-3", "TASK-4"])
-		self.assertEqual([call.kwargs["limit_start"] for call in mock_get_all.call_args_list], [0, 2, 4])
+		mock_get_all.assert_called_once_with(
+			"Task",
+			fields=["name", "modified"],
+			filters=[["name", ">", "TASK-2"]],
+			or_filters=None,
+			limit_page_length=2,
+			order_by="name asc",
+		)
 
 	def test_merge_partner_runtime_settings_copies_only_valid_time_zone(self):
 		base = runtime.SyncDefinitionConfig(
