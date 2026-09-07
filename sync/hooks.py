@@ -156,11 +156,11 @@ after_migrate = "sync.setup.after_migrate"
 scheduler_events = {
 	"cron": {
 		"0/5 * * * *": [
-			"sync.sync.service.runtime.run_due_sync_definitions_scheduled",
+			"sync.sync.service.scheduler.run_due_sync_definitions_scheduled",
 		]
 	},
 	"daily": [
-		"sync.sync.service.runtime.cleanup_sync_run_retention_scheduled",
+		"sync.sync.service.management.cleanup_sync_run_retention_scheduled",
 	],
 }
 

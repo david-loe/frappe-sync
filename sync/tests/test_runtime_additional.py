@@ -1,16 +1,33 @@
 from __future__ import annotations
 
+import unittest
 from contextlib import nullcontext
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-import unittest
 from unittest.mock import Mock, patch
 
 import frappe
 
-from sync.sync.service import runtime
+from sync.sync import constants
+from sync.sync.service import audit as audit_service
+from sync.sync.service import configuration as configuration_service
+from sync.sync.service import management as management_service
+from sync.sync.service import mapping as mapping_service
+from sync.sync.service import matching as matching_service
+from sync.sync.service import models as models_service
+from sync.sync.service import orchestrator as orchestrator_service
+from sync.sync.service import scheduler as scheduler_service
+from sync.sync.service import scheduling as scheduling_service
+from sync.sync.service import values as values_service
+from sync.sync.service import yaml_io as yaml_io_service
 from sync.sync.service.connectors import ConnectorPingResult, ConnectorWriteResult
+from sync.sync.service.execution import bidirectional as bidirectional_service
+from sync.sync.service.execution import engine as engine_service
+from sync.sync.service.execution import one_way as one_way_service
+from sync.sync.service.execution import sources as sources_service
+from sync.sync.service.execution import writes as writes_service
+from sync.tests.service_test_support import install_definition_metadata, patch_service_dependency
 
 
 class FakeDoc:
@@ -57,7 +74,7 @@ def _runtime_frappe_stub(**overrides):
 
 
 def _identity_match_config(one_way_match_mode="first_match"):
-	return runtime.SyncDefinitionConfig(
+	return models_service.SyncDefinitionConfig(
 		name="SYNC-IDENTITY",
 		doctype="Task",
 		partner="PARTNER-1",
@@ -106,7 +123,7 @@ def _identity_fields_config(**overrides):
 			"subject": {"partner_field": "title", "direction": "Frappe <-> Partner"},
 		},
 		"value_mapping": {},
-		"match_mode": runtime.MATCH_MODE_IDENTITY_FIELDS,
+		"match_mode": constants.MATCH_MODE_IDENTITY_FIELDS,
 		"frappe_modified_field": "modified",
 		"frappe_creation_field": "creation",
 		"partner_modified_field": "updated_at",
@@ -116,7 +133,7 @@ def _identity_fields_config(**overrides):
 		"partner_frappe_identity_field": "frappe_name",
 	}
 	values.update(overrides)
-	return runtime.SyncDefinitionConfig(**values)
+	return models_service.SyncDefinitionConfig(**values)
 
 
 class FakeIdentityConnector:
@@ -156,7 +173,9 @@ class FakeScriptSourceConnector:
 
 	def upsert_record(self, **kwargs):
 		self.upserts.append(kwargs)
-		return ConnectorWriteResult(ok=True, message="ok", action="created", record=dict(kwargs.get("record") or {}))
+		return ConnectorWriteResult(
+			ok=True, message="ok", action="created", record=dict(kwargs.get("record") or {})
+		)
 
 	def delete_record(self, **kwargs):
 		self.deletes.append(kwargs)
@@ -164,15 +183,22 @@ class FakeScriptSourceConnector:
 
 
 class TestRuntimeAdditional(unittest.TestCase):
+	def setUp(self):
+		install_definition_metadata(self)
+
 	def test_run_due_sync_definitions_scheduled_sets_admin_and_delegates(self):
 		delegated = [{"status": "queued", "sync_definition": "SYNC-1"}]
 
 		with (
-			patch("sync.sync.service.runtime.frappe.set_user") as mock_set_user,
-			patch("sync.sync.service.runtime.recover_stale_runs", return_value={"recovered_count": 0}) as mock_recover,
-			patch("sync.sync.service.runtime.run_due_sync_definitions", return_value=delegated) as mock_run_due,
+			patch("sync.sync.service.orchestrator.frappe.set_user") as mock_set_user,
+			patch(
+				"sync.sync.service.management.recover_stale_runs", return_value={"recovered_count": 0}
+			) as mock_recover,
+			patch(
+				"sync.sync.service.scheduler.run_due_sync_definitions", return_value=delegated
+			) as mock_run_due,
 		):
-			result = runtime.run_due_sync_definitions_scheduled(limit=7, queue=False)
+			result = scheduler_service.run_due_sync_definitions_scheduled(limit=7, queue=False)
 
 		self.assertIs(result, delegated)
 		mock_set_user.assert_called_once_with("Administrator")
@@ -180,7 +206,8 @@ class TestRuntimeAdditional(unittest.TestCase):
 		mock_run_due.assert_called_once_with(limit=7, queue=False)
 
 	def test_run_engine_routes_arbitrary_frappe_source_script_fields_to_partner_upsert(self):
-		config = runtime.SyncDefinitionConfig(
+		self.enterContext(patch("sync.sync.service.config_access.server_script_enabled", return_value=True))
+		config = models_service.SyncDefinitionConfig(
 			name="SYNC-SCRIPT",
 			doctype="Task",
 			partner="PARTNER-1",
@@ -191,6 +218,8 @@ class TestRuntimeAdditional(unittest.TestCase):
 			create_new=True,
 			delete_missing=True,
 			use_last_sync_date=True,
+			partner_modified_field="updated_at",
+			partner_creation_field="created_at",
 			conflict_policy="newest_wins",
 			timestamp_buffer_ms=0,
 			table_name="public.sync_records",
@@ -201,10 +230,10 @@ class TestRuntimeAdditional(unittest.TestCase):
 				"payload": {"partner_field": "label", "direction": "Frappe -> Partner"},
 			},
 			value_mapping={},
-			frappe_source_mode=runtime.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+			frappe_source_mode=constants.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
 			frappe_source_script="records = []",
 		)
-		mapping_context = runtime.RuntimeMappingContext(
+		mapping_context = models_service.RuntimeMappingContext(
 			mapping=config.mapping,
 			value_mapping={},
 			value_mapping_fallbacks={},
@@ -223,21 +252,29 @@ class TestRuntimeAdditional(unittest.TestCase):
 		created_items = []
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(get=lambda key, default=None: None)),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=connector),
-			patch("sync.sync.service.runtime._build_runtime_mapping_context", return_value=mapping_context),
 			patch(
-				"sync.sync.service.runtime._execute_frappe_source_script",
+				"sync.sync.service.orchestrator.frappe.get_doc",
+				return_value=SimpleNamespace(get=lambda key, default=None: None),
+			),
+			patch_service_dependency("get_connector_for_partner", return_value=connector),
+			patch("sync.sync.service.mapping._build_runtime_mapping_context", return_value=mapping_context),
+			patch(
+				"sync.sync.service.execution.sources._execute_frappe_source_script",
 				return_value=[{"record_id": "TASK-1", "payload": "A"}],
 			) as mock_source_script,
-			patch("sync.sync.service.runtime._create_run_item", side_effect=lambda **kwargs: created_items.append(kwargs)),
-			patch("sync.sync.service.runtime._track_pending_run_writes"),
-			patch("sync.sync.service.runtime._flush_pending_run_writes"),
+			patch(
+				"sync.sync.service.audit._create_run_item",
+				side_effect=lambda **kwargs: created_items.append(kwargs),
+			),
+			patch("sync.sync.service.audit._track_pending_run_writes"),
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
 		):
-			result = runtime._run_engine(
+			result = engine_service._run_engine(
 				SimpleNamespace(name="SYNC-SCRIPT"),
 				SimpleNamespace(name="RUN-1"),
-				context=runtime.SyncContext(config=config, dry_run=False, last_successful_sync=datetime(2026, 1, 1)),
+				context=models_service.SyncContext(
+					config=config, dry_run=False, last_successful_sync=datetime(2026, 1, 1)
+				),
 			)
 
 		self.assertEqual(result["processed_count"], 1)
@@ -251,21 +288,22 @@ class TestRuntimeAdditional(unittest.TestCase):
 			name="SYNC-SCRIPT",
 			doctype="Task",
 			batch_size=2,
-			frappe_source_mode=runtime.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+			frappe_source_mode=constants.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
 			frappe_source_script="records = []",
 		)
-		context = runtime.SyncContext(config=config, dry_run=True, last_successful_sync=None)
+		context = models_service.SyncContext(config=config, dry_run=True, last_successful_sync=None)
 
 		with patch(
-			"sync.sync.service.runtime._execute_frappe_source_script",
+			"sync.sync.service.execution.sources._execute_frappe_source_script",
 			return_value=[{"name": "TASK-1"}, {"name": "TASK-2"}, {"name": "TASK-3"}],
 		):
-			batches = list(runtime._iter_frappe_source_batches(config, context))
+			batches = list(sources_service._iter_frappe_source_batches(config, context))
 
 		self.assertEqual(batches, [[{"name": "TASK-1"}, {"name": "TASK-2"}], [{"name": "TASK-3"}]])
 
 	def test_frappe_source_script_full_lookup_falls_back_to_doctype_query_for_delete_missing(self):
-		config = runtime.SyncDefinitionConfig(
+		self.enterContext(patch("sync.sync.service.config_access.server_script_enabled", return_value=True))
+		config = models_service.SyncDefinitionConfig(
 			name="SYNC-SCRIPT",
 			doctype="Task",
 			partner="PARTNER-1",
@@ -283,10 +321,10 @@ class TestRuntimeAdditional(unittest.TestCase):
 			match_fields=["name"],
 			mapping={"name": {"partner_field": "id", "direction": "Frappe -> Partner"}},
 			value_mapping={},
-			frappe_source_mode=runtime.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+			frappe_source_mode=constants.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
 			frappe_source_script="records = []",
 		)
-		mapping_context = runtime.RuntimeMappingContext(
+		mapping_context = models_service.RuntimeMappingContext(
 			mapping=config.mapping,
 			value_mapping={},
 			value_mapping_fallbacks={},
@@ -305,22 +343,31 @@ class TestRuntimeAdditional(unittest.TestCase):
 		connector.partner_records = [{"id": "TASK-1"}, {"id": "TASK-2"}]
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(get=lambda key, default=None: None)),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=connector),
-			patch("sync.sync.service.runtime._build_runtime_mapping_context", return_value=mapping_context),
-			patch("sync.sync.service.runtime._execute_frappe_source_script", return_value=[{"name": "TASK-1"}]),
 			patch(
-				"sync.sync.service.runtime.frappe.get_all",
-				return_value=[{"name": "TASK-1", "modified": "2026-01-01"}, {"name": "TASK-2", "modified": "2026-01-01"}],
+				"sync.sync.service.orchestrator.frappe.get_doc",
+				return_value=SimpleNamespace(get=lambda key, default=None: None),
+			),
+			patch_service_dependency("get_connector_for_partner", return_value=connector),
+			patch("sync.sync.service.mapping._build_runtime_mapping_context", return_value=mapping_context),
+			patch(
+				"sync.sync.service.execution.sources._execute_frappe_source_script",
+				return_value=[{"name": "TASK-1"}],
+			),
+			patch(
+				"sync.sync.service.orchestrator.frappe.get_all",
+				return_value=[
+					{"name": "TASK-1", "modified": "2026-01-01"},
+					{"name": "TASK-2", "modified": "2026-01-01"},
+				],
 			) as mock_get_all,
-			patch("sync.sync.service.runtime._create_run_item"),
-			patch("sync.sync.service.runtime._track_pending_run_writes"),
-			patch("sync.sync.service.runtime._flush_pending_run_writes"),
+			patch("sync.sync.service.audit._create_run_item"),
+			patch("sync.sync.service.audit._track_pending_run_writes"),
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
 		):
-			runtime._run_engine(
+			engine_service._run_engine(
 				SimpleNamespace(name="SYNC-SCRIPT"),
 				SimpleNamespace(name="RUN-1"),
-				context=runtime.SyncContext(config=config, dry_run=False, last_successful_sync=None),
+				context=models_service.SyncContext(config=config, dry_run=False, last_successful_sync=None),
 			)
 
 		mock_get_all.assert_called()
@@ -328,15 +375,15 @@ class TestRuntimeAdditional(unittest.TestCase):
 
 	def test_frappe_source_script_validation_rejects_invalid_records_and_disabled_server_scripts(self):
 		with self.assertRaises(frappe.ValidationError):
-			runtime._normalize_frappe_source_script_records({"name": "TASK-1"})
+			sources_service._normalize_frappe_source_script_records({"name": "TASK-1"})
 		with self.assertRaises(frappe.ValidationError):
-			runtime._normalize_frappe_source_script_records(["TASK-1"])
+			sources_service._normalize_frappe_source_script_records(["TASK-1"])
 
 		with (
-			patch("sync.sync.service.runtime._server_script_enabled", return_value=False),
+			patch("sync.sync.service.config_access.server_script_enabled", return_value=False),
 			self.assertRaises(frappe.ValidationError),
 		):
-			runtime._coerce_config(
+			configuration_service._coerce_config(
 				SimpleNamespace(
 					name="SYNC-SCRIPT",
 					doctype="Task",
@@ -346,7 +393,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 					use_last_sync_date=False,
 					match_fields=["name"],
 					mapping={"name": {"partner_field": "id", "direction": "Frappe -> Partner"}},
-					frappe_source_mode=runtime.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
+					frappe_source_mode=constants.FRAPPE_SOURCE_MODE_PYTHON_SCRIPT,
 					frappe_source_script="records = []",
 				)
 			)
@@ -354,44 +401,50 @@ class TestRuntimeAdditional(unittest.TestCase):
 	def test_pairing_key_and_identity_index_helpers_cover_mapping_branches(self):
 		config = _identity_match_config()
 
-		self.assertEqual(runtime._normalize_number_pairing_key("001.2300"), "1.23")
-		self.assertEqual(runtime._normalize_number_pairing_key("NaN"), "NaN")
-		self.assertEqual(runtime._normalize_number_pairing_key("not-a-number"), "not-a-number")
-		self.assertEqual(runtime._normalize_decimal_pairing_key(Decimal("0.000")), "0")
-		self.assertEqual(runtime._normalize_decimal_pairing_key(Decimal("123.4500")), "123.45")
-		self.assertEqual(runtime._normalize_decimal_pairing_key(Decimal("NaN")), "NaN")
+		self.assertEqual(matching_service._normalize_number_pairing_key("001.2300"), "1.23")
+		self.assertEqual(matching_service._normalize_number_pairing_key("NaN"), "NaN")
+		self.assertEqual(matching_service._normalize_number_pairing_key("not-a-number"), "not-a-number")
+		self.assertEqual(values_service._normalize_decimal_pairing_key(Decimal("0.000")), "0")
+		self.assertEqual(values_service._normalize_decimal_pairing_key(Decimal("123.4500")), "123.45")
+		self.assertEqual(values_service._normalize_decimal_pairing_key(Decimal("NaN")), "NaN")
 		self.assertEqual(
-			runtime._normalize_datetime_string_pairing_key("2026-03-17T12:00:00+02:00"),
+			matching_service._normalize_datetime_string_pairing_key("2026-03-17T12:00:00+02:00"),
 			"2026-03-17T10:00:00.000000+00:00",
 		)
-		self.assertIsNone(runtime._normalize_datetime_string_pairing_key("2026/03/17"))
-		self.assertEqual(runtime._normalize_pairing_key_value(True), ("number", "1"))
-		self.assertEqual(runtime._normalize_pairing_key_value(1.2300), ("number", "1.23"))
+		self.assertIsNone(matching_service._normalize_datetime_string_pairing_key("2026/03/17"))
+		self.assertEqual(matching_service._normalize_pairing_key_value(True), ("number", "1"))
+		self.assertEqual(matching_service._normalize_pairing_key_value(1.2300), ("number", "1.23"))
 		self.assertEqual(
-			runtime._normalize_pairing_key_value(datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)),
+			matching_service._normalize_pairing_key_value(datetime(2026, 3, 17, 12, 0, tzinfo=UTC)),
 			("datetime", "2026-03-17T12:00:00.000000+00:00"),
 		)
 		self.assertEqual(
-			runtime._normalize_pairing_key_value("2026-03-17T12:00:00+02:00"),
+			matching_service._normalize_pairing_key_value("2026-03-17T12:00:00+02:00"),
 			("datetime", "2026-03-17T10:00:00.000000+00:00"),
 		)
-		self.assertTrue(runtime._normalize_pairing_key_value(object()).startswith("<object object at "))
-		self.assertTrue(runtime._valid_key(("TASK-1", 1)))
-		self.assertFalse(runtime._valid_key(()))
-		self.assertFalse(runtime._valid_key(("TASK-1", "")))
-		self.assertFalse(runtime._valid_key((None,)))
+		self.assertTrue(
+			matching_service._normalize_pairing_key_value(object()).startswith("<object object at ")
+		)
+		self.assertTrue(matching_service._valid_key(("TASK-1", 1)))
+		self.assertFalse(matching_service._valid_key(()))
+		self.assertFalse(matching_service._valid_key(("TASK-1", "")))
+		self.assertFalse(matching_service._valid_key((None,)))
 
 		frappe_record = {"name": "TASK-1", "partner_id": "EXT-1"}
 		partner_record = {"id": "TASK-1", "external_id": "EXT-1"}
-		self.assertEqual(runtime._partner_key_values_from_frappe_record(config, frappe_record), {"id": "TASK-1"})
-		self.assertEqual(runtime._partner_key_values_from_partner_record(config, partner_record), {"id": "TASK-1"})
-		self.assertEqual(runtime._partner_fetch_key_fields(config), ["id", "external_id"])
 		self.assertEqual(
-			runtime._partner_fetch_key_fields(_identity_fields_config(match_fields=["subject"])),
+			matching_service._partner_key_values_from_frappe_record(config, frappe_record), {"id": "TASK-1"}
+		)
+		self.assertEqual(
+			matching_service._partner_key_values_from_partner_record(config, partner_record), {"id": "TASK-1"}
+		)
+		self.assertEqual(matching_service._partner_fetch_key_fields(config), ["id", "external_id"])
+		self.assertEqual(
+			matching_service._partner_fetch_key_fields(_identity_fields_config(match_fields=["subject"])),
 			["NR"],
 		)
 
-		list_index = runtime._build_partner_identity_index(
+		list_index = matching_service._build_partner_identity_index(
 			config,
 			[
 				{"id": "TASK-1", "external_id": "EXT-1"},
@@ -401,7 +454,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 		self.assertEqual(list_index, {"EXT-1": {"id": "TASK-1", "external_id": "EXT-1"}})
 
-		dict_index = runtime._build_partner_identity_index(
+		dict_index = matching_service._build_partner_identity_index(
 			config,
 			{
 				("TASK-2",): {"id": "TASK-2", "external_id": "EXT-2"},
@@ -410,7 +463,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 		self.assertEqual(dict_index, {"EXT-2": {"id": "TASK-2", "external_id": "EXT-2"}})
 
-		frappe_list_index = runtime._build_frappe_partner_identity_index(
+		frappe_list_index = matching_service._build_frappe_partner_identity_index(
 			config,
 			[
 				{"name": "TASK-1", "partner_id": "EXT-1"},
@@ -420,7 +473,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 		self.assertEqual(frappe_list_index, {"EXT-1": {"name": "TASK-1", "partner_id": "EXT-1"}})
 
-		frappe_dict_index = runtime._build_frappe_partner_identity_index(
+		frappe_dict_index = matching_service._build_frappe_partner_identity_index(
 			config,
 			{
 				("TASK-2",): {"name": "TASK-2", "partner_id": "EXT-2"},
@@ -428,7 +481,9 @@ class TestRuntimeAdditional(unittest.TestCase):
 			},
 		)
 		self.assertEqual(frappe_dict_index, {"EXT-2": {"name": "TASK-2", "partner_id": "EXT-2"}})
-		self.assertEqual(runtime._build_frappe_partner_identity_index(SimpleNamespace(), [{"name": "TASK-1"}]), {})
+		self.assertEqual(
+			matching_service._build_frappe_partner_identity_index(SimpleNamespace(), [{"name": "TASK-1"}]), {}
+		)
 
 	def test_identity_matching_prefers_stored_ids_and_pair_tokens_fall_back_to_keys(self):
 		first_match_config = _identity_match_config()
@@ -441,7 +496,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		partner_identity_index = {"EXT-2": identity_partner}
 
 		self.assertEqual(
-			runtime._find_existing_partner_records(
+			matching_service._find_existing_partner_records(
 				first_match_config,
 				{"name": "TASK-1", "partner_id": "EXT-2"},
 				partner_groups,
@@ -450,7 +505,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			[identity_partner],
 		)
 		self.assertEqual(
-			runtime._find_existing_partner_record(
+			matching_service._find_existing_partner_record(
 				first_match_config,
 				{"name": "TASK-1"},
 				{("TASK-1",): matching_partner_new},
@@ -459,7 +514,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			matching_partner_new,
 		)
 		self.assertEqual(
-			runtime._find_existing_partner_records(
+			matching_service._find_existing_partner_records(
 				first_match_config,
 				{"name": "TASK-1"},
 				partner_groups,
@@ -468,7 +523,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			[matching_partner_new],
 		)
 		self.assertEqual(
-			runtime._find_existing_partner_records(
+			matching_service._find_existing_partner_records(
 				all_matches_config,
 				{"name": "TASK-1"},
 				partner_groups,
@@ -484,7 +539,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		frappe_partner_identity_index = {"EXT-2": identity_frappe}
 
 		self.assertEqual(
-			runtime._find_existing_frappe_records(
+			matching_service._find_existing_frappe_records(
 				first_match_config,
 				{"id": "TASK-1", "external_id": "EXT-2"},
 				frappe_groups,
@@ -493,7 +548,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			[identity_frappe],
 		)
 		self.assertEqual(
-			runtime._find_existing_frappe_record(
+			matching_service._find_existing_frappe_record(
 				first_match_config,
 				{"id": "TASK-1"},
 				{("TASK-1",): matching_frappe_new},
@@ -502,7 +557,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			matching_frappe_new,
 		)
 		self.assertEqual(
-			runtime._find_existing_frappe_records(
+			matching_service._find_existing_frappe_records(
 				first_match_config,
 				{"id": "TASK-1"},
 				frappe_groups,
@@ -511,7 +566,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			[matching_frappe_new],
 		)
 		self.assertEqual(
-			runtime._find_existing_frappe_records(
+			matching_service._find_existing_frappe_records(
 				all_matches_config,
 				{"id": "TASK-1"},
 				frappe_groups,
@@ -521,38 +576,48 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 		self.assertEqual(
-			runtime._pair_token_from_frappe(first_match_config, {"name": "TASK-1", "partner_id": "EXT-1"}),
+			matching_service._pair_token_from_frappe(
+				first_match_config, {"name": "TASK-1", "partner_id": "EXT-1"}
+			),
 			("partner_identity", "EXT-1"),
 		)
 		self.assertEqual(
-			runtime._pair_token_from_partner(first_match_config, {"id": "TASK-1", "external_id": "EXT-1"}),
+			matching_service._pair_token_from_partner(
+				first_match_config, {"id": "TASK-1", "external_id": "EXT-1"}
+			),
 			("partner_identity", "EXT-1"),
 		)
 		self.assertEqual(
-			runtime._pair_token_from_frappe(first_match_config, {"name": "TASK-1"}),
+			matching_service._pair_token_from_frappe(first_match_config, {"name": "TASK-1"}),
 			("match", "TASK-1"),
 		)
 		self.assertEqual(
-			runtime._pair_token_from_partner(first_match_config, {"id": "TASK-1"}),
+			matching_service._pair_token_from_partner(first_match_config, {"id": "TASK-1"}),
 			("match", "TASK-1"),
 		)
-		self.assertIsNone(runtime._pair_token_from_frappe(first_match_config, {"name": ""}))
-		self.assertIsNone(runtime._pair_token_from_partner(first_match_config, {"id": None}))
+		self.assertIsNone(matching_service._pair_token_from_frappe(first_match_config, {"name": ""}))
+		self.assertIsNone(matching_service._pair_token_from_partner(first_match_config, {"id": None}))
 
 		self.assertEqual(
-			runtime._normalize_partner_match_records(first_match_config, [{"id": "TASK-1"}]),
+			matching_service._normalize_partner_match_records(first_match_config, [{"id": "TASK-1"}]),
 			{("TASK-1",): {"id": "TASK-1"}},
 		)
 		partner_records = [{"id": "TASK-1"}]
-		self.assertIs(runtime._normalize_partner_match_records(all_matches_config, partner_records), partner_records)
+		self.assertIs(
+			matching_service._normalize_partner_match_records(all_matches_config, partner_records),
+			partner_records,
+		)
 		self.assertEqual(
-			runtime._normalize_frappe_match_records(first_match_config, [{"name": "TASK-1"}]),
+			matching_service._normalize_frappe_match_records(first_match_config, [{"name": "TASK-1"}]),
 			{("TASK-1",): {"name": "TASK-1"}},
 		)
 		frappe_records = [{"name": "TASK-1"}]
-		self.assertIs(runtime._normalize_frappe_match_records(all_matches_config, frappe_records), frappe_records)
+		self.assertIs(
+			matching_service._normalize_frappe_match_records(all_matches_config, frappe_records),
+			frappe_records,
+		)
 		self.assertEqual(
-			runtime._partner_key_values_for_write(
+			matching_service._partner_key_values_for_write(
 				first_match_config,
 				{"name": "TASK-1", "partner_id": "EXT-1"},
 				("TASK-1",),
@@ -560,7 +625,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 			{"external_id": "EXT-1"},
 		)
 		self.assertEqual(
-			runtime._partner_key_values_for_existing_match(
+			matching_service._partner_key_values_for_existing_match(
 				first_match_config,
 				{"name": "TASK-1", "partner_id": "EXT-1"},
 				("TASK-1",),
@@ -568,16 +633,24 @@ class TestRuntimeAdditional(unittest.TestCase):
 			),
 			{"external_id": "EXT-MATCH"},
 		)
-		self.assertTrue(runtime._can_write_partner_matches_individually(first_match_config, [matching_partner_old]))
-		self.assertFalse(runtime._can_write_partner_matches_individually(SimpleNamespace(), [matching_partner_old, matching_partner_new]))
 		self.assertTrue(
-			runtime._can_write_partner_matches_individually(
+			matching_service._can_write_partner_matches_individually(
+				first_match_config, [matching_partner_old]
+			)
+		)
+		self.assertFalse(
+			matching_service._can_write_partner_matches_individually(
+				SimpleNamespace(), [matching_partner_old, matching_partner_new]
+			)
+		)
+		self.assertTrue(
+			matching_service._can_write_partner_matches_individually(
 				first_match_config,
 				[matching_partner_old, matching_partner_new],
 			)
 		)
 		self.assertEqual(
-			runtime._apply_partner_link_fields(
+			mapping_service._apply_partner_link_fields(
 				SimpleNamespace(partner_frappe_identity_field="frappe_name"),
 				{"name": "TASK-1"},
 				{"id": "TASK-1"},
@@ -597,20 +670,22 @@ class TestRuntimeAdditional(unittest.TestCase):
 		}
 
 		with (
-			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-NEW") as mock_upsert,
-			patch("sync.sync.service.runtime._create_run_item") as mock_item,
-			patch("sync.sync.service.runtime._track_pending_run_writes"),
-			patch("sync.sync.service.runtime._flush_pending_run_writes"),
-			patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+			patch(
+				"sync.sync.service.execution.writes._upsert_frappe_record", return_value="TASK-NEW"
+			) as mock_upsert,
+			patch("sync.sync.service.audit._create_run_item") as mock_item,
+			patch("sync.sync.service.audit._track_pending_run_writes"),
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
+			patch("sync.sync.service.time_utils._site_time_zone", return_value="UTC"),
 		):
-			runtime._sync_bidirectional(
+			bidirectional_service._sync_bidirectional(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
 				connector=connector,
 				frappe_records=[],
 				partner_records=[partner_record],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				last_successful_sync=None,
 			)
 
@@ -638,22 +713,28 @@ class TestRuntimeAdditional(unittest.TestCase):
 		}
 
 		with (
-			patch("sync.sync.service.runtime._create_identity_partner_from_frappe") as mock_create_partner,
-			patch("sync.sync.service.runtime._create_identity_frappe_from_partner") as mock_create_frappe,
-			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-1") as mock_upsert,
-			patch("sync.sync.service.runtime._create_run_item"),
-			patch("sync.sync.service.runtime._track_pending_run_writes"),
-			patch("sync.sync.service.runtime._flush_pending_run_writes"),
-			patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+			patch(
+				"sync.sync.service.execution.bidirectional._create_identity_partner_from_frappe"
+			) as mock_create_partner,
+			patch(
+				"sync.sync.service.execution.bidirectional._create_identity_frappe_from_partner"
+			) as mock_create_frappe,
+			patch(
+				"sync.sync.service.execution.writes._upsert_frappe_record", return_value="TASK-1"
+			) as mock_upsert,
+			patch("sync.sync.service.audit._create_run_item"),
+			patch("sync.sync.service.audit._track_pending_run_writes"),
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
+			patch("sync.sync.service.time_utils._site_time_zone", return_value="UTC"),
 		):
-			runtime._sync_bidirectional(
+			bidirectional_service._sync_bidirectional(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
 				connector=FakeIdentityConnector(),
 				frappe_records=[frappe_record],
 				partner_records=[partner_record],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				last_successful_sync=datetime(2026, 3, 17, 10, 30),
 			)
 
@@ -665,7 +746,12 @@ class TestRuntimeAdditional(unittest.TestCase):
 
 	def test_identity_fields_conflict_on_contradictory_links_skips_writes(self):
 		config = _identity_fields_config()
-		frappe_record = {"name": "TASK-1", "partner_nr": "P-1", "subject": "A", "modified": "2026-03-17 10:00:00"}
+		frappe_record = {
+			"name": "TASK-1",
+			"partner_nr": "P-1",
+			"subject": "A",
+			"modified": "2026-03-17 10:00:00",
+		}
 		partner_record = {
 			"NR": "P-1",
 			"frappe_name": "TASK-2",
@@ -675,23 +761,27 @@ class TestRuntimeAdditional(unittest.TestCase):
 		}
 
 		with (
-			patch("sync.sync.service.runtime._apply_partner_update") as mock_partner_update,
-			patch("sync.sync.service.runtime._apply_frappe_update") as mock_frappe_update,
-			patch("sync.sync.service.runtime._create_identity_partner_from_frappe") as mock_create_partner,
-			patch("sync.sync.service.runtime._create_identity_frappe_from_partner") as mock_create_frappe,
-			patch("sync.sync.service.runtime._create_run_item") as mock_item,
-			patch("sync.sync.service.runtime._track_pending_run_writes"),
-			patch("sync.sync.service.runtime._flush_pending_run_writes"),
-			patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+			patch("sync.sync.service.execution.writes._apply_partner_update") as mock_partner_update,
+			patch("sync.sync.service.execution.writes._apply_frappe_update") as mock_frappe_update,
+			patch(
+				"sync.sync.service.execution.bidirectional._create_identity_partner_from_frappe"
+			) as mock_create_partner,
+			patch(
+				"sync.sync.service.execution.bidirectional._create_identity_frappe_from_partner"
+			) as mock_create_frappe,
+			patch("sync.sync.service.audit._create_run_item") as mock_item,
+			patch("sync.sync.service.audit._track_pending_run_writes"),
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
+			patch("sync.sync.service.time_utils._site_time_zone", return_value="UTC"),
 		):
-			runtime._sync_bidirectional(
+			bidirectional_service._sync_bidirectional(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
 				connector=FakeIdentityConnector(),
 				frappe_records=[frappe_record],
 				partner_records=[partner_record],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				last_successful_sync=None,
 			)
 
@@ -705,38 +795,56 @@ class TestRuntimeAdditional(unittest.TestCase):
 	def test_identity_conflicts_block_separately_loaded_records_and_linked_creates(self):
 		cases = [
 			# Duplicate claims, including an unlinked counterpart that must not be created again.
-			([{"name": "F1", "partner_nr": "P1"}, {"name": "F2", "partner_nr": "P1"}],
-			 [{"NR": "P1", "frappe_name": ""}]),
-			([{"name": "F1", "partner_nr": ""}],
-			 [{"NR": "P1", "frappe_name": "F1"}, {"NR": "P2", "frappe_name": "F1"}]),
+			(
+				[{"name": "F1", "partner_nr": "P1"}, {"name": "F2", "partner_nr": "P1"}],
+				[{"NR": "P1", "frappe_name": ""}],
+			),
+			(
+				[{"name": "F1", "partner_nr": ""}],
+				[{"NR": "P1", "frappe_name": "F1"}, {"NR": "P2", "frappe_name": "F1"}],
+			),
 			# Duplicate own IDs must also block their separately loaded copies.
-			([{"name": "F1", "partner_nr": "P1"}, {"name": "F1", "partner_nr": "P2"}],
-			 [{"NR": "P1", "frappe_name": "F1"}, {"NR": "P2", "frappe_name": "F1"}]),
-			([{"name": "F1", "partner_nr": "P1"}, {"name": "F2", "partner_nr": "P1"}],
-			 [{"NR": "P1", "frappe_name": "F1"}, {"NR": "P1", "frappe_name": "F2"}]),
+			(
+				[{"name": "F1", "partner_nr": "P1"}, {"name": "F1", "partner_nr": "P2"}],
+				[{"NR": "P1", "frappe_name": "F1"}, {"NR": "P2", "frappe_name": "F1"}],
+			),
+			(
+				[{"name": "F1", "partner_nr": "P1"}, {"name": "F2", "partner_nr": "P1"}],
+				[{"NR": "P1", "frappe_name": "F1"}, {"NR": "P1", "frappe_name": "F2"}],
+			),
 			# Missing counterparts must not turn conflicting claims into deletes.
 			([{"name": "F1", "partner_nr": "P1"}, {"name": "F2", "partner_nr": "P1"}], []),
 			([], [{"NR": "P1", "frappe_name": "F1"}, {"NR": "P2", "frappe_name": "F1"}]),
 			# Normalize driver-dependent scalar representations in conflict keys too.
-			([{"name": "F1", "partner_nr": 1}, {"name": "F2", "partner_nr": "1.0"}],
-			 [{"NR": Decimal("1"), "frappe_name": ""}]),
+			(
+				[{"name": "F1", "partner_nr": 1}, {"name": "F2", "partner_nr": "1.0"}],
+				[{"NR": Decimal("1"), "frappe_name": ""}],
+			),
 		]
 		for frappe_rows, partner_rows in cases:
 			for full_sync in (False, True):
 				for dry_run in (False, True):
-					with self.subTest(frappe=frappe_rows, partner=partner_rows, full_sync=full_sync, dry_run=dry_run):
+					with self.subTest(
+						frappe=frappe_rows, partner=partner_rows, full_sync=full_sync, dry_run=dry_run
+					):
 						frappe_lookup = [*frappe_rows, {"name": "F9", "partner_nr": "P9"}]
 						partner_lookup = [*partner_rows, {"NR": "P9", "frappe_name": "F9"}]
 						connector = FakeIdentityConnector()
 						with (
-							patch.object(runtime, "_sync_bidirectional_identity_pair") as pair,
-							patch.object(runtime, "_create_identity_frappe_from_partner") as create_frappe,
-							patch.object(runtime, "_create_identity_partner_from_frappe") as create_partner,
-							patch.object(runtime.frappe, "delete_doc") as delete,
-							patch.object(runtime, "_register_and_log") as log,
-							patch.object(runtime, "_flush_pending_run_writes"),
+							patch(
+								"sync.sync.service.execution.bidirectional._sync_bidirectional_identity_pair"
+							) as pair,
+							patch(
+								"sync.sync.service.execution.bidirectional._create_identity_frappe_from_partner"
+							) as create_frappe,
+							patch(
+								"sync.sync.service.execution.bidirectional._create_identity_partner_from_frappe"
+							) as create_partner,
+							patch.object(frappe, "delete_doc") as delete,
+							patch("sync.sync.service.audit._register_and_log") as log,
+							patch("sync.sync.service.audit._flush_pending_run_writes"),
 						):
-							runtime._sync_bidirectional(
+							bidirectional_service._sync_bidirectional(
 								run_doc=SimpleNamespace(name="RUN-1"),
 								config=_identity_fields_config(delete_missing=True),
 								connector=connector,
@@ -745,7 +853,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 								frappe_lookup_records=frappe_lookup,
 								partner_lookup_records=partner_lookup,
 								dry_run=dry_run,
-								stats=runtime.SyncStats(),
+								stats=models_service.SyncStats(),
 								last_successful_sync=datetime(2026, 3, 17),
 								full_sync=full_sync,
 							)
@@ -757,19 +865,25 @@ class TestRuntimeAdditional(unittest.TestCase):
 						self.assertFalse(connector.upserts)
 						self.assertFalse(connector.deletes)
 						self.assertTrue(log.called)
-						self.assertTrue(all(entry.kwargs["status"] == "conflict" for entry in log.call_args_list))
+						self.assertTrue(
+							all(entry.kwargs["status"] == "conflict" for entry in log.call_args_list)
+						)
 
 	def test_identity_conflict_detected_after_pair_collection_blocks_the_pair(self):
 		frappe_rows = [{"name": "F1", "partner_nr": ""}, {"name": "F2", "partner_nr": "P1"}]
 		partner_rows = [{"NR": "P1", "frappe_name": "F1"}]
 		with (
-			patch.object(runtime, "_sync_bidirectional_identity_pair") as pair,
-			patch.object(runtime, "_create_identity_frappe_from_partner") as create_frappe,
-			patch.object(runtime, "_create_identity_partner_from_frappe") as create_partner,
-			patch.object(runtime, "_register_and_log") as log,
-			patch.object(runtime, "_flush_pending_run_writes"),
+			patch("sync.sync.service.execution.bidirectional._sync_bidirectional_identity_pair") as pair,
+			patch(
+				"sync.sync.service.execution.bidirectional._create_identity_frappe_from_partner"
+			) as create_frappe,
+			patch(
+				"sync.sync.service.execution.bidirectional._create_identity_partner_from_frappe"
+			) as create_partner,
+			patch("sync.sync.service.audit._register_and_log") as log,
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
 		):
-			runtime._sync_bidirectional(
+			bidirectional_service._sync_bidirectional(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=_identity_fields_config(),
 				connector=FakeIdentityConnector(),
@@ -778,7 +892,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 				frappe_lookup_records=frappe_rows,
 				partner_lookup_records=partner_rows,
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				last_successful_sync=datetime(2026, 3, 17),
 			)
 		pair.assert_not_called()
@@ -789,20 +903,26 @@ class TestRuntimeAdditional(unittest.TestCase):
 	def test_identity_late_conflict_blocks_pending_create_from_delta(self):
 		# The later full read sees an identity link that was absent in the delta read.
 		with (
-			patch.object(runtime, "_sync_bidirectional_identity_pair") as pair,
-			patch.object(runtime, "_create_identity_frappe_from_partner") as create_frappe,
-			patch.object(runtime, "_create_identity_partner_from_frappe") as create_partner,
-			patch.object(runtime, "_register_and_log") as log,
-			patch.object(runtime, "_flush_pending_run_writes"),
+			patch("sync.sync.service.execution.bidirectional._sync_bidirectional_identity_pair") as pair,
+			patch(
+				"sync.sync.service.execution.bidirectional._create_identity_frappe_from_partner"
+			) as create_frappe,
+			patch(
+				"sync.sync.service.execution.bidirectional._create_identity_partner_from_frappe"
+			) as create_partner,
+			patch("sync.sync.service.audit._register_and_log") as log,
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
 		):
-			runtime._sync_bidirectional(
+			bidirectional_service._sync_bidirectional(
 				run_doc=SimpleNamespace(name="RUN-1"),
-				config=_identity_fields_config(), connector=FakeIdentityConnector(),
+				config=_identity_fields_config(),
+				connector=FakeIdentityConnector(),
 				frappe_records=[{"name": "F1", "partner_nr": ""}, {"name": "F9", "partner_nr": ""}],
 				partner_records=[{"NR": "P2", "frappe_name": "F1"}],
 				frappe_lookup_records=[{"name": "F1", "partner_nr": "P1"}, {"name": "F9", "partner_nr": ""}],
 				partner_lookup_records=[{"NR": "P2", "frappe_name": ""}],
-				dry_run=False, stats=runtime.SyncStats(),
+				dry_run=False,
+				stats=models_service.SyncStats(),
 				last_successful_sync=datetime(2026, 3, 17),
 			)
 		pair.assert_not_called()
@@ -826,26 +946,26 @@ class TestRuntimeAdditional(unittest.TestCase):
 		}
 
 		for tie_breaker, expected in (
-			(runtime.TIMESTAMP_TIE_MANUAL, "log"),
-			(runtime.TIMESTAMP_TIE_FRAPPE_WINS, "partner"),
-			(runtime.TIMESTAMP_TIE_PARTNER_WINS, "frappe"),
+			(constants.TIMESTAMP_TIE_MANUAL, "log"),
+			(constants.TIMESTAMP_TIE_FRAPPE_WINS, "partner"),
+			(constants.TIMESTAMP_TIE_PARTNER_WINS, "frappe"),
 		):
 			with (
-				patch("sync.sync.service.runtime._apply_partner_update") as mock_partner,
-				patch("sync.sync.service.runtime._apply_frappe_update") as mock_frappe,
-				patch("sync.sync.service.runtime._register_and_log") as mock_log,
-				patch("sync.sync.service.runtime._flush_pending_run_writes"),
-				patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+				patch("sync.sync.service.execution.writes._apply_partner_update") as mock_partner,
+				patch("sync.sync.service.execution.writes._apply_frappe_update") as mock_frappe,
+				patch("sync.sync.service.audit._register_and_log") as mock_log,
+				patch("sync.sync.service.audit._flush_pending_run_writes"),
+				patch("sync.sync.service.time_utils._site_time_zone", return_value="UTC"),
 			):
 				config = _identity_fields_config(timestamp_tie_breaker=tie_breaker)
-				runtime._sync_bidirectional(
+				bidirectional_service._sync_bidirectional(
 					run_doc=SimpleNamespace(name="RUN-1"),
 					config=config,
 					connector=FakeIdentityConnector(),
 					frappe_records=[frappe_record],
 					partner_records=[partner_record],
 					dry_run=True,
-					stats=runtime.SyncStats(),
+					stats=models_service.SyncStats(),
 					last_successful_sync=datetime(2026, 3, 17, 9, 0),
 				)
 
@@ -856,9 +976,13 @@ class TestRuntimeAdditional(unittest.TestCase):
 				self.assertEqual(mock_log.call_args.kwargs["frappe_resolution_payload"]["name"], "TASK-1")
 				self.assertEqual(mock_log.call_args.kwargs["frappe_resolution_payload"]["partner_nr"], "P-1")
 				self.assertEqual(mock_log.call_args.kwargs["partner_resolution_payload"]["NR"], "P-1")
-				self.assertEqual(mock_log.call_args.kwargs["partner_resolution_payload"]["frappe_name"], "TASK-1")
 				self.assertEqual(
-					runtime._manual_partner_key_values(config, mock_log.call_args.kwargs["partner_resolution_payload"]),
+					mock_log.call_args.kwargs["partner_resolution_payload"]["frappe_name"], "TASK-1"
+				)
+				self.assertEqual(
+					management_service._manual_partner_key_values(
+						config, mock_log.call_args.kwargs["partner_resolution_payload"]
+					),
 					{"NR": "P-1"},
 				)
 			else:
@@ -868,23 +992,28 @@ class TestRuntimeAdditional(unittest.TestCase):
 
 	def test_identity_fields_full_sync_deletes_frappe_when_linked_partner_is_missing(self):
 		config = _identity_fields_config(delete_missing=True)
-		frappe_record = {"name": "TASK-1", "partner_nr": "P-1", "subject": "A", "modified": "2026-03-17 10:00:00"}
+		frappe_record = {
+			"name": "TASK-1",
+			"partner_nr": "P-1",
+			"subject": "A",
+			"modified": "2026-03-17 10:00:00",
+		}
 
 		with (
-			patch("sync.sync.service.runtime.frappe.delete_doc") as mock_delete,
-			patch("sync.sync.service.runtime._create_run_item") as mock_item,
-			patch("sync.sync.service.runtime._track_pending_run_writes"),
-			patch("sync.sync.service.runtime._flush_pending_run_writes"),
-			patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+			patch("sync.sync.service.orchestrator.frappe.delete_doc") as mock_delete,
+			patch("sync.sync.service.audit._create_run_item") as mock_item,
+			patch("sync.sync.service.audit._track_pending_run_writes"),
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
+			patch("sync.sync.service.time_utils._site_time_zone", return_value="UTC"),
 		):
-			runtime._sync_bidirectional(
+			bidirectional_service._sync_bidirectional(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
 				connector=FakeIdentityConnector(),
 				frappe_records=[frappe_record],
 				partner_records=[],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				last_successful_sync=None,
 				full_sync=True,
 			)
@@ -895,22 +1024,27 @@ class TestRuntimeAdditional(unittest.TestCase):
 	def test_identity_fields_full_sync_deletes_partner_when_linked_frappe_is_missing(self):
 		config = _identity_fields_config(delete_missing=True)
 		connector = FakeIdentityConnector()
-		partner_record = {"NR": "P-1", "frappe_name": "TASK-1", "title": "A", "updated_at": "2026-03-17 10:00:00"}
+		partner_record = {
+			"NR": "P-1",
+			"frappe_name": "TASK-1",
+			"title": "A",
+			"updated_at": "2026-03-17 10:00:00",
+		}
 
 		with (
-			patch("sync.sync.service.runtime._create_run_item") as mock_item,
-			patch("sync.sync.service.runtime._track_pending_run_writes"),
-			patch("sync.sync.service.runtime._flush_pending_run_writes"),
-			patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+			patch("sync.sync.service.audit._create_run_item") as mock_item,
+			patch("sync.sync.service.audit._track_pending_run_writes"),
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
+			patch("sync.sync.service.time_utils._site_time_zone", return_value="UTC"),
 		):
-			runtime._sync_bidirectional(
+			bidirectional_service._sync_bidirectional(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
 				connector=connector,
 				frappe_records=[],
 				partner_records=[partner_record],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				last_successful_sync=None,
 				full_sync=True,
 			)
@@ -920,36 +1054,48 @@ class TestRuntimeAdditional(unittest.TestCase):
 
 	def test_identity_fields_does_not_delete_create_candidates_or_delta_records(self):
 		config = _identity_fields_config(delete_missing=True)
-		create_candidate = {"name": "TASK-NEW", "partner_nr": "", "subject": "A", "modified": "2026-03-17 10:00:00"}
-		linked_record = {"name": "TASK-1", "partner_nr": "P-1", "subject": "A", "modified": "2026-03-17 10:00:00"}
+		create_candidate = {
+			"name": "TASK-NEW",
+			"partner_nr": "",
+			"subject": "A",
+			"modified": "2026-03-17 10:00:00",
+		}
+		linked_record = {
+			"name": "TASK-1",
+			"partner_nr": "P-1",
+			"subject": "A",
+			"modified": "2026-03-17 10:00:00",
+		}
 
 		with (
-			patch("sync.sync.service.runtime.frappe.delete_doc") as mock_delete,
-			patch("sync.sync.service.runtime._create_identity_partner_from_frappe") as mock_create_partner,
-			patch("sync.sync.service.runtime._create_run_item"),
-			patch("sync.sync.service.runtime._track_pending_run_writes"),
-			patch("sync.sync.service.runtime._flush_pending_run_writes"),
-			patch("sync.sync.service.runtime._site_time_zone", return_value="UTC"),
+			patch("sync.sync.service.orchestrator.frappe.delete_doc") as mock_delete,
+			patch(
+				"sync.sync.service.execution.bidirectional._create_identity_partner_from_frappe"
+			) as mock_create_partner,
+			patch("sync.sync.service.audit._create_run_item"),
+			patch("sync.sync.service.audit._track_pending_run_writes"),
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
+			patch("sync.sync.service.time_utils._site_time_zone", return_value="UTC"),
 		):
-			runtime._sync_bidirectional(
+			bidirectional_service._sync_bidirectional(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
 				connector=FakeIdentityConnector(),
 				frappe_records=[create_candidate],
 				partner_records=[],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				last_successful_sync=None,
 				full_sync=True,
 			)
-			runtime._sync_bidirectional(
+			bidirectional_service._sync_bidirectional(
 				run_doc=SimpleNamespace(name="RUN-2"),
 				config=config,
 				connector=FakeIdentityConnector(),
 				frappe_records=[linked_record],
 				partner_records=[],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				last_successful_sync=datetime(2026, 3, 17, 9, 0),
 				full_sync=False,
 			)
@@ -958,14 +1104,17 @@ class TestRuntimeAdditional(unittest.TestCase):
 		mock_create_partner.assert_called_once()
 
 	def test_match_fields_bidirectional_delete_missing_stays_disabled(self):
-		config = runtime._coerce_config(
+		config = configuration_service._coerce_config(
 			SimpleNamespace(
 				name="SYNC-KEY",
+				table_name="tabTask",
+				match_fields=["name"],
+				mapping={"name": "id"},
 				doctype="Task",
 				partner="PARTNER-1",
 				sync_type="Frappe <-> Partner",
 				delete_missing=True,
-				match_mode=runtime.MATCH_MODE_MATCH_FIELDS,
+				match_mode=constants.MATCH_MODE_MATCH_FIELDS,
 				partner_modified_field="updated_at",
 				partner_creation_field="created_at",
 			)
@@ -975,21 +1124,40 @@ class TestRuntimeAdditional(unittest.TestCase):
 
 	def test_run_engine_identity_fields_passes_records_without_match_field_indexing(self):
 		config = _identity_fields_config(match_fields=[])
-		frappe_record = {"name": "TASK-1", "partner_nr": "", "subject": "A", "modified": "2026-03-17 10:00:00"}
+		frappe_record = {
+			"name": "TASK-1",
+			"partner_nr": "",
+			"subject": "A",
+			"modified": "2026-03-17 10:00:00",
+		}
 		partner_record = {"NR": "P-1", "frappe_name": "", "title": "A", "updated_at": "2026-03-17 10:00:00"}
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace(partner_type="mssql")),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
-			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
-			patch("sync.sync.service.runtime._iter_frappe_record_batches", return_value=iter([[frappe_record]])),
-			patch("sync.sync.service.runtime._iter_partner_record_batches", return_value=iter([[partner_record]])) as mock_partner_batches,
-			patch("sync.sync.service.runtime._sync_bidirectional") as mock_sync,
+			patch(
+				"sync.sync.service.orchestrator.frappe.get_doc",
+				return_value=SimpleNamespace(partner_type="mssql"),
+			),
+			patch_service_dependency(
+				"get_connector_for_partner",
+				return_value=SimpleNamespace(
+					ping=lambda: ConnectorPingResult(ok=True, message="ok", details={})
+				),
+			),
+			patch("sync.sync.service.metadata._doctype_has_field", return_value=True),
+			patch(
+				"sync.sync.service.execution.sources._iter_frappe_record_batches",
+				return_value=iter([[frappe_record]]),
+			),
+			patch(
+				"sync.sync.service.execution.sources._iter_partner_record_batches",
+				return_value=iter([[partner_record]]),
+			) as mock_partner_batches,
+			patch("sync.sync.service.execution.bidirectional._sync_bidirectional") as mock_sync,
 		):
-			runtime._run_engine(
+			engine_service._run_engine(
 				SimpleNamespace(name="SYNC-IDENTITY"),
 				SimpleNamespace(name="RUN-1"),
-				context=runtime.SyncContext(config=config, dry_run=False, last_successful_sync=None),
+				context=models_service.SyncContext(config=config, dry_run=False, last_successful_sync=None),
 			)
 
 		self.assertEqual(mock_sync.call_args.kwargs["frappe_records"], [frappe_record])
@@ -997,14 +1165,19 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertEqual(mock_partner_batches.call_args.kwargs["key_fields"], ["NR"])
 
 	def test_preview_service_predict_and_run_engine_guard_paths(self):
-		with patch("sync.sync.service.runtime._build_preview", return_value={"ok": True}) as mock_preview:
-			self.assertEqual(runtime.SyncPreviewService.predict(SimpleNamespace(name="SYNC-1"), limit=7), {"ok": True})
+		with patch(
+			"sync.sync.service.orchestrator._build_preview", return_value={"ok": True}
+		) as mock_preview:
+			self.assertEqual(
+				orchestrator_service.SyncPreviewService.predict(SimpleNamespace(name="SYNC-1"), limit=7),
+				{"ok": True},
+			)
 		mock_preview.assert_called_once_with(SimpleNamespace(name="SYNC-1"), limit=7)
 
 		with self.assertRaisesRegex(ValueError, "Either context or config must be provided"):
-			runtime._run_engine(SimpleNamespace(name="SYNC-1"), SimpleNamespace(name="RUN-1"))
+			engine_service._run_engine(SimpleNamespace(name="SYNC-1"), SimpleNamespace(name="RUN-1"))
 
-		config = runtime.SyncDefinitionConfig(
+		config = models_service.SyncDefinitionConfig(
 			name="SYNC-1",
 			doctype="Task",
 			partner="PARTNER-1",
@@ -1027,12 +1200,14 @@ class TestRuntimeAdditional(unittest.TestCase):
 			partner_modified_field="updated_at",
 			partner_creation_field="created_at",
 		)
-		coerced_config = runtime._coerce_config(config)
+		coerced_config = configuration_service._coerce_config(config)
 		self.assertIsNot(coerced_config, config)
-		self.assertEqual(coerced_config.mapping, {"name": {"partner_field": "id", "direction": "Frappe <-> Partner"}})
+		self.assertEqual(
+			coerced_config.mapping, {"name": {"partner_field": "id", "direction": "Frappe -> Partner"}}
+		)
 
 	def test_sync_stats_and_context_properties(self):
-		stats = runtime.SyncStats()
+		stats = models_service.SyncStats()
 		stats.register("created", "success")
 		stats.register("updated", "conflict")
 		stats.register("deleted", "error")
@@ -1053,19 +1228,30 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 		config = SimpleNamespace(use_last_sync_date=1, timestamp_buffer_ms=15)
-		context = runtime.SyncContext(config=config, dry_run=False, last_successful_sync=datetime(2026, 3, 17, 12, 0))
+		context = models_service.SyncContext(
+			config=config, dry_run=False, last_successful_sync=datetime(2026, 3, 17, 12, 0)
+		)
 		self.assertTrue(context.is_delta_sync)
 		self.assertEqual(context.delta_since, datetime(2026, 3, 17, 12, 0))
 		self.assertFalse(context.is_full_sync)
 
 	def test_run_due_sync_definitions_respects_limit_and_queue_flag(self):
 		with (
-			patch("sync.sync.service.runtime.list_due_sync_definitions", return_value=["A", "B", "C"]),
-			patch("sync.sync.service.runtime.enqueue_sync_definition", side_effect=lambda name, **kwargs: {"name": name, **kwargs}) as mock_enqueue,
+			patch("sync.sync.service.scheduler.list_due_sync_definitions", return_value=["A", "B", "C"]),
+			patch(
+				"sync.sync.service.orchestrator.enqueue_sync_definition",
+				side_effect=lambda name, **kwargs: {"name": name, **kwargs},
+			) as mock_enqueue,
 		):
-			result = runtime.run_due_sync_definitions(limit=2, queue=False)
+			result = scheduler_service.run_due_sync_definitions(limit=2, queue=False)
 
-		self.assertEqual(result, [{"name": "A", "trigger": "scheduler", "queue": False}, {"name": "B", "trigger": "scheduler", "queue": False}])
+		self.assertEqual(
+			result,
+			[
+				{"name": "A", "trigger": "scheduler", "queue": False},
+				{"name": "B", "trigger": "scheduler", "queue": False},
+			],
+		)
 		self.assertEqual(mock_enqueue.call_count, 2)
 
 	def test_enqueue_sync_definition_without_queue_delegates_to_execute(self):
@@ -1073,20 +1259,26 @@ class TestRuntimeAdditional(unittest.TestCase):
 		definition = SimpleNamespace(name="SYNC-1")
 
 		with (
-			patch("sync.sync.service.runtime._definition_lock", return_value=nullcontext()),
-			patch("sync.sync.service.runtime._has_active_run", return_value=False),
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=definition),
-			patch("sync.sync.service.runtime._create_run_doc", return_value=run_doc),
-			patch("sync.sync.service.runtime.execute_sync_definition", return_value={"status": "success"}) as mock_execute,
+			patch("sync.sync.service.orchestrator._definition_lock", return_value=nullcontext()),
+			patch("sync.sync.service.audit._has_active_run", return_value=False),
+			patch("sync.sync.service.orchestrator.frappe.get_doc", return_value=definition),
+			patch("sync.sync.service.audit._create_run_doc", return_value=run_doc),
+			patch(
+				"sync.sync.service.orchestrator.execute_sync_definition", return_value={"status": "success"}
+			) as mock_execute,
 		):
-			result = runtime.enqueue_sync_definition("SYNC-1", queue=False, dry_run=True)
+			result = orchestrator_service.enqueue_sync_definition("SYNC-1", queue=False, dry_run=True)
 
 		self.assertEqual(result, {"status": "success"})
 		mock_execute.assert_called_once_with("SYNC-1", trigger="manual", dry_run=True, run_name="RUN-1")
 
 	def test_run_sync_definition_job_delegates_to_execute(self):
-		with patch("sync.sync.service.runtime.execute_sync_definition", return_value={"status": "ok"}) as mock_execute:
-			result = runtime.run_sync_definition_job("SYNC-1", run_name="RUN-1", trigger="scheduler", dry_run=True)
+		with patch(
+			"sync.sync.service.orchestrator.execute_sync_definition", return_value={"status": "ok"}
+		) as mock_execute:
+			result = orchestrator_service.run_sync_definition_job(
+				"SYNC-1", run_name="RUN-1", trigger="scheduler", dry_run=True
+			)
 
 		self.assertEqual(result, {"status": "ok"})
 		mock_execute.assert_called_once_with("SYNC-1", trigger="scheduler", dry_run=True, run_name="RUN-1")
@@ -1094,8 +1286,15 @@ class TestRuntimeAdditional(unittest.TestCase):
 	def test_preview_and_import_helpers_cover_invalid_payloads_and_export(self):
 		sync_definition_doc = SimpleNamespace(
 			name="SYNC-1",
-			as_dict=lambda: {"doctype": "Sync Definition", "name": "SYNC-1", "partner": "PARTNER-1", "export_mask_credentials": 1},
-			get=lambda key, default=None: {"partner": "PARTNER-1", "export_mask_credentials": 1}.get(key, default),
+			as_dict=lambda: {
+				"doctype": "Sync Definition",
+				"name": "SYNC-1",
+				"partner": "PARTNER-1",
+				"export_mask_credentials": 1,
+			},
+			get=lambda key, default=None: {"partner": "PARTNER-1", "export_mask_credentials": 1}.get(
+				key, default
+			),
 		)
 		partner_doc = SimpleNamespace(
 			name="PARTNER-1",
@@ -1105,26 +1304,31 @@ class TestRuntimeAdditional(unittest.TestCase):
 		partner_type_doc = SimpleNamespace(as_dict=lambda: {"doctype": "Sync Partner Type", "name": "mssql"})
 
 		with (
-			patch(
-				"sync.sync.service.runtime.frappe",
+			patch_service_dependency(
+				"frappe",
 				new=_runtime_frappe_stub(
 					get_doc=Mock(side_effect=[sync_definition_doc, partner_doc, partner_type_doc]),
 					db=_db_stub(exists=lambda *args, **kwargs: True),
 				),
 			),
-			patch("sync.sync.service.runtime._sanitize_document_dict", side_effect=lambda doc, mask_credentials=False: doc),
-			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
+			patch(
+				"sync.sync.service.yaml_io._sanitize_document_dict",
+				side_effect=lambda doc, mask_credentials=False: doc,
+			),
+			patch_service_dependency("now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
 		):
-			exported = runtime.export_sync_definition_yaml("SYNC-1")
+			exported = yaml_io_service.export_sync_definition_yaml("SYNC-1")
 
 		self.assertIn("sync_partner_type", exported)
-		self.assertFalse(runtime.preview_import_sync_definition_yaml(":\n  bad")["ok"])
-		self.assertFalse(runtime.preview_import_sync_definition_yaml("- item")["ok"])
-		invalid_section = runtime.preview_import_sync_definition_yaml("version: 2\nsync_definition: []")
+		self.assertFalse(yaml_io_service.preview_import_sync_definition_yaml(":\n  bad")["ok"])
+		self.assertFalse(yaml_io_service.preview_import_sync_definition_yaml("- item")["ok"])
+		invalid_section = yaml_io_service.preview_import_sync_definition_yaml(
+			"version: 2\nsync_definition: []"
+		)
 		self.assertFalse(invalid_section["ok"])
 		self.assertEqual(invalid_section["documents"]["Sync Definition"]["status"], "invalid")
 		with self.assertRaises(frappe.ValidationError):
-			runtime.import_sync_definition_yaml("version: 2\nsync_definition: []")
+			yaml_io_service.import_sync_definition_yaml("version: 2\nsync_definition: []")
 
 	def test_build_preview_and_coerce_config(self):
 		definition = SimpleNamespace(name="SYNC-1")
@@ -1134,29 +1338,37 @@ class TestRuntimeAdditional(unittest.TestCase):
 			partner="PARTNER-1",
 			doctype="Task",
 			mapping={"subject": "title"},
-			match_fields=["name"],
+			table_name="tabTask",
+			match_fields=["subject"],
 			value_mapping={"status": {"Open": "1"}},
 			filters=[["status", "=", "Open"]],
 			use_last_sync_date=False,
 		)
-		connector = SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={"db": "x"}))
+		connector = SimpleNamespace(
+			ping=lambda: ConnectorPingResult(ok=True, message="ok", details={"db": "x"})
+		)
 
 		with (
-			patch("sync.sync.service.runtime._build_definition_config", return_value=config),
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace()),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=connector),
-			patch("sync.sync.service.runtime._doctype_has_field", return_value=True),
-			patch("sync.sync.service.runtime.frappe.get_all", return_value=[{"name": "TASK-1"}]),
+			patch("sync.sync.service.configuration._build_definition_config", return_value=config),
+			patch("sync.sync.service.orchestrator.frappe.get_doc", return_value=SimpleNamespace()),
+			patch_service_dependency("get_connector_for_partner", return_value=connector),
+			patch("sync.sync.service.metadata._doctype_has_field", return_value=True),
+			patch("sync.sync.service.orchestrator.frappe.get_all", return_value=[{"name": "TASK-1"}]),
 		):
-			preview = runtime._build_preview(definition, limit=5)
+			preview = orchestrator_service._build_preview(definition, limit=5)
 
 		self.assertEqual(preview["frappe_records_sample_count"], 1)
-		self.assertEqual(preview["mapping"], {"subject": {"partner_field": "title", "direction": "Frappe <-> Partner"}})
+		self.assertEqual(
+			preview["mapping"], {"subject": {"partner_field": "title", "direction": "Frappe -> Partner"}}
+		)
 		self.assertEqual(preview["value_mapping_fields"], ["status"])
 
-		coerced = runtime._coerce_config(
+		coerced = configuration_service._coerce_config(
 			SimpleNamespace(
 				name="SYNC-2",
+				table_name="tabTask",
+				match_fields=["name"],
+				mapping={"name": "id"},
 				doctype="Task",
 				partner="PARTNER-1",
 				sync_type="Frappe <- Partner",
@@ -1167,7 +1379,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertEqual(coerced.batch_size, 100)
 		self.assertEqual(coerced.frappe_modified_field, "modified")
 		self.assertIsNone(coerced.partner_modified_field)
-		self.assertEqual(coerced.mapping, {})
+		self.assertEqual(coerced.mapping, {"name": {"partner_field": "id", "direction": "Frappe <- Partner"}})
 
 	def test_run_engine_routes_partner_to_frappe_branch(self):
 		config = SimpleNamespace(
@@ -1194,13 +1406,22 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace()),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
-			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[]])),
-			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[]])),
-			patch("sync.sync.service.runtime._sync_partner_to_frappe") as mock_branch,
+			patch("sync.sync.service.orchestrator.frappe.get_doc", return_value=SimpleNamespace()),
+			patch_service_dependency(
+				"get_connector_for_partner",
+				return_value=SimpleNamespace(
+					ping=lambda: ConnectorPingResult(ok=True, message="ok", details={})
+				),
+			),
+			patch("sync.sync.service.execution.sources._iter_frappe_source_batches", return_value=iter([[]])),
+			patch(
+				"sync.sync.service.execution.sources._iter_partner_source_batches", return_value=iter([[]])
+			),
+			patch("sync.sync.service.execution.one_way._sync_partner_to_frappe") as mock_branch,
 		):
-			result = runtime._run_engine(SimpleNamespace(name="SYNC-1"), SimpleNamespace(name="RUN-1"), config=config)
+			result = engine_service._run_engine(
+				SimpleNamespace(name="SYNC-1"), SimpleNamespace(name="RUN-1"), config=config
+			)
 
 		mock_branch.assert_called_once()
 		self.assertEqual(result["sync_type"], "Frappe <- Partner")
@@ -1235,16 +1456,37 @@ class TestRuntimeAdditional(unittest.TestCase):
 			kwargs["source_keys"].update((row["name"],) for row in kwargs["frappe_records"])
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace()),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
-			patch("sync.sync.service.runtime._get_frappe_source_records", side_effect=AssertionError("legacy list getter should not be used")),
-			patch("sync.sync.service.runtime._get_partner_source_records", side_effect=AssertionError("legacy list getter should not be used")),
-			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1"}], [{"name": "TASK-2"}]])),
-			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-OLD"}]])),
-			patch("sync.sync.service.runtime._sync_frappe_to_partner", side_effect=fake_sync) as mock_sync,
-			patch("sync.sync.service.runtime._flush_pending_run_writes"),
+			patch("sync.sync.service.orchestrator.frappe.get_doc", return_value=SimpleNamespace()),
+			patch_service_dependency(
+				"get_connector_for_partner",
+				return_value=SimpleNamespace(
+					ping=lambda: ConnectorPingResult(ok=True, message="ok", details={})
+				),
+			),
+			patch(
+				"sync.sync.service.execution.sources._get_frappe_source_records",
+				side_effect=AssertionError("legacy list getter should not be used"),
+			),
+			patch(
+				"sync.sync.service.execution.sources._get_partner_source_records",
+				side_effect=AssertionError("legacy list getter should not be used"),
+			),
+			patch(
+				"sync.sync.service.execution.sources._iter_frappe_source_batches",
+				return_value=iter([[{"name": "TASK-1"}], [{"name": "TASK-2"}]]),
+			),
+			patch(
+				"sync.sync.service.execution.sources._iter_partner_source_batches",
+				return_value=iter([[{"id": "TASK-OLD"}]]),
+			),
+			patch(
+				"sync.sync.service.execution.one_way._sync_frappe_to_partner", side_effect=fake_sync
+			) as mock_sync,
+			patch("sync.sync.service.audit._flush_pending_run_writes"),
 		):
-			runtime._run_engine(SimpleNamespace(name="SYNC-A2B"), SimpleNamespace(name="RUN-1"), config=config)
+			engine_service._run_engine(
+				SimpleNamespace(name="SYNC-A2B"), SimpleNamespace(name="RUN-1"), config=config
+			)
 
 		self.assertEqual(recorded_batches, [["TASK-1"], ["TASK-2"]])
 		self.assertEqual(mock_sync.call_count, 2)
@@ -1284,14 +1526,38 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 		with (
-			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_doc=lambda *_args, **_kwargs: SimpleNamespace(), get_meta=lambda *_args, **_kwargs: meta)),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
-			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1", "subject": "A"}], [{"name": "TASK-2", "subject": "B"}]])),
-			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-1", "title": "A"}, {"id": "TASK-2", "title": "B"}]])),
-			patch("sync.sync.service.runtime._group_partner_records", wraps=runtime._group_partner_records) as mock_group,
-			patch("sync.sync.service.runtime._create_run_item", return_value=SimpleNamespace(name="ITEM-1")),
+			patch_service_dependency(
+				"frappe",
+				new=_runtime_frappe_stub(
+					get_doc=lambda *_args, **_kwargs: SimpleNamespace(),
+					get_meta=lambda *_args, **_kwargs: meta,
+				),
+			),
+			patch_service_dependency(
+				"get_connector_for_partner",
+				return_value=SimpleNamespace(
+					ping=lambda: ConnectorPingResult(ok=True, message="ok", details={})
+				),
+			),
+			patch(
+				"sync.sync.service.execution.sources._iter_frappe_source_batches",
+				return_value=iter(
+					[[{"name": "TASK-1", "subject": "A"}], [{"name": "TASK-2", "subject": "B"}]]
+				),
+			),
+			patch(
+				"sync.sync.service.execution.sources._iter_partner_source_batches",
+				return_value=iter([[{"id": "TASK-1", "title": "A"}, {"id": "TASK-2", "title": "B"}]]),
+			),
+			patch(
+				"sync.sync.service.matching._group_partner_records",
+				wraps=matching_service._group_partner_records,
+			) as mock_group,
+			patch("sync.sync.service.audit._create_run_item", return_value=SimpleNamespace(name="ITEM-1")),
 		):
-			runtime._run_engine(SimpleNamespace(name="SYNC-A2B-LOOKUP"), SimpleNamespace(name="RUN-1"), config=config)
+			engine_service._run_engine(
+				SimpleNamespace(name="SYNC-A2B-LOOKUP"), SimpleNamespace(name="RUN-1"), config=config
+			)
 
 		self.assertEqual(mock_group.call_count, 1)
 
@@ -1330,20 +1596,39 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 		with (
-			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_doc=lambda *_args, **_kwargs: SimpleNamespace(), get_meta=lambda *_args, **_kwargs: meta)),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
-			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-1", "title": "A"}], [{"id": "TASK-2", "title": "B"}]])),
+			patch_service_dependency(
+				"frappe",
+				new=_runtime_frappe_stub(
+					get_doc=lambda *_args, **_kwargs: SimpleNamespace(),
+					get_meta=lambda *_args, **_kwargs: meta,
+				),
+			),
+			patch_service_dependency(
+				"get_connector_for_partner",
+				return_value=SimpleNamespace(
+					ping=lambda: ConnectorPingResult(ok=True, message="ok", details={})
+				),
+			),
 			patch(
-				"sync.sync.service.runtime._load_frappe_match_candidates",
+				"sync.sync.service.execution.sources._iter_partner_source_batches",
+				return_value=iter([[{"id": "TASK-1", "title": "A"}], [{"id": "TASK-2", "title": "B"}]]),
+			),
+			patch(
+				"sync.sync.service.execution.sources._load_frappe_match_candidates",
 				side_effect=[
 					[{"name": "TASK-1", "subject": "A"}],
 					[{"name": "TASK-2", "subject": "B"}],
 				],
 			) as mock_candidates,
-			patch("sync.sync.service.runtime._group_frappe_records", wraps=runtime._group_frappe_records) as mock_group,
-			patch("sync.sync.service.runtime._create_run_item", return_value=SimpleNamespace(name="ITEM-1")),
+			patch(
+				"sync.sync.service.matching._group_frappe_records",
+				wraps=matching_service._group_frappe_records,
+			) as mock_group,
+			patch("sync.sync.service.audit._create_run_item", return_value=SimpleNamespace(name="ITEM-1")),
 		):
-			runtime._run_engine(SimpleNamespace(name="SYNC-P2F-LOOKUP"), SimpleNamespace(name="RUN-1"), config=config)
+			engine_service._run_engine(
+				SimpleNamespace(name="SYNC-P2F-LOOKUP"), SimpleNamespace(name="RUN-1"), config=config
+			)
 
 		self.assertEqual(mock_candidates.call_count, 2)
 		self.assertEqual(mock_group.call_count, 2)
@@ -1377,36 +1662,42 @@ class TestRuntimeAdditional(unittest.TestCase):
 		def candidate_batches(**kwargs):
 			queries.append(kwargs)
 			if any(condition[0] == "partner_id" for condition in kwargs["filters"]):
-				return iter([[
-					{
-						"name": "JE-1",
-						"modified": "2026-01-02",
-						"external_journal_id": "2026-1",
-						"company": "A",
-						"partner_id": 10,
-					}
-				]])
+				return iter(
+					[
+						[
+							{
+								"name": "JE-1",
+								"modified": "2026-01-02",
+								"external_journal_id": "2026-1",
+								"company": "A",
+								"partner_id": 10,
+							}
+						]
+					]
+				)
 			return iter(
-				[[
-					{
-						"name": "JE-1",
-						"modified": "2026-01-02",
-						"external_journal_id": "2026-1",
-						"company": "A",
-						"partner_id": 10,
-					},
-					{
-						"name": "JE-CROSS",
-						"modified": "2026-01-01",
-						"external_journal_id": "2026-1",
-						"company": "B",
-					},
-				]]
+				[
+					[
+						{
+							"name": "JE-1",
+							"modified": "2026-01-02",
+							"external_journal_id": "2026-1",
+							"company": "A",
+							"partner_id": 10,
+						},
+						{
+							"name": "JE-CROSS",
+							"modified": "2026-01-01",
+							"external_journal_id": "2026-1",
+							"company": "B",
+						},
+					]
+				]
 			)
 
 		with (
 			patch(
-				"sync.sync.service.runtime._doctype_fieldnames",
+				"sync.sync.service.metadata._doctype_fieldnames",
 				return_value={
 					"name",
 					"modified",
@@ -1416,10 +1707,13 @@ class TestRuntimeAdditional(unittest.TestCase):
 					"partner_id",
 				},
 			),
-			patch("sync.sync.service.runtime._iter_frappe_record_batches", side_effect=candidate_batches),
-			patch("sync.sync.service.runtime._enrich_record_with_child_rows") as mock_enrich,
+			patch(
+				"sync.sync.service.execution.sources._iter_frappe_record_batches",
+				side_effect=candidate_batches,
+			),
+			patch("sync.sync.service.execution.sources._enrich_record_with_child_rows") as mock_enrich,
 		):
-			candidates = runtime._load_frappe_match_candidates(config, partner_batch)
+			candidates = sources_service._load_frappe_match_candidates(config, partner_batch)
 
 		self.assertEqual({record["name"] for record in candidates}, {"JE-1", "JE-CROSS"})
 		self.assertEqual(
@@ -1432,14 +1726,24 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 		self.assertNotIn("accounts", queries[0]["fields"])
 		mock_enrich.assert_not_called()
-		lookup = runtime._build_frappe_match_lookup(config, candidates)
+		lookup = matching_service._build_frappe_match_lookup(config, candidates)
 		self.assertEqual(
-			[record["name"] for record in runtime._find_existing_frappe_records(config, partner_batch[0], lookup.groups, lookup.identity_by_value)],
+			[
+				record["name"]
+				for record in matching_service._find_existing_frappe_records(
+					config, partner_batch[0], lookup.groups, lookup.identity_by_value
+				)
+			],
 			["JE-1"],
 		)
 		without_identity = dict(partner_batch[0], row_id=None)
 		self.assertEqual(
-			[record["name"] for record in runtime._find_existing_frappe_records(config, without_identity, lookup.groups, lookup.identity_by_value)],
+			[
+				record["name"]
+				for record in matching_service._find_existing_frappe_records(
+					config, without_identity, lookup.groups, lookup.identity_by_value
+				)
+			],
 			["JE-1"],
 		)
 
@@ -1471,17 +1775,26 @@ class TestRuntimeAdditional(unittest.TestCase):
 		}
 		with (
 			patch(
-				"sync.sync.service.runtime._doctype_fieldnames",
-				return_value={"name", "modified", "creation", "external_journal_id", "company", "user_remark"},
+				"sync.sync.service.metadata._doctype_fieldnames",
+				return_value={
+					"name",
+					"modified",
+					"creation",
+					"external_journal_id",
+					"company",
+					"user_remark",
+				},
 			),
-			patch("sync.sync.service.runtime._iter_frappe_record_batches", return_value=iter([[row]])) as mock_batches,
 			patch(
-				"sync.sync.service.runtime._child_table_fields_for_mapping",
+				"sync.sync.service.execution.sources._iter_frappe_record_batches", return_value=iter([[row]])
+			) as mock_batches,
+			patch(
+				"sync.sync.service.mapping_rules._child_table_fields_for_mapping",
 				return_value={"accounts"},
 			),
-			patch("sync.sync.service.runtime._enrich_record_with_child_rows") as mock_enrich,
+			patch("sync.sync.service.execution.sources._enrich_record_with_child_rows") as mock_enrich,
 		):
-			result = runtime._load_frappe_match_candidates(
+			result = sources_service._load_frappe_match_candidates(
 				config,
 				[{"journal_no": "2026-1", "company": "A", "remark": "new", "debit_1": 5}],
 			)
@@ -1516,15 +1829,34 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace()),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
-			patch("sync.sync.service.runtime._get_frappe_source_records", side_effect=AssertionError("legacy list getter should not be used")),
-			patch("sync.sync.service.runtime._get_partner_source_records", side_effect=AssertionError("legacy list getter should not be used")),
-			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1"}], [{"name": "TASK-2"}]])),
-			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-1"}], [{"id": "TASK-3"}]])),
-			patch("sync.sync.service.runtime._sync_bidirectional") as mock_sync,
+			patch("sync.sync.service.orchestrator.frappe.get_doc", return_value=SimpleNamespace()),
+			patch_service_dependency(
+				"get_connector_for_partner",
+				return_value=SimpleNamespace(
+					ping=lambda: ConnectorPingResult(ok=True, message="ok", details={})
+				),
+			),
+			patch(
+				"sync.sync.service.execution.sources._get_frappe_source_records",
+				side_effect=AssertionError("legacy list getter should not be used"),
+			),
+			patch(
+				"sync.sync.service.execution.sources._get_partner_source_records",
+				side_effect=AssertionError("legacy list getter should not be used"),
+			),
+			patch(
+				"sync.sync.service.execution.sources._iter_frappe_source_batches",
+				return_value=iter([[{"name": "TASK-1"}], [{"name": "TASK-2"}]]),
+			),
+			patch(
+				"sync.sync.service.execution.sources._iter_partner_source_batches",
+				return_value=iter([[{"id": "TASK-1"}], [{"id": "TASK-3"}]]),
+			),
+			patch("sync.sync.service.execution.bidirectional._sync_bidirectional") as mock_sync,
 		):
-			runtime._run_engine(SimpleNamespace(name="SYNC-BI"), SimpleNamespace(name="RUN-1"), config=config)
+			engine_service._run_engine(
+				SimpleNamespace(name="SYNC-BI"), SimpleNamespace(name="RUN-1"), config=config
+			)
 
 		self.assertEqual(
 			mock_sync.call_args.kwargs["frappe_records"],
@@ -1560,33 +1892,59 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 		with (
-			patch("sync.sync.service.runtime.frappe.get_doc", return_value=SimpleNamespace()),
-			patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ConnectorPingResult(ok=True, message="ok", details={}))),
-			patch("sync.sync.service.runtime._iter_frappe_source_batches", return_value=iter([[{"name": "TASK-1"}]])),
-			patch("sync.sync.service.runtime._iter_partner_source_batches", return_value=iter([[{"id": "TASK-1"}]])),
-			patch("sync.sync.service.runtime._delete_missing_partner_records") as mock_delete_partner,
-			patch("sync.sync.service.runtime._delete_missing_frappe_records") as mock_delete_frappe,
-			patch("sync.sync.service.runtime._sync_bidirectional") as mock_sync,
+			patch("sync.sync.service.orchestrator.frappe.get_doc", return_value=SimpleNamespace()),
+			patch_service_dependency(
+				"get_connector_for_partner",
+				return_value=SimpleNamespace(
+					ping=lambda: ConnectorPingResult(ok=True, message="ok", details={})
+				),
+			),
+			patch(
+				"sync.sync.service.execution.sources._iter_frappe_source_batches",
+				return_value=iter([[{"name": "TASK-1"}]]),
+			),
+			patch(
+				"sync.sync.service.execution.sources._iter_partner_source_batches",
+				return_value=iter([[{"id": "TASK-1"}]]),
+			),
+			patch(
+				"sync.sync.service.execution.one_way._delete_missing_partner_records"
+			) as mock_delete_partner,
+			patch("sync.sync.service.execution.one_way._delete_missing_frappe_records") as mock_delete_frappe,
+			patch("sync.sync.service.execution.bidirectional._sync_bidirectional") as mock_sync,
 		):
-			runtime._run_engine(SimpleNamespace(name="SYNC-BI"), SimpleNamespace(name="RUN-1"), config=config)
+			engine_service._run_engine(
+				SimpleNamespace(name="SYNC-BI"), SimpleNamespace(name="RUN-1"), config=config
+			)
 
 		self.assertFalse(mock_sync.call_args.kwargs["config"].delete_missing)
 		mock_delete_partner.assert_not_called()
 		mock_delete_frappe.assert_not_called()
 
 	def test_apply_update_helpers_cover_success_and_error_paths(self):
-		config = SimpleNamespace(doctype="Task", match_fields=["name"], mapping={"name": "id"}, table_name="tabTask", read_query=None)
+		config = SimpleNamespace(
+			doctype="Task",
+			match_fields=["name"],
+			mapping={"name": "id"},
+			table_name="tabTask",
+			read_query=None,
+		)
 		logged = []
 
 		with (
-			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
-			patch("sync.sync.service.runtime._upsert_frappe_record", return_value="TASK-1"),
+			patch(
+				"sync.sync.service.audit._register_and_log",
+				side_effect=lambda **kwargs: logged.append(kwargs),
+			),
+			patch("sync.sync.service.execution.writes._upsert_frappe_record", return_value="TASK-1"),
 		):
-			runtime._apply_partner_update(
+			writes_service._apply_partner_update(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
-				connector=SimpleNamespace(upsert_record=lambda **kwargs: ConnectorWriteResult(ok=True, message="ok")),
-				stats=runtime.SyncStats(),
+				connector=SimpleNamespace(
+					upsert_record=lambda **kwargs: ConnectorWriteResult(ok=True, message="ok")
+				),
+				stats=models_service.SyncStats(),
 				dry_run=True,
 				frappe_record={"name": "TASK-1"},
 				partner_record={"id": "TASK-1"},
@@ -1597,10 +1955,10 @@ class TestRuntimeAdditional(unittest.TestCase):
 				status="success",
 				message="updated",
 			)
-			runtime._apply_frappe_update(
+			writes_service._apply_frappe_update(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				dry_run=False,
 				frappe_record={"name": "TASK-1"},
 				partner_record={"id": "TASK-1"},
@@ -1615,13 +1973,19 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertEqual([entry["action"] for entry in logged], ["updated", "conflict"])
 
 		with (
-			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
-			patch("sync.sync.service.runtime._upsert_frappe_record", side_effect=RuntimeError("frappe boom")),
+			patch(
+				"sync.sync.service.audit._register_and_log",
+				side_effect=lambda **kwargs: logged.append(kwargs),
+			),
+			patch(
+				"sync.sync.service.execution.writes._upsert_frappe_record",
+				side_effect=RuntimeError("frappe boom"),
+			),
 		):
-			runtime._apply_frappe_update(
+			writes_service._apply_frappe_update(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				dry_run=False,
 				frappe_record={"name": "TASK-1"},
 				partner_record={"id": "TASK-1"},
@@ -1635,12 +1999,16 @@ class TestRuntimeAdditional(unittest.TestCase):
 
 		self.assertEqual(logged[-1]["action"], "error")
 
-		with patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)):
-			runtime._apply_partner_update(
+		with patch(
+			"sync.sync.service.audit._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)
+		):
+			writes_service._apply_partner_update(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
-				connector=SimpleNamespace(upsert_record=lambda **kwargs: ConnectorWriteResult(ok=False, message="nope")),
-				stats=runtime.SyncStats(),
+				connector=SimpleNamespace(
+					upsert_record=lambda **kwargs: ConnectorWriteResult(ok=False, message="nope")
+				),
+				stats=models_service.SyncStats(),
 				dry_run=False,
 				frappe_record={"name": "TASK-1"},
 				partner_record={"id": "TASK-1"},
@@ -1668,15 +2036,19 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 		logged = []
 
-		with patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)):
-			runtime._sync_frappe_to_partner(
+		with patch(
+			"sync.sync.service.audit._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)
+		):
+			one_way_service._sync_frappe_to_partner(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
-				connector=SimpleNamespace(upsert_record=lambda **kwargs: ConnectorWriteResult(ok=False, message="boom")),
+				connector=SimpleNamespace(
+					upsert_record=lambda **kwargs: ConnectorWriteResult(ok=False, message="boom")
+				),
 				frappe_records=[{"name": "TASK-1", "status": "open"}, {"name": "TASK-2", "status": "open"}],
 				partner_records=[{"id": "TASK-1", "state": "open"}, {"id": "TASK-2", "state": "closed"}],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				label_direction="Frappe -> Partner",
 				full_sync=False,
 			)
@@ -1685,10 +2057,16 @@ class TestRuntimeAdditional(unittest.TestCase):
 		logged.clear()
 
 		with (
-			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
-			patch("sync.sync.service.runtime._upsert_frappe_record", side_effect=RuntimeError("write failed")),
+			patch(
+				"sync.sync.service.audit._register_and_log",
+				side_effect=lambda **kwargs: logged.append(kwargs),
+			),
+			patch(
+				"sync.sync.service.execution.writes._upsert_frappe_record",
+				side_effect=RuntimeError("write failed"),
+			),
 		):
-			runtime._sync_partner_to_frappe(
+			one_way_service._sync_partner_to_frappe(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
 				connector=object(),
@@ -1703,7 +2081,7 @@ class TestRuntimeAdditional(unittest.TestCase):
 					{"name": "TASK-2", "status": "open"},
 				],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
@@ -1712,18 +2090,24 @@ class TestRuntimeAdditional(unittest.TestCase):
 		logged.clear()
 
 		with (
-			patch("sync.sync.service.runtime._register_and_log", side_effect=lambda **kwargs: logged.append(kwargs)),
-			patch("sync.sync.service.runtime._index_frappe_records", return_value={}),
-			patch("sync.sync.service.runtime._index_partner_records", return_value={(None,): {"state": "missing-id"}}),
+			patch(
+				"sync.sync.service.audit._register_and_log",
+				side_effect=lambda **kwargs: logged.append(kwargs),
+			),
+			patch("sync.sync.service.matching._index_frappe_records", return_value={}),
+			patch(
+				"sync.sync.service.matching._index_partner_records",
+				return_value={(None,): {"state": "missing-id"}},
+			),
 		):
-			runtime._sync_partner_to_frappe(
+			one_way_service._sync_partner_to_frappe(
 				run_doc=SimpleNamespace(name="RUN-1"),
 				config=config,
 				connector=object(),
 				partner_records=[],
 				frappe_records=[],
 				dry_run=False,
-				stats=runtime.SyncStats(),
+				stats=models_service.SyncStats(),
 				label_direction="Frappe <- Partner",
 				full_sync=False,
 			)
@@ -1736,21 +2120,12 @@ class TestRuntimeAdditional(unittest.TestCase):
 			[{"name": "B"}],
 			[],
 		]
-		with patch("sync.sync.service.runtime.frappe.get_all", side_effect=pages):
-			records = runtime._get_frappe_records("Task", fields=["name"], filters=None, or_filters=None, batch_size=1)
+		with patch("sync.sync.service.orchestrator.frappe.get_all", side_effect=pages):
+			records = sources_service._get_frappe_records(
+				"Task", fields=["name"], filters=None, or_filters=None, batch_size=1
+			)
 		self.assertEqual(records, [{"name": "A"}, {"name": "B"}])
 
-		run_meta = MetaWithFields(
-			[
-				SimpleNamespace(fieldname="sync_definition", fieldtype="Link"),
-				SimpleNamespace(fieldname="status", fieldtype="Data"),
-				SimpleNamespace(fieldname="trigger_type", fieldtype="Data"),
-				SimpleNamespace(fieldname="dry_run", fieldtype="Check"),
-				SimpleNamespace(fieldname="started_at", fieldtype="Datetime"),
-				SimpleNamespace(fieldname="sync_type", fieldtype="Data"),
-				SimpleNamespace(fieldname="sync_partner", fieldtype="Link"),
-			]
-		)
 		run_item_meta = MetaWithFields(
 			[
 				SimpleNamespace(fieldname="sync_run", fieldtype="Link"),
@@ -1770,23 +2145,39 @@ class TestRuntimeAdditional(unittest.TestCase):
 				SimpleNamespace(fieldname="written_after_payload", fieldtype="Long Text"),
 			]
 		)
-		docs = [FakeInsertDoc(name="RUN-1", doctype="Sync Run"), FakeInsertDoc(name="ITEM-1", doctype="Sync Run Item")]
+		docs = [
+			FakeInsertDoc(name="RUN-1", doctype="Sync Run"),
+			FakeInsertDoc(name="ITEM-1", doctype="Sync Run Item"),
+		]
 
 		get_doc = Mock(side_effect=docs)
 		with (
-			patch(
-				"sync.sync.service.runtime.frappe",
+			patch_service_dependency(
+				"frappe",
 				new=_runtime_frappe_stub(
 					get_meta=Mock(return_value=run_item_meta),
 					get_doc=get_doc,
 				),
 			),
-			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
+			patch_service_dependency("now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
 		):
-			run_doc = runtime._create_run_doc(SimpleNamespace(name="SYNC-1", get=lambda key, default=None: {"sync_type": "Frappe -> Partner", "partner": "PARTNER-1"}.get(key, default)), status="Queued", trigger="manual", dry_run=True)
-			item_doc = runtime._create_run_item(
+			run_doc = audit_service._create_run_doc(
+				SimpleNamespace(
+					name="SYNC-1",
+					get=lambda key, default=None: {
+						"sync_type": "Frappe -> Partner",
+						"partner": "PARTNER-1",
+					}.get(key, default),
+				),
+				status="Queued",
+				trigger="manual",
+				dry_run=True,
+			)
+			item_doc = audit_service._create_run_item(
 				run_doc=run_doc,
-				config=SimpleNamespace(match_fields=["name"], mapping={"name": "id"}, capture_audit_payloads=1),
+				config=SimpleNamespace(
+					match_fields=["name"], mapping={"name": "id"}, capture_audit_payloads=1
+				),
 				sync_definition_name="SYNC-1",
 				action="created",
 				status="success",
@@ -1810,12 +2201,20 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertEqual(item_payload["written_after_payload"], '{"id": "TASK-1"}')
 
 	def test_get_partner_source_records_returns_records_for_full_sync(self):
-		config = SimpleNamespace(table_name="tabTask", read_query=None, batch_size=10, match_fields=["name"], partner_modified_fields=["updated_at"])
+		config = SimpleNamespace(
+			table_name="tabTask",
+			read_query=None,
+			batch_size=10,
+			match_fields=["name"],
+			partner_modified_fields=["updated_at"],
+		)
 		context = SimpleNamespace(is_delta_sync=False, delta_since=None)
 		records = [{"id": "TASK-1"}]
 
-		with patch("sync.sync.service.runtime._iter_partner_record_batches", return_value=iter([records])):
-			self.assertEqual(runtime._get_partner_source_records(config, object(), context), records)
+		with patch(
+			"sync.sync.service.execution.sources._iter_partner_record_batches", return_value=iter([records])
+		):
+			self.assertEqual(sources_service._get_partner_source_records(config, object(), context), records)
 
 	def test_fetch_partner_records_raises_on_partial_load_failure(self):
 		class FlakyConnector:
@@ -1830,8 +2229,10 @@ class TestRuntimeAdditional(unittest.TestCase):
 
 		connector = FlakyConnector()
 
-		with self.assertRaisesRegex(RuntimeError, "Partner source load failed at cursor 'page-2' after 1 records."):
-			runtime._fetch_partner_records(
+		with self.assertRaisesRegex(
+			RuntimeError, "Partner source load failed at cursor 'page-2' after 1 records."
+		):
+			sources_service._fetch_partner_records(
 				connector=connector,
 				source="tabTask",
 				query=None,
@@ -1854,17 +2255,28 @@ class TestRuntimeAdditional(unittest.TestCase):
 		)
 
 		with (
-			patch("sync.sync.service.runtime.frappe", new=_runtime_frappe_stub(get_meta=lambda *_args, **_kwargs: meta)),
-			patch("sync.sync.service.runtime.croniter", side_effect=lambda expr, now: SimpleNamespace(get_next=lambda _: datetime(2026, 3, 17, 13, 0))),
-			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
+			patch_service_dependency(
+				"frappe", new=_runtime_frappe_stub(get_meta=lambda *_args, **_kwargs: meta)
+			),
+			patch_service_dependency(
+				"croniter",
+				side_effect=lambda expr, now: SimpleNamespace(
+					get_next=lambda _: datetime(2026, 3, 17, 13, 0)
+				),
+			),
+			patch_service_dependency("now_datetime", return_value=datetime(2026, 3, 17, 12, 0)),
 		):
-			runtime._update_definition_runtime(doc, last_run="RUN-1", last_sync_at=datetime(2026, 3, 17, 12, 0), summary="ok")
-			runtime._update_definition_failure(doc, last_run="RUN-2", error_message="Traceback\nRuntimeError: boom")
-			runtime._set_next_run_at(doc, "*/15 * * * *")
+			audit_service._update_definition_runtime(
+				doc, last_run="RUN-1", last_sync_at=datetime(2026, 3, 17, 12, 0), summary="ok"
+			)
+			audit_service._update_definition_failure(
+				doc, last_run="RUN-2", error_message="Traceback\nRuntimeError: boom"
+			)
+			scheduling_service._set_next_run_at(doc, "*/15 * * * *")
 
 		self.assertEqual(doc.values["last_run"], "RUN-2")
 		self.assertEqual(doc.values["last_run_status"], "Error")
 		self.assertEqual(doc.values["last_run_summary"], "RuntimeError: boom")
 		self.assertEqual(doc.values["next_run_at"], datetime(2026, 3, 17, 13, 0))
 
-		self.assertIn("processed=1", runtime._format_run_summary({"processed_count": 1}))
+		self.assertIn("processed=1", audit_service._format_run_summary({"processed_count": 1}))

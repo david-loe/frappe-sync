@@ -1,10 +1,9 @@
 # Copyright (c) 2026, david-loe and contributors
 # For license information, please see license.txt
 
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-import frappe
 from frappe.model.document import Document
+
+from sync.sync.service import time_utils
 
 
 class SyncPartner(Document):
@@ -44,13 +43,4 @@ class SyncPartner(Document):
 
 
 def _normalize_time_zone(value: str | None) -> str | None:
-	if value in (None, ""):
-		return None
-	cleaned = str(value).strip()
-	if not cleaned:
-		return None
-	try:
-		ZoneInfo(cleaned)
-	except ZoneInfoNotFoundError:
-		frappe.throw("Time Zone must be a valid IANA zone such as Europe/Berlin.")
-	return cleaned
+	return time_utils._normalize_time_zone_name(value)

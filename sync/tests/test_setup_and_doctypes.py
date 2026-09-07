@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 from unittest.mock import Mock, call, patch
 
 import frappe
@@ -12,6 +12,7 @@ from sync.sync.doctype.sync_definition import sync_definition as sync_definition
 from sync.sync.doctype.sync_partner import sync_partner as sync_partner_module
 from sync.sync.doctype.sync_run import sync_run as sync_run_module
 from sync.sync.doctype.sync_run_item import sync_run_item as sync_run_item_module
+from sync.sync.service import definition_rules
 
 
 class FakeSyncDefinitionDoc:
@@ -136,7 +137,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		with patch.object(
 			sync_run_module,
 			"frappe",
-			SimpleNamespace(get_all=fake_get_all, delete_doc=delete_doc, db=SimpleNamespace(set_value=set_value)),
+			SimpleNamespace(
+				get_all=fake_get_all, delete_doc=delete_doc, db=SimpleNamespace(set_value=set_value)
+			),
 		):
 			sync_run_module.SyncRun.on_trash(SimpleNamespace(name="RUN-1"))
 
@@ -190,9 +193,8 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		sync_partner_module.SyncPartner.validate(doc)
 		self.assertEqual(doc.time_zone, "Europe/Berlin")
 
-		with patch.object(sync_partner_module.frappe, "throw", side_effect=frappe.ValidationError("bad-tz")):
-			with self.assertRaises(frappe.ValidationError):
-				sync_partner_module.SyncPartner.validate(SimpleNamespace(time_zone="Mars/Olympus"))
+		with self.assertRaisesRegex(frappe.ValidationError, "valid IANA"):
+			sync_partner_module.SyncPartner.validate(SimpleNamespace(time_zone="Mars/Olympus"))
 
 	def test_validate_match_fields_throws_for_missing_mapping(self):
 		doc = FakeSyncDefinitionDoc(
@@ -200,7 +202,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id")],
 		)
 
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("missing")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("missing")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_match_fields(doc)
 
@@ -228,11 +232,15 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		duplicate_doc = FakeSyncDefinitionDoc(
 			field_mapping=[
 				SimpleNamespace(frappe_field="name", partner_field="id", direction="Frappe <-> Partner"),
-				SimpleNamespace(frappe_field=" name ", partner_field="external_id", direction="Frappe -> Partner"),
+				SimpleNamespace(
+					frappe_field=" name ", partner_field="external_id", direction="Frappe -> Partner"
+				),
 			]
 		)
 
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("duplicate")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("duplicate")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_field_mapping(duplicate_doc)
 
@@ -290,7 +298,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		)
 		with (
 			patch.object(sync_definition_module.frappe, "get_meta", side_effect=fake_meta),
-			patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-child")),
+			patch.object(
+				sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-child")
+			),
 		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_field_mapping(invalid_doc)
@@ -298,10 +308,12 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 	def test_validate_field_mapping_rejects_invalid_direction(self):
 		doc = FakeSyncDefinitionDoc(
 			sync_type="Frappe <-> Partner",
-			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id", direction="Outbound")]
+			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id", direction="Outbound")],
 		)
 
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-direction")) as mock_throw:
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-direction")
+		) as mock_throw:
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_field_mapping(doc)
 
@@ -320,7 +332,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			]
 		)
 
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-action")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-action")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_field_mapping(invalid_action_doc)
 
@@ -335,25 +349,33 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			]
 		)
 
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("missing-value")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("missing-value")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_field_mapping(missing_literal_doc)
 
 	def test_validate_source_settings_requires_table_name(self):
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_source_settings(FakeSyncDefinitionDoc())
 		doc = FakeSyncDefinitionDoc(table_name=" tabTask ", read_query=" select * from tabTask ")
 		sync_definition_module.SyncDefinition.validate_source_settings(doc)
 		self.assertEqual(doc.table_name, "tabTask")
 		self.assertEqual(doc.read_query, "select * from tabTask")
-		read_query_doc = FakeSyncDefinitionDoc(sync_type="Frappe <- Partner", table_name="", read_query=" select 1 ")
+		read_query_doc = FakeSyncDefinitionDoc(
+			sync_type="Frappe <- Partner", table_name="", read_query=" select 1 "
+		)
 		sync_definition_module.SyncDefinition.validate_source_settings(read_query_doc)
 		self.assertIsNone(read_query_doc.table_name)
 		self.assertEqual(read_query_doc.read_query, "select 1")
 
 	def test_validate_modified_fields_and_preview_limit_reject_invalid_values(self):
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_modified_fields(
 					FakeSyncDefinitionDoc(partner_modified_field="")
@@ -364,10 +386,14 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 				)
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_modified_fields(
-					FakeSyncDefinitionDoc(partner_modified_field="updated_at", partner_creation_field="updated_at")
+					FakeSyncDefinitionDoc(
+						partner_modified_field="updated_at", partner_creation_field="updated_at"
+					)
 				)
 			with self.assertRaises(frappe.ValidationError):
-				sync_definition_module.SyncDefinition.validate_preview_limit(FakeSyncDefinitionDoc(preview_limit=0))
+				sync_definition_module.SyncDefinition.validate_preview_limit(
+					FakeSyncDefinitionDoc(preview_limit=0)
+				)
 
 	def test_validate_write_behavior_normalizes_actions_and_requires_submittable_doctype(self):
 		doc = FakeSyncDefinitionDoc(
@@ -382,7 +408,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 				)
 			],
 		)
-		with patch.object(sync_definition_module.frappe, "get_meta", return_value=SimpleNamespace(is_submittable=True)):
+		with patch.object(
+			sync_definition_module.frappe, "get_meta", return_value=SimpleNamespace(is_submittable=True)
+		):
 			sync_definition_module.SyncDefinition.validate_write_behavior(doc)
 
 		self.assertEqual(doc.update_existing, 0)
@@ -395,7 +423,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			]
 		)
 		with (
-			patch.object(sync_definition_module.frappe, "get_meta", return_value=SimpleNamespace(is_submittable=False)),
+			patch.object(
+				sync_definition_module.frappe, "get_meta", return_value=SimpleNamespace(is_submittable=False)
+			),
 			patch.object(
 				sync_definition_module.frappe,
 				"throw",
@@ -423,7 +453,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		self.assertEqual(doc.timestamp_tie_breaker, "Manual")
 
 	def test_validate_modified_fields_requires_partner_timestamps_for_bidirectional_or_delta_sync(self):
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_modified_fields(
 					FakeSyncDefinitionDoc(
@@ -456,13 +488,23 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			"eval:doc.sync_type == 'Frappe <-> Partner' || doc.use_last_sync_date",
 		)
 		self.assertEqual(fields["partner_creation_field"]["reqd"], 0)
-		self.assertEqual(fields["timestamp_buffer_ms"]["depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'")
-		self.assertEqual(fields["conflict_policy"]["mandatory_depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'")
-		self.assertEqual(fields["timestamp_tie_breaker"]["depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'")
-		self.assertEqual(fields["one_way_match_mode"]["depends_on"], "eval:doc.sync_type != 'Frappe <-> Partner'")
+		self.assertEqual(
+			fields["timestamp_buffer_ms"]["depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'"
+		)
+		self.assertEqual(
+			fields["conflict_policy"]["mandatory_depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'"
+		)
+		self.assertEqual(
+			fields["timestamp_tie_breaker"]["depends_on"], "eval:doc.sync_type == 'Frappe <-> Partner'"
+		)
+		self.assertEqual(
+			fields["one_way_match_mode"]["depends_on"], "eval:doc.sync_type != 'Frappe <-> Partner'"
+		)
 		self.assertEqual(fields["frappe_source_mode"]["default"], "DocType Query")
 		self.assertEqual(fields["frappe_source_mode"]["options"], "DocType Query\nPython Script")
-		self.assertEqual(fields["frappe_source_script"]["depends_on"], "eval:doc.frappe_source_mode == 'Python Script'")
+		self.assertEqual(
+			fields["frappe_source_script"]["depends_on"], "eval:doc.frappe_source_mode == 'Python Script'"
+		)
 		self.assertEqual(
 			fields["frappe_source_script"]["mandatory_depends_on"],
 			"eval:doc.frappe_source_mode == 'Python Script'",
@@ -473,7 +515,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		sync_definition_module.SyncDefinition.validate_one_way_match_mode(doc)
 		self.assertEqual(doc.one_way_match_mode, "all_matches")
 
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_one_way_match_mode(
 					FakeSyncDefinitionDoc(one_way_match_mode="fanout")
@@ -487,7 +531,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			delete_missing=1,
 		)
 
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("unsafe-source")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("unsafe-source")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_source_settings(doc)
 
@@ -507,11 +553,15 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 	def test_validate_filter_expression_accepts_valid_values_during_validate(self):
 		string_doc = FakeSyncDefinitionDoc(
 			table_name="tabTask",
+			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id")],
+			match_fields=[SimpleNamespace(frappe_field="name")],
 			use_last_sync_date=0,
 			filter_expression='  [["status","=","Open"]]  ',
 		)
 		dict_doc = FakeSyncDefinitionDoc(
 			table_name="tabTask",
+			field_mapping=[SimpleNamespace(frappe_field="name", partner_field="id")],
+			match_fields=[SimpleNamespace(frappe_field="name")],
 			use_last_sync_date=0,
 			filter_expression={"status": "Open"},
 		)
@@ -525,7 +575,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		self.assertEqual(dict_doc.filter_expression, '{"status": "Open"}')
 
 	def test_validate_filter_expression_rejects_invalid_json_and_scalar_payloads(self):
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-json")) as mock_throw:
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-json")
+		) as mock_throw:
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_filter_expression(
 					FakeSyncDefinitionDoc(filter_expression="not-json")
@@ -533,28 +585,38 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 
 		mock_throw.assert_called_once_with("Filter Expression must be valid JSON.")
 
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-type")) as mock_throw:
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("invalid-type")
+		) as mock_throw:
 			with self.assertRaises(frappe.ValidationError):
-				sync_definition_module.SyncDefinition.validate_filter_expression(FakeSyncDefinitionDoc(filter_expression="1"))
+				sync_definition_module.SyncDefinition.validate_filter_expression(
+					FakeSyncDefinitionDoc(filter_expression="1")
+				)
 
 		mock_throw.assert_called_once_with("Filter Expression must decode to a JSON array or object.")
 
 	def test_validate_frappe_source_settings_requires_script_and_server_script_flag(self):
 		doc = FakeSyncDefinitionDoc(frappe_source_mode="Python Script", frappe_source_script=" records = [] ")
-		with patch.object(sync_definition_module, "_server_script_enabled", return_value=True):
+		with patch.object(definition_rules, "_server_script_enabled", return_value=True):
 			sync_definition_module.SyncDefinition.validate_frappe_source_settings(doc)
 		self.assertEqual(doc.frappe_source_mode, "Python Script")
 		self.assertEqual(doc.frappe_source_script, "records = []")
 
 		blank_doc = FakeSyncDefinitionDoc(frappe_source_mode="Python Script", frappe_source_script="")
-		with patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("missing-script")):
+		with patch.object(
+			sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("missing-script")
+		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_frappe_source_settings(blank_doc)
 
-		disabled_doc = FakeSyncDefinitionDoc(frappe_source_mode="Python Script", frappe_source_script="records = []")
+		disabled_doc = FakeSyncDefinitionDoc(
+			frappe_source_mode="Python Script", frappe_source_script="records = []"
+		)
 		with (
-			patch.object(sync_definition_module, "_server_script_enabled", return_value=False),
-			patch.object(sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("disabled")),
+			patch.object(definition_rules, "_server_script_enabled", return_value=False),
+			patch.object(
+				sync_definition_module.frappe, "throw", side_effect=frappe.ValidationError("disabled")
+			),
 		):
 			with self.assertRaises(frappe.ValidationError):
 				sync_definition_module.SyncDefinition.validate_frappe_source_settings(disabled_doc)
@@ -594,9 +656,15 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 			sync_definition_module.SyncDefinition.get_value_mapping_fallbacks(doc),
 			{"name": {"action": "fallback", "value": "unknown"}},
 		)
-		self.assertEqual(sync_definition_module.SyncDefinition.get_value_mapping(doc), {"status": {"Open": "1"}})
-		self.assertEqual(sync_definition_module.SyncDefinition.get_frappe_modified_fields(doc), ["changed_on"])
-		self.assertEqual(sync_definition_module.SyncDefinition.get_partner_modified_fields(doc), ["partner_changed"])
+		self.assertEqual(
+			sync_definition_module.SyncDefinition.get_value_mapping(doc), {"status": {"Open": "1"}}
+		)
+		self.assertEqual(
+			sync_definition_module.SyncDefinition.get_frappe_modified_fields(doc), ["changed_on"]
+		)
+		self.assertEqual(
+			sync_definition_module.SyncDefinition.get_partner_modified_fields(doc), ["partner_changed"]
+		)
 
 	def test_value_mapping_supports_explicit_null_on_either_side(self):
 		null_to_partner = SimpleNamespace(
@@ -649,7 +717,9 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 	def test_export_payload_helpers_cover_preview_limit_and_serialization(self):
 		doc = FakeSyncDefinitionDoc(
 			sync_type="Frappe <- Partner",
-			value_mapping=[SimpleNamespace(frappe_field="status", frappe_value={"a": 1}, partner_value=["x"])],
+			value_mapping=[
+				SimpleNamespace(frappe_field="status", frappe_value={"a": 1}, partner_value=["x"])
+			],
 			field_mapping=[
 				SimpleNamespace(
 					frappe_field="name",
@@ -690,12 +760,12 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		self.assertTrue(payload["mask_credentials"])
 
 	def test_helper_functions_cover_edge_cases(self):
-		self.assertEqual(sync_definition_module._split_lines(" a \n\n b "), ["a", "b"])
-		self.assertIsNone(sync_definition_module._clean_value("   "))
-		self.assertIsNone(sync_definition_module._normalize_filter_expression("   "))
-		self.assertEqual(sync_definition_module._normalize_mapping_direction(""), "Frappe <-> Partner")
+		self.assertEqual(definition_rules._split_lines(" a \n\n b "), ["a", "b"])
+		self.assertIsNone(definition_rules._clean_value("   "))
+		self.assertIsNone(definition_rules._normalize_filter_expression("   "))
+		self.assertEqual(definition_rules._normalize_mapping_direction(""), "Frappe <-> Partner")
 		self.assertEqual(
-			sync_definition_module._normalize_field_mapping_row(
+			definition_rules._normalize_field_mapping_row(
 				SimpleNamespace(frappe_field=" name ", partner_field=" id ", direction="")
 			),
 			{
@@ -705,5 +775,5 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 				"mapping_scope": "Parent",
 			},
 		)
-		self.assertEqual(sync_definition_module.cstr(None), "")
-		self.assertEqual(sync_definition_module.cstr({"a": 1}), '{"a": 1}')
+		self.assertEqual(definition_rules.cstr(None), "")
+		self.assertEqual(definition_rules.cstr({"a": 1}), '{"a": 1}')

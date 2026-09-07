@@ -12,13 +12,19 @@ operators.
 
 ## Architecture Anchors
 
-- Runtime semantics live in `sync/sync/service/runtime.py`.
+- Shared runtime types, including `SyncDefinitionConfig`, live in `sync/sync/service/models.py`.
+- Configuration adapters and shared semantic checks live in `configuration.py` and `definition_rules.py`.
+- Mapping, matching, and conflict decisions live in `mapping.py`, `matching.py`, and `changes.py`.
+- Record loading, writes, and directional execution live in `sync/sync/service/execution/`.
+- Run lifecycle and public execution entrypoints live in `orchestrator.py`; audit persistence lives in `audit.py`.
+- Scheduling, housekeeping, and portable configuration live in `scheduler.py`, `management.py`, and `yaml_io.py`.
+- Import services from their owning modules. The service package does not re-export operations.
 - Public whitelisted API methods live in `sync/api.py`.
 - Partner connector implementations live in `sync/sync/service/connectors.py`.
 - Desk JavaScript helpers and form controllers live in `sync/public/js/`.
 - App hooks and default setup live in `sync/hooks.py` and `sync/setup.py`.
 - The scheduler calls
-  `sync.sync.service.runtime.run_due_sync_definitions_scheduled`.
+  `sync.sync.service.scheduler.run_due_sync_definitions_scheduled`.
 
 ## Core Doctypes
 
@@ -99,8 +105,8 @@ Important child doctypes include `Sync Field Mapping`, `Sync Key Field`,
 Useful focused checks:
 
 ```bash
-python -m py_compile sync/sync/service/runtime.py sync/api.py
-PYTHONPATH=/workspace/development/frappe-bench/apps/frappe:/workspace/development/frappe-bench/apps/sync /workspace/development/frappe-bench/env/bin/python -m unittest sync.tests.test_api sync.tests.test_runtime_helpers sync.tests.test_runtime_additional sync.tests.test_runtime_management sync.tests.test_setup sync.tests.test_setup_and_doctypes
+python -m compileall -q sync/sync/service sync/api.py
+PYTHONPATH=/workspace/development/frappe-bench/apps/frappe:/workspace/development/frappe-bench/apps/sync /workspace/development/frappe-bench/env/bin/python -m unittest sync.tests.test_api sync.tests.test_runtime_helpers sync.tests.test_runtime_additional sync.tests.test_runtime_management sync.tests.test_setup sync.tests.test_setup_and_doctypes sync.tests.test_service_validation
 bench --site development.localhost run-tests --app sync
 ```
 

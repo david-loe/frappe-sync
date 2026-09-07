@@ -14,24 +14,21 @@ from sync.sync.constants import (
 	TRIGGER_MANUAL,
 	VALID_TRIGGER_TYPES,
 )
-from sync.sync.service import (
-	SyncPreviewService,
-	cleanup_sync_run_retention as service_cleanup_sync_run_retention,
-	enqueue_sync_definition as service_enqueue_sync_definition,
-	execute_sync_definition as service_execute_sync_definition,
-	export_sync_definition_yaml as service_export_sync_definition_yaml,
-	import_sync_definition_yaml as service_import_sync_definition_yaml,
-	list_due_sync_definitions as service_list_due_sync_definitions,
-	recover_stale_runs as service_recover_stale_runs,
-	resolve_sync_run_item as service_resolve_sync_run_item,
-	run_due_sync_definitions as service_run_due_sync_definitions,
-)
 from sync.sync.service.connectors import get_connector_for_partner
-from sync.sync.service.runtime import (
+from sync.sync.service.management import cleanup_sync_run_retention as service_cleanup_sync_run_retention
+from sync.sync.service.management import recover_stale_runs as service_recover_stale_runs
+from sync.sync.service.management import resolve_sync_run_item as service_resolve_sync_run_item
+from sync.sync.service.orchestrator import SyncPreviewService
+from sync.sync.service.orchestrator import enqueue_sync_definition as service_enqueue_sync_definition
+from sync.sync.service.orchestrator import execute_sync_definition as service_execute_sync_definition
+from sync.sync.service.query_templates import resolve_read_query
+from sync.sync.service.scheduler import list_due_sync_definitions as service_list_due_sync_definitions
+from sync.sync.service.scheduler import run_due_sync_definitions as service_run_due_sync_definitions
+from sync.sync.service.yaml_io import export_sync_definition_yaml as service_export_sync_definition_yaml
+from sync.sync.service.yaml_io import import_sync_definition_yaml as service_import_sync_definition_yaml
+from sync.sync.service.yaml_io import (
 	preview_import_sync_definition_yaml as service_preview_import_sync_definition_yaml,
-	_resolve_read_query,
 )
-
 
 SYSTEM_MANAGER_ROLE = "System Manager"
 SYNC_DEFINITION_DOCTYPE = SYNC_DEFINITION
@@ -118,7 +115,9 @@ def _require_sync_definition_permission(
 	check_partner: bool = False,
 	check_target_doctype: bool = False,
 ) -> Any:
-	sync_definition = _require_doc_permission(SYNC_DEFINITION_DOCTYPE, sync_definition_name, permtype=permtype)
+	sync_definition = _require_doc_permission(
+		SYNC_DEFINITION_DOCTYPE, sync_definition_name, permtype=permtype
+	)
 	if check_partner:
 		partner_name = _clean_string(_get_doc_value(sync_definition, "partner"))
 		if partner_name:
@@ -274,7 +273,7 @@ def get_sync_partner_table_columns(
 	normalized_table_name = _clean_string(table_name)
 	normalized_read_query = _clean_string(read_query)
 	try:
-		rendered_read_query = _resolve_read_query(
+		rendered_read_query = resolve_read_query(
 			SimpleNamespace(
 				read_query=normalized_read_query,
 				render_read_query_template=_as_bool(render_read_query_template),
@@ -298,11 +297,15 @@ def get_sync_partner_table_columns(
 def run_sync_now(sync_definition_name: str, trigger: str = TRIGGER_MANUAL, dry_run: bool = False):
 	_require_system_manager()
 	_require_sync_definition_permission(sync_definition_name, permtype="write", check_partner=True)
-	return service_execute_sync_definition(sync_definition_name, trigger=_validate_trigger_type(trigger), dry_run=_as_bool(dry_run))
+	return service_execute_sync_definition(
+		sync_definition_name, trigger=_validate_trigger_type(trigger), dry_run=_as_bool(dry_run)
+	)
 
 
 @frappe.whitelist()
-def run_sync_definition(sync_definition_name: str, trigger: str = TRIGGER_MANUAL, queue: bool = True, dry_run: bool = False):
+def run_sync_definition(
+	sync_definition_name: str, trigger: str = TRIGGER_MANUAL, queue: bool = True, dry_run: bool = False
+):
 	_require_system_manager()
 	_require_sync_definition_permission(sync_definition_name, permtype="write", check_partner=True)
 	return service_enqueue_sync_definition(
@@ -368,7 +371,9 @@ def export_sync_definition_yaml(sync_definition_name: str) -> str:
 @frappe.whitelist()
 def preview_import_sync_definition_yaml(yaml_payload: str, overwrite: bool = False) -> dict[str, Any]:
 	_require_system_manager()
-	return service_preview_import_sync_definition_yaml(yaml_payload=yaml_payload, overwrite=_as_bool(overwrite))
+	return service_preview_import_sync_definition_yaml(
+		yaml_payload=yaml_payload, overwrite=_as_bool(overwrite)
+	)
 
 
 @frappe.whitelist()
@@ -390,11 +395,15 @@ def run_due_sync_definitions(limit: int = 20, queue: bool = True) -> list[dict[s
 
 
 @frappe.whitelist()
-def recover_stale_runs(sync_definition_name: str | None = None, timeout_minutes: int | None = None) -> dict[str, Any]:
+def recover_stale_runs(
+	sync_definition_name: str | None = None, timeout_minutes: int | None = None
+) -> dict[str, Any]:
 	_require_system_manager()
 	if sync_definition_name:
 		_require_sync_definition_permission(sync_definition_name, permtype="write")
-	return service_recover_stale_runs(sync_definition_name=sync_definition_name, timeout_minutes=timeout_minutes)
+	return service_recover_stale_runs(
+		sync_definition_name=sync_definition_name, timeout_minutes=timeout_minutes
+	)
 
 
 @frappe.whitelist()

@@ -78,3 +78,11 @@ The project uses `pre-commit` with the usual suspects (ruff, eslint, prettier, p
 ### License
 
 agpl-3.0
+
+
+### Service architecture
+
+`SyncDefinitionConfig` in `sync.sync.service.models` is the normalized contract shared by the sync engine. `configuration` adapts saved documents, unsaved YAML payloads, and direct config objects; `definition_rules` owns the common semantic checks. The DocType controller also applies save permissions, including the System Manager requirement for custom scripts.
+
+`mapping` builds directional payloads, `matching` resolves record identities and match candidates, and `changes` compares fields and selects conflict winners. The `execution` package separates source loading, writes, and one-way/bidirectional flows. `orchestrator` owns run lifecycle, locking, queue entrypoints, and previews. `audit` persists run outcomes; `scheduler`, `management`, and `yaml_io` own scheduling, housekeeping/manual resolution, and portable configuration respectively. Small shared modules contain metadata access, scalar normalization, mapping rules, and date/cron helpers.
+

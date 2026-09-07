@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime
-from types import SimpleNamespace
+import json
 import unittest
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
 import yaml
+
+from sync.tests.service_test_support import patch_service_dependency
 
 
 class DummyDoc:
@@ -37,7 +41,7 @@ class DummyDoc:
 class ApiTestCase(unittest.TestCase):
 	def setUp(self):
 		try:
-			import sync.api as api  # noqa: PLC0415
+			import sync.api as api
 		except Exception as exc:
 			raise unittest.SkipTest(str(exc))
 		self.api = api
@@ -51,7 +55,6 @@ class ApiTestCase(unittest.TestCase):
 
 
 class TestSyncApi(ApiTestCase):
-
 	def test_doctype_field_choices_include_hidden_data_fields(self):
 		meta = SimpleNamespace(
 			fields=[
@@ -72,7 +75,10 @@ class TestSyncApi(ApiTestCase):
 		self.assertEqual(response["fields"][0]["label"], "Name")
 		self.assertEqual(response["fields"][1]["label"], "Created On")
 		self.assertEqual(response["fields"][2]["label"], "Modified")
-		self.assertEqual(response["table_fields"], [{"fieldname": "items", "label": "Items", "fieldtype": "Table", "options": ""}])
+		self.assertEqual(
+			response["table_fields"],
+			[{"fieldname": "items", "label": "Items", "fieldtype": "Table", "options": ""}],
+		)
 		self.assertEqual(response["child_fields"], {})
 
 	def test_get_sync_definition_field_choices_returns_empty_payload_for_blank_doctype(self):
@@ -131,12 +137,16 @@ class TestSyncApi(ApiTestCase):
 
 	def test_get_sync_partner_table_columns_raises_validation_error_on_connector_error(self):
 		partner = _doc_stub("Sync Partner", "PARTNER-1")
-		connector = SimpleNamespace(describe_source_columns=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("unsafe source")))
+		connector = SimpleNamespace(
+			describe_source_columns=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("unsafe source"))
+		)
 
 		with (
 			patch.object(self.api.frappe, "get_doc", return_value=partner),
 			patch.object(self.api, "get_connector_for_partner", return_value=connector),
-			patch.object(self.api.frappe, "throw", side_effect=frappe.ValidationError("unsafe source")) as mock_throw,
+			patch.object(
+				self.api.frappe, "throw", side_effect=frappe.ValidationError("unsafe source")
+			) as mock_throw,
 		):
 			with self.assertRaises(frappe.ValidationError):
 				self.api.get_sync_partner_table_columns(partner.name, read_query=" select * from x ")
@@ -147,6 +157,10 @@ class TestSyncApi(ApiTestCase):
 		sample_definition = {
 			"doctype": "Sync Definition",
 			"name": "SYNC-TEST",
+			"doctype_name": "Task",
+			"partner": "PARTNER-1",
+			"use_last_sync_date": 0,
+			"table_name": "tasks",
 			"sync_type": "Frappe -> Partner",
 			"frequency_cron": "*/15 * * * *",
 			"batch_size": 100,
@@ -170,6 +184,8 @@ class TestSyncApi(ApiTestCase):
 		def fake_get_doc(doctype, name=None):
 			if doctype == "Sync Definition":
 				return doc
+			if doctype in {"Sync Partner", "Sync Partner Type"}:
+				return _partner_doc(doctype, name)
 			if name is None:
 				return self.original_get_doc(doctype)
 			return self.original_get_doc(doctype, name)
@@ -177,7 +193,8 @@ class TestSyncApi(ApiTestCase):
 		with (
 			patch.object(self.api.frappe, "get_doc", side_effect=fake_get_doc),
 			patch.object(self.api.frappe, "get_meta", side_effect=_fake_meta),
-			patch("sync.sync.service.runtime.now_datetime", return_value=datetime(2026, 3, 18, 12, 0, 0)),
+			patch_service_dependency("now_datetime", return_value=datetime(2026, 3, 18, 12, 0, 0)),
+			patch.object(self.api.frappe, "db", SimpleNamespace(exists=lambda *args: True)),
 		):
 			exported_yaml = self.api.export_sync_definition_yaml(sample_definition["name"])
 
@@ -207,12 +224,18 @@ class TestSyncApi(ApiTestCase):
 			db=SimpleNamespace(exists=lambda *args, **kwargs: False, commit=lambda: None),
 			get_doc=raise_missing,
 			new_doc=fake_new_doc,
+			ValidationError=frappe.ValidationError,
+			throw=_validation_error,
 			get_meta=_fake_meta,
 		)
 
 		with (
-			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value={"can_import": True, "documents": {}}),
-			patch("sync.sync.service.runtime.frappe", new=runtime_frappe),
+			patch.object(
+				self.api,
+				"service_preview_import_sync_definition_yaml",
+				return_value={"can_import": True, "documents": {}},
+			),
+			patch_service_dependency("frappe", new=runtime_frappe),
 		):
 			result = self.api.import_sync_definition_yaml(exported_yaml, overwrite=False)
 
@@ -222,9 +245,13 @@ class TestSyncApi(ApiTestCase):
 				"ok": True,
 				"overwrite": False,
 				"sync_definition": sample_definition["name"],
-				"sync_partner": None,
-				"sync_partner_type": None,
-				"documents": {"Sync Definition": sample_definition["name"]},
+				"sync_partner": "PARTNER-1",
+				"sync_partner_type": "MSSQL",
+				"documents": {
+					"Sync Definition": sample_definition["name"],
+					"Sync Partner": "PARTNER-1",
+					"Sync Partner Type": "MSSQL",
+				},
 			},
 		)
 		if inserted:
@@ -233,7 +260,11 @@ class TestSyncApi(ApiTestCase):
 
 	def test_import_sync_definition_yaml_returns_normalized_response_schema(self):
 		with (
-			patch.object(self.api, "service_preview_import_sync_definition_yaml", return_value={"can_import": True, "documents": {}}),
+			patch.object(
+				self.api,
+				"service_preview_import_sync_definition_yaml",
+				return_value={"can_import": True, "documents": {}},
+			),
 			patch.object(
 				self.api,
 				"service_import_sync_definition_yaml",
@@ -274,7 +305,10 @@ class TestSyncApi(ApiTestCase):
 			patch.object(
 				self.api,
 				"get_connector_for_partner",
-				return_value=SimpleNamespace(test_connection=lambda: result, ping=lambda: SimpleNamespace(ok=True, message="ok", details={"details": "reachable"})),
+				return_value=SimpleNamespace(
+					test_connection=lambda: result,
+					ping=lambda: SimpleNamespace(ok=True, message="ok", details={"details": "reachable"}),
+				),
 			),
 		):
 			response = self.api.test_sync_partner(partner.name)
@@ -285,7 +319,9 @@ class TestSyncApi(ApiTestCase):
 
 	def test_test_sync_partner_falls_back_to_ping_when_test_connection_missing(self):
 		partner = _doc_stub("Sync Partner", "PARTNER-1", partner_type="mssql")
-		connector = SimpleNamespace(ping=lambda: SimpleNamespace(ok=False, message="down", details={"host": "db"}))
+		connector = SimpleNamespace(
+			ping=lambda: SimpleNamespace(ok=False, message="down", details={"host": "db"})
+		)
 
 		with (
 			patch.object(self.api.frappe, "get_doc", return_value=partner),
@@ -301,10 +337,16 @@ class TestSyncApi(ApiTestCase):
 		preview_data = {"actions": [{"direction": "Frappe -> Partner", "result": "ok"}]}
 		definition = _doc_stub("Sync Definition", "SYNC-1", doctype_name="Task")
 		partner = _doc_stub("Sync Partner", "PARTNER-1")
-		definition.get = lambda key, default=None: {"doctype_name": "Task", "sync_partner": "PARTNER-1"}.get(key, default)
+		definition.get = lambda key, default=None: {"doctype_name": "Task", "sync_partner": "PARTNER-1"}.get(
+			key, default
+		)
 
 		with (
-			patch.object(self.api, "SyncPreviewService", SimpleNamespace(predict=lambda definition, limit=50: preview_data)),
+			patch.object(
+				self.api,
+				"SyncPreviewService",
+				SimpleNamespace(predict=lambda definition, limit=50: preview_data),
+			),
 			patch.object(self.api.frappe, "get_doc", side_effect=[definition, partner]),
 		):
 			out = self.api.preview_sync_definition(definition.name)
@@ -314,10 +356,16 @@ class TestSyncApi(ApiTestCase):
 	def test_preview_sync_definition_coerces_limit_before_delegation(self):
 		definition = _doc_stub("Sync Definition", "SYNC-1", doctype_name="Task")
 		partner = _doc_stub("Sync Partner", "PARTNER-1")
-		definition.get = lambda key, default=None: {"doctype_name": "Task", "sync_partner": "PARTNER-1"}.get(key, default)
+		definition.get = lambda key, default=None: {"doctype_name": "Task", "sync_partner": "PARTNER-1"}.get(
+			key, default
+		)
 
 		with (
-			patch.object(self.api, "SyncPreviewService", SimpleNamespace(predict=lambda definition, limit=50: {"limit": limit})),
+			patch.object(
+				self.api,
+				"SyncPreviewService",
+				SimpleNamespace(predict=lambda definition, limit=50: {"limit": limit}),
+			),
 			patch.object(self.api.frappe, "get_doc", side_effect=[definition, partner]),
 		):
 			result = self.api.preview_sync_definition("SYNC-1", limit="7")
@@ -332,18 +380,29 @@ class TestSyncApi(ApiTestCase):
 				"doctype": "Sync Definition",
 				"name": "SYNC-NEW",
 				"sync_type": "Frappe -> Partner",
-				"sync_partner": "PARTNER-1",
+				"partner": "PARTNER-1",
+				"doctype_name": "Task",
+				"table_name": "tasks",
+				"use_last_sync_date": 0,
+				"match_fields": [{"frappe_field": "name"}],
+				"field_mapping": [{"frappe_field": "name", "partner_field": "id"}],
 				"match_mode": "Match Fields",
 			},
 		}
 		yaml_payload = yaml.safe_dump(payload, sort_keys=False)
 
 		def fake_exists(doctype, name):
-			return (doctype, name) == ("Sync Partner Type", "MSSQL")
+			return (doctype, name) in {("Sync Partner Type", "MSSQL"), ("Sync Partner", "PARTNER-1")}
 
-		with patch(
-			"sync.sync.service.runtime.frappe",
-			new=SimpleNamespace(db=SimpleNamespace(exists=fake_exists), get_meta=_fake_meta),
+		with patch_service_dependency(
+			"frappe",
+			new=SimpleNamespace(
+				db=SimpleNamespace(exists=fake_exists),
+				get_meta=_fake_meta,
+				get_doc=_partner_doc,
+				ValidationError=frappe.ValidationError,
+				throw=_validation_error,
+			),
 		):
 			preview = self.api.preview_import_sync_definition_yaml(yaml_payload, overwrite=False)
 
@@ -363,9 +422,15 @@ class TestSyncApi(ApiTestCase):
 		}
 		yaml_payload = yaml.safe_dump(payload, sort_keys=False)
 
-		with patch(
-			"sync.sync.service.runtime.frappe",
-			new=SimpleNamespace(db=SimpleNamespace(exists=lambda *args, **kwargs: True), get_meta=_fake_meta),
+		with patch_service_dependency(
+			"frappe",
+			new=SimpleNamespace(
+				db=SimpleNamespace(exists=lambda *args, **kwargs: True),
+				get_meta=_fake_meta,
+				get_doc=_partner_doc,
+				ValidationError=frappe.ValidationError,
+				throw=_validation_error,
+			),
 		):
 			preview = self.api.preview_import_sync_definition_yaml(yaml_payload, overwrite=True)
 
@@ -406,7 +471,7 @@ class TestSyncApi(ApiTestCase):
 					"exists": True,
 					"action": "overwrite",
 				}
-			}
+			},
 		}
 		definition = _doc_stub("Sync Definition", "SYNC-1")
 		definition.check_permission = _raise_permission_error
@@ -464,42 +529,22 @@ class TestSyncApi(ApiTestCase):
 
 
 def _fake_meta(doctype):
-	child_fields = {
-		"Sync Definition": [
-			("sync_type", "Data", None),
-			("frequency_cron", "Data", None),
-			("batch_size", "Data", None),
-			("filter_expression", "Data", None),
-			("match_mode", "Data", None),
-			("name", "Data", None),
-			("sync_partner", "Data", None),
-			("value_mapping", "Table", "Sync Value Mapping"),
-		],
-		"Sync Value Mapping": [
-			("frappe_field", "Data", None),
-			("frappe_value", "Data", None),
-			("frappe_value_is_null", "Check", None),
-			("partner_value", "Data", None),
-			("partner_value_is_null", "Check", None),
-		],
-		"Sync Partner": [("name", "Data", None), ("partner_type", "Data", None)],
-		"Sync Partner Type": [("name", "Data", None)],
-	}
+	name = doctype.lower().replace(" ", "_")
+	path = Path(__file__).parents[1] / "sync" / "doctype" / name / (name + ".json")
+	fields = json.loads(path.read_text())["fields"] if path.exists() else []
+	return SimpleNamespace(
+		fields=[SimpleNamespace(**{**{"fieldtype": "Data", "options": None}, **field}) for field in fields],
+		is_submittable=False,
+		has_field=lambda name: name in {field["fieldname"] for field in fields},
+	)
 
-	class _Meta:
-		def __init__(self, fields):
-			self.fields = [
-				SimpleNamespace(fieldname=fieldname, fieldtype=fieldtype, options=options)
-				for fieldname, fieldtype, options in fields
-			]
 
-		def has_field(self, fieldname):
-			return fieldname in {field.fieldname for field in self.fields}
+def _validation_error(message, *args, **kwargs):
+	raise frappe.ValidationError(message)
 
-		def get_table_fields(self, include_computed=True):
-			return []
 
-	return _Meta(child_fields.get(doctype, [("name", "Data", None)]))
+def _partner_doc(doctype, name=None):
+	return DummyDoc({"doctype": doctype, "name": name, "partner_type": "MSSQL"})
 
 
 class ApiContractTests(ApiTestCase):
@@ -509,7 +554,9 @@ class ApiContractTests(ApiTestCase):
 
 		with (
 			patch.object(self.api.frappe, "get_doc", side_effect=[definition, partner]),
-			patch("sync.api.service_enqueue_sync_definition", return_value={"status": "queued"}) as mock_enqueue,
+			patch(
+				"sync.api.service_enqueue_sync_definition", return_value={"status": "queued"}
+			) as mock_enqueue,
 		):
 			response = self.api.run_sync_definition("SYNC-1", trigger="manual", queue=True, dry_run=False)
 
@@ -545,7 +592,9 @@ class ApiContractTests(ApiTestCase):
 		mock_resolve.assert_called_once_with("ITEM-1", "Frappe <- Partner")
 
 	def test_run_due_sync_definitions_coerces_limit_and_queue(self):
-		with patch("sync.api.service_run_due_sync_definitions", return_value=[{"status": "queued"}]) as mock_run_due:
+		with patch(
+			"sync.api.service_run_due_sync_definitions", return_value=[{"status": "queued"}]
+		) as mock_run_due:
 			response = self.api.run_due_sync_definitions(limit="3", queue="0")
 
 		self.assertEqual(response, [{"status": "queued"}])
@@ -564,8 +613,12 @@ class ApiContractTests(ApiTestCase):
 		mock_recover.assert_called_once_with(sync_definition_name="SYNC-1", timeout_minutes="45")
 
 	def test_cleanup_sync_run_retention_delegates_with_system_manager_permission(self):
-		with patch("sync.api.service_cleanup_sync_run_retention", return_value={"deleted_runs": 2}) as mock_cleanup:
-			response = self.api.cleanup_sync_run_retention(retention_days_success="30", retention_days_error="120")
+		with patch(
+			"sync.api.service_cleanup_sync_run_retention", return_value={"deleted_runs": 2}
+		) as mock_cleanup:
+			response = self.api.cleanup_sync_run_retention(
+				retention_days_success="30", retention_days_error="120"
+			)
 
 		self.assertEqual(response, {"deleted_runs": 2})
 		mock_cleanup.assert_called_once_with(retention_days_success="30", retention_days_error="120")

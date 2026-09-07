@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import unittest
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-import unittest
 from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 from frappe.utils import now_datetime
 
-from sync.sync.service import runtime
+from sync.sync.service import orchestrator as orchestrator_service
+from sync.sync.service import scheduler as scheduler_service
+from sync.sync.service.execution import writes as writes_service
+from sync.tests.service_test_support import patch_service_dependency
 
 
 def _has_frappe_site_context() -> bool:
@@ -29,13 +32,17 @@ class TestRuntimeExecution(IntegrationTestCase):
 		savepoint = f"test_controller_rollback_{suffix}"
 		frappe.db.savepoint(savepoint)
 		self.addCleanup(frappe.db.rollback, save_point=savepoint)
-		original = runtime._upsert_frappe_record(
-			doctype="ToDo", existing_name=None,
-			payload={"description": f"Original {suffix}"}, dry_run=False,
+		original = writes_service._upsert_frappe_record(
+			doctype="ToDo",
+			existing_name=None,
+			payload={"description": f"Original {suffix}"},
+			dry_run=False,
 		)
-		earlier = runtime._upsert_frappe_record(
-			doctype="ToDo", existing_name=None,
-			payload={"description": f"Earlier success {suffix}"}, dry_run=False,
+		earlier = writes_service._upsert_frappe_record(
+			doctype="ToDo",
+			existing_name=None,
+			payload={"description": f"Earlier success {suffix}"},
+			dry_run=False,
 		)
 		failed_names = []
 
@@ -52,14 +59,18 @@ class TestRuntimeExecution(IntegrationTestCase):
 					patch.object(ToDo, "on_update", fail_after_write),
 					self.assertRaisesRegex(RuntimeError, "Controller failed after DB write"),
 				):
-					runtime._upsert_frappe_record(
-						doctype="ToDo", existing_name=existing_name,
-						payload={"description": f"Failed {suffix}"}, dry_run=False,
+					writes_service._upsert_frappe_record(
+						doctype="ToDo",
+						existing_name=existing_name,
+						payload={"description": f"Failed {suffix}"},
+						dry_run=False,
 					)
 				if existing_name is None:
 					self.assertFalse(frappe.db.exists("ToDo", failed_names[-1]))
 				self.assertEqual(frappe.db.get_value("ToDo", original, "description"), f"Original {suffix}")
-				self.assertEqual(frappe.db.get_value("ToDo", earlier, "description"), f"Earlier success {suffix}")
+				self.assertEqual(
+					frappe.db.get_value("ToDo", earlier, "description"), f"Earlier success {suffix}"
+				)
 
 	def _make_partner(self) -> Any:
 		suffix = frappe.generate_hash(length=8)
@@ -153,10 +164,12 @@ class TestRuntimeExecution(IntegrationTestCase):
 		finished_at = datetime(2026, 3, 17, 10, 5, 0)
 		next_run_base = datetime(2026, 3, 17, 10, 5, 1)
 		with (
-			patch("sync.sync.service.runtime.now_datetime", side_effect=[queued_at, started_at, finished_at, next_run_base]),
-			patch("sync.sync.service.runtime._run_engine", return_value=result_payload),
+			patch_service_dependency(
+				"now_datetime", side_effect=[queued_at, started_at, finished_at, next_run_base]
+			),
+			patch("sync.sync.service.execution.engine._run_engine", return_value=result_payload),
 		):
-			result = runtime.execute_sync_definition(definition.name, trigger="api")
+			result = orchestrator_service.execute_sync_definition(definition.name, trigger="api")
 
 		self.assertEqual(result["status"], "success")
 		run_doc = frappe.get_doc("Sync Run", result["run"])
@@ -201,8 +214,8 @@ class TestRuntimeExecution(IntegrationTestCase):
 			"error_count": 1,
 		}
 
-		with patch("sync.sync.service.runtime._run_engine", return_value=result_payload):
-			result = runtime.execute_sync_definition(definition.name, trigger="api")
+		with patch("sync.sync.service.execution.engine._run_engine", return_value=result_payload):
+			result = orchestrator_service.execute_sync_definition(definition.name, trigger="api")
 
 		self.assertEqual(result["status"], "partial_error")
 		run_doc = frappe.get_doc("Sync Run", result["run"])
@@ -231,8 +244,8 @@ class TestRuntimeExecution(IntegrationTestCase):
 			"error_count": 0,
 		}
 
-		with patch("sync.sync.service.runtime._run_engine", return_value=result_payload):
-			result = runtime.execute_sync_definition(definition.name, trigger="api")
+		with patch("sync.sync.service.execution.engine._run_engine", return_value=result_payload):
+			result = orchestrator_service.execute_sync_definition(definition.name, trigger="api")
 
 		self.assertEqual(result["status"], "needs_review")
 		run_doc = frappe.get_doc("Sync Run", result["run"])
@@ -264,8 +277,10 @@ class TestRuntimeExecution(IntegrationTestCase):
 			"error_count": 0,
 		}
 
-		with patch("sync.sync.service.runtime._run_engine", return_value=result_payload):
-			result = runtime.execute_sync_definition(definition.name, trigger="api", dry_run=True)
+		with patch("sync.sync.service.execution.engine._run_engine", return_value=result_payload):
+			result = orchestrator_service.execute_sync_definition(
+				definition.name, trigger="api", dry_run=True
+			)
 
 		run_doc = frappe.get_doc("Sync Run", result["run"])
 		definition.reload()
@@ -280,10 +295,10 @@ class TestRuntimeExecution(IntegrationTestCase):
 		definition = self._make_definition(partner.name)
 
 		with (
-			patch("sync.sync.service.runtime._run_engine", side_effect=RuntimeError("boom")),
+			patch("sync.sync.service.execution.engine._run_engine", side_effect=RuntimeError("boom")),
 			self.assertRaises(RuntimeError),
 		):
-			runtime.execute_sync_definition(definition.name, trigger="manual")
+			orchestrator_service.execute_sync_definition(definition.name, trigger="manual")
 
 		run_name = frappe.get_all(
 			"Sync Run",
@@ -331,8 +346,10 @@ class TestRuntimeExecution(IntegrationTestCase):
 		partner = self._make_partner()
 		definition = self._make_definition(partner.name)
 
-		with patch("sync.sync.service.runtime.frappe.enqueue") as mock_enqueue:
-			result = runtime.enqueue_sync_definition(definition.name, trigger="manual", queue=True, dry_run=True)
+		with patch("sync.sync.service.orchestrator.frappe.enqueue") as mock_enqueue:
+			result = orchestrator_service.enqueue_sync_definition(
+				definition.name, trigger="manual", queue=True, dry_run=True
+			)
 
 		self.assertEqual(result["status"], "queued")
 		run_doc = frappe.get_doc("Sync Run", result["run"])
@@ -363,8 +380,10 @@ class TestRuntimeExecution(IntegrationTestCase):
 			"error_count": 0,
 		}
 
-		with patch("sync.sync.service.runtime._run_engine", return_value=result_payload):
-			result = runtime.enqueue_sync_definition(definition.name, trigger="api", queue=False, dry_run=True)
+		with patch("sync.sync.service.execution.engine._run_engine", return_value=result_payload):
+			result = orchestrator_service.enqueue_sync_definition(
+				definition.name, trigger="api", queue=False, dry_run=True
+			)
 
 		self.assertEqual(result["status"], "success")
 		run_doc = frappe.get_doc("Sync Run", result["run"])
@@ -376,8 +395,10 @@ class TestRuntimeExecution(IntegrationTestCase):
 		definition = self._make_definition(partner.name)
 		existing_runs = frappe.db.count("Sync Run", {"sync_definition": definition.name})
 
-		with patch("sync.sync.service.runtime._has_active_run", return_value=True):
-			result = runtime.enqueue_sync_definition(definition.name, trigger="scheduler", queue=True)
+		with patch("sync.sync.service.audit._has_active_run", return_value=True):
+			result = orchestrator_service.enqueue_sync_definition(
+				definition.name, trigger="scheduler", queue=True
+			)
 
 		self.assertEqual(result, {"status": "already_running", "sync_definition": definition.name})
 		self.assertEqual(frappe.db.count("Sync Run", {"sync_definition": definition.name}), existing_runs)
@@ -394,8 +415,8 @@ class TestRuntimeExecution(IntegrationTestCase):
 		disabled.db_set("next_run_at", now - timedelta(minutes=1), update_modified=False)
 		disabled.db_set("enabled", 0, update_modified=False)
 
-		with patch("sync.sync.service.runtime._is_due_by_cron", return_value=False):
-			due = runtime.list_due_sync_definitions(now=now)
+		with patch("sync.sync.service.scheduling._is_due_by_cron", return_value=False):
+			due = scheduler_service.list_due_sync_definitions(now=now)
 
 		self.assertIn(ready.name, due)
 		self.assertNotIn(future.name, due)
@@ -405,8 +426,10 @@ class TestRuntimeExecution(IntegrationTestCase):
 		partner = self._make_partner()
 		ping = SimpleNamespace(ok=False, message="dial timeout", details={"dialect": "mssql"})
 
-		with patch("sync.sync.service.runtime.get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ping)):
-			result = runtime.test_sync_partner_connection(partner.name)
+		with patch_service_dependency(
+			"get_connector_for_partner", return_value=SimpleNamespace(ping=lambda: ping)
+		):
+			result = orchestrator_service.test_sync_partner_connection(partner.name)
 
 		partner.reload()
 		self.assertEqual(result["status"], "error")
