@@ -2490,8 +2490,7 @@ def _sync_bidirectional_identity_fields(
 		frappe_lookup_records if frappe_lookup_records is not None else frappe_records,
 		partner_lookup_records if partner_lookup_records is not None else partner_records,
 	)
-	conflicted_frappe: set[int] = set()
-	conflicted_partner: set[int] = set()
+	conflicted_ids: set[tuple[str, Any]] = set()
 	_logged_conflicts: set[str] = set()
 
 	def log_conflict(message: str, frappe_record: dict[str, Any] | None, partner_record: dict[str, Any] | None) -> None:
@@ -2506,13 +2505,10 @@ def _sync_bidirectional_identity_fields(
 			default=str,
 			ensure_ascii=True,
 		)
+		conflicted_ids.update(_identity_conflict_keys(config, frappe_record, partner_record))
 		if key in _logged_conflicts:
 			return
 		_logged_conflicts.add(key)
-		if frappe_record is not None:
-			conflicted_frappe.add(id(frappe_record))
-		if partner_record is not None:
-			conflicted_partner.add(id(partner_record))
 		_register_and_log(
 			stats=stats,
 			run_doc=run_doc,
@@ -2530,9 +2526,9 @@ def _sync_bidirectional_identity_fields(
 		frappe_record = frappe_group[0] if frappe_group else None
 		partner_record = partner_group[0] if partner_group else None
 		for record in frappe_group:
-			conflicted_frappe.add(id(record))
+			conflicted_ids.update(_identity_conflict_keys(config, frappe_record=record))
 		for record in partner_group:
-			conflicted_partner.add(id(record))
+			conflicted_ids.update(_identity_conflict_keys(config, partner_record=record))
 		log_conflict(message, frappe_record, partner_record)
 
 	pairs: dict[tuple[Any, Any], tuple[dict[str, Any], dict[str, Any]]] = {}
@@ -2540,34 +2536,36 @@ def _sync_bidirectional_identity_fields(
 	partner_only: list[dict[str, Any]] = []
 
 	for frappe_record in operation_state.frappe_records:
-		if id(frappe_record) in conflicted_frappe:
+		if conflicted_ids.intersection(_identity_conflict_keys(config, frappe_record=frappe_record)):
 			continue
 		partner_record, message = _resolve_identity_partner_for_frappe(config, frappe_record, lookup_state)
 		if message:
 			log_conflict(message, frappe_record, partner_record)
 			continue
 		if partner_record:
-			if id(partner_record) in conflicted_partner:
+			if conflicted_ids.intersection(_identity_conflict_keys(config, partner_record=partner_record)):
 				continue
 			pairs[_identity_pair_key(config, frappe_record, partner_record)] = (frappe_record, partner_record)
 		else:
 			frappe_only.append(frappe_record)
 
 	for partner_record in operation_state.partner_records:
-		if id(partner_record) in conflicted_partner:
+		if conflicted_ids.intersection(_identity_conflict_keys(config, partner_record=partner_record)):
 			continue
 		frappe_record, message = _resolve_identity_frappe_for_partner(config, partner_record, lookup_state)
 		if message:
 			log_conflict(message, frappe_record, partner_record)
 			continue
 		if frappe_record:
-			if id(frappe_record) in conflicted_frappe:
+			if conflicted_ids.intersection(_identity_conflict_keys(config, frappe_record=frappe_record)):
 				continue
 			pairs[_identity_pair_key(config, frappe_record, partner_record)] = (frappe_record, partner_record)
 		else:
 			partner_only.append(partner_record)
 
 	for frappe_record, partner_record in pairs.values():
+		if conflicted_ids.intersection(_identity_conflict_keys(config, frappe_record, partner_record)):
+			continue
 		_sync_bidirectional_identity_pair(
 			run_doc=run_doc,
 			config=config,
@@ -2588,56 +2586,35 @@ def _sync_bidirectional_identity_fields(
 			lookup_state=lookup_state,
 			dry_run=dry_run,
 			stats=stats,
-			conflicted_frappe=conflicted_frappe,
-			conflicted_partner=conflicted_partner,
+			conflicted_ids=conflicted_ids,
 		)
-	else:
-		for frappe_record in frappe_only:
-			if _identity_frappe_partner_id(config, frappe_record) in (None, ""):
-				_create_identity_partner_from_frappe(
-					run_doc=run_doc,
-					config=config,
-					connector=connector,
-					stats=stats,
-					dry_run=dry_run,
-					frappe_record=frappe_record,
-					mapping_context=mapping_context,
-				)
-		for partner_record in partner_only:
-			if _identity_partner_frappe_id(config, partner_record) in (None, ""):
-				_create_identity_frappe_from_partner(
-					run_doc=run_doc,
-					config=config,
-					connector=connector,
-					stats=stats,
-					dry_run=dry_run,
-					partner_record=partner_record,
-					mapping_context=mapping_context,
-				)
 
-	if config.delete_missing and full_sync:
-		for frappe_record in frappe_only:
-			if _identity_frappe_partner_id(config, frappe_record) in (None, ""):
-				_create_identity_partner_from_frappe(
-					run_doc=run_doc,
-					config=config,
-					connector=connector,
-					stats=stats,
-					dry_run=dry_run,
-					frappe_record=frappe_record,
-					mapping_context=mapping_context,
-				)
-		for partner_record in partner_only:
-			if _identity_partner_frappe_id(config, partner_record) in (None, ""):
-				_create_identity_frappe_from_partner(
-					run_doc=run_doc,
-					config=config,
-					connector=connector,
-					stats=stats,
-					dry_run=dry_run,
-					partner_record=partner_record,
-					mapping_context=mapping_context,
-				)
+	for frappe_record in frappe_only:
+		if conflicted_ids.intersection(_identity_conflict_keys(config, frappe_record=frappe_record)):
+			continue
+		if _identity_frappe_partner_id(config, frappe_record) in (None, ""):
+			_create_identity_partner_from_frappe(
+				run_doc=run_doc,
+				config=config,
+				connector=connector,
+				stats=stats,
+				dry_run=dry_run,
+				frappe_record=frappe_record,
+				mapping_context=mapping_context,
+			)
+	for partner_record in partner_only:
+		if conflicted_ids.intersection(_identity_conflict_keys(config, partner_record=partner_record)):
+			continue
+		if _identity_partner_frappe_id(config, partner_record) in (None, ""):
+			_create_identity_frappe_from_partner(
+				run_doc=run_doc,
+				config=config,
+				connector=connector,
+				stats=stats,
+				dry_run=dry_run,
+				partner_record=partner_record,
+				mapping_context=mapping_context,
+			)
 
 	_flush_pending_run_writes(run_doc)
 
@@ -2795,6 +2772,26 @@ def _resolve_identity_frappe_for_partner(
 	if partner_identity not in (None, "") and frappe_partner_id not in (None, "") and partner_identity != frappe_partner_id:
 		return frappe_record, "Identity conflict: Frappe partner ID points to a different partner record."
 	return frappe_record, None
+
+
+def _identity_conflict_keys(
+	config: SyncDefinitionConfig,
+	frappe_record: dict[str, Any] | None = None,
+	partner_record: dict[str, Any] | None = None,
+) -> set[tuple[str, Any]]:
+	# Include claimed IDs so an ambiguous link cannot become an unmatched create.
+	# These keys must survive separate delta and full lookup reads.
+	values = (
+		("frappe", _identity_frappe_name(config, frappe_record)),
+		("partner", _identity_frappe_partner_id(config, frappe_record)),
+		("partner", _identity_partner_identity(config, partner_record)),
+		("frappe", _identity_partner_frappe_id(config, partner_record)),
+	)
+	return {
+		(side, key)
+		for side, value in values
+		if (key := _normalize_pairing_key_value(value)) not in (None, "")
+	}
 
 
 def _identity_pair_key(config: SyncDefinitionConfig, frappe_record: dict[str, Any], partner_record: dict[str, Any]) -> tuple[Any, Any]:
@@ -3330,11 +3327,10 @@ def _delete_missing_identity_records(
 	lookup_state: IdentityRecordState,
 	dry_run: bool,
 	stats: SyncStats,
-	conflicted_frappe: set[int],
-	conflicted_partner: set[int],
+	conflicted_ids: set[tuple[str, Any]],
 ) -> None:
 	for frappe_record in lookup_state.frappe_records:
-		if id(frappe_record) in conflicted_frappe:
+		if conflicted_ids.intersection(_identity_conflict_keys(config, frappe_record=frappe_record)):
 			continue
 		frappe_name = _normalize_pairing_key_value(_identity_frappe_name(config, frappe_record))
 		frappe_partner_id = _normalize_pairing_key_value(_identity_frappe_partner_id(config, frappe_record))
@@ -3372,7 +3368,7 @@ def _delete_missing_identity_records(
 			)
 
 	for partner_record in lookup_state.partner_records:
-		if id(partner_record) in conflicted_partner:
+		if conflicted_ids.intersection(_identity_conflict_keys(config, partner_record=partner_record)):
 			continue
 		partner_identity = _normalize_pairing_key_value(_identity_partner_identity(config, partner_record))
 		partner_frappe_id = _normalize_pairing_key_value(_identity_partner_frappe_id(config, partner_record))
@@ -4259,7 +4255,7 @@ def _upsert_frappe_record(
 	)
 	event = FRAPPE_WRITE_HOOK_EVENT_AFTER_UPDATE if existing_name else FRAPPE_WRITE_HOOK_EVENT_AFTER_INSERT
 	event_hooks = _enabled_frappe_write_hooks(write_hooks, event)
-	with _frappe_write_savepoint(enabled=bool(event_hooks)):
+	with _frappe_write_savepoint():
 		if existing_name:
 			doc = frappe.get_doc(doctype, existing_name)
 			for key, value in payload.items():

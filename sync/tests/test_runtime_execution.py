@@ -22,6 +22,45 @@ def _has_frappe_site_context() -> bool:
 
 @unittest.skipUnless(_has_frappe_site_context(), "requires Frappe site context")
 class TestRuntimeExecution(IntegrationTestCase):
+	def test_controller_failure_rolls_back_insert_and_update_without_sync_hooks(self):
+		from frappe.desk.doctype.todo.todo import ToDo
+
+		suffix = frappe.generate_hash(length=8)
+		savepoint = f"test_controller_rollback_{suffix}"
+		frappe.db.savepoint(savepoint)
+		self.addCleanup(frappe.db.rollback, save_point=savepoint)
+		original = runtime._upsert_frappe_record(
+			doctype="ToDo", existing_name=None,
+			payload={"description": f"Original {suffix}"}, dry_run=False,
+		)
+		earlier = runtime._upsert_frappe_record(
+			doctype="ToDo", existing_name=None,
+			payload={"description": f"Earlier success {suffix}"}, dry_run=False,
+		)
+		failed_names = []
+
+		def fail_after_write(doc):
+			# on_update runs after the parent DB write for both insert and save.
+			self.assertEqual(frappe.db.get_value("ToDo", doc.name, "description"), doc.description)
+			frappe.db.set_value("ToDo", earlier, "description", "Hook side effect")
+			failed_names.append(doc.name)
+			raise RuntimeError("Controller failed after DB write")
+
+		for existing_name in (None, original):
+			with self.subTest(existing_name=existing_name):
+				with (
+					patch.object(ToDo, "on_update", fail_after_write),
+					self.assertRaisesRegex(RuntimeError, "Controller failed after DB write"),
+				):
+					runtime._upsert_frappe_record(
+						doctype="ToDo", existing_name=existing_name,
+						payload={"description": f"Failed {suffix}"}, dry_run=False,
+					)
+				if existing_name is None:
+					self.assertFalse(frappe.db.exists("ToDo", failed_names[-1]))
+				self.assertEqual(frappe.db.get_value("ToDo", original, "description"), f"Original {suffix}")
+				self.assertEqual(frappe.db.get_value("ToDo", earlier, "description"), f"Earlier success {suffix}")
+
 	def _make_partner(self) -> Any:
 		suffix = frappe.generate_hash(length=8)
 		return frappe.get_doc(

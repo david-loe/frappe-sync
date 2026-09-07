@@ -1113,7 +1113,7 @@ class TestRuntimeHelpers(unittest.TestCase):
 		self.assertTrue(doc.submitted)
 		self.assertEqual([call[0] for call in calls], ["submit", "set_value"])
 
-	def test_upsert_frappe_record_without_action_does_not_create_savepoint(self):
+	def test_upsert_frappe_record_without_action_creates_savepoint(self):
 		doc = MutableDoc(name="TASK-NEW")
 		db = _db_stub(set_value=Mock())
 		db.savepoint = Mock()
@@ -1138,9 +1138,46 @@ class TestRuntimeHelpers(unittest.TestCase):
 			)
 
 		self.assertEqual(name, "TASK-NEW")
-		db.savepoint.assert_not_called()
+		db.savepoint.assert_called_once()
 		db.rollback.assert_not_called()
-		db.release_savepoint.assert_not_called()
+		db.release_savepoint.assert_called_once_with(db.savepoint.call_args.args[0])
+
+	def test_upsert_without_sync_hooks_rolls_back_controller_writes(self):
+		for existing_name in (None, "TASK-1"):
+			with self.subTest(existing_name=existing_name):
+				stored = {"EARLIER": "Successful record", "TASK-1": "Original"}
+				snapshots = {}
+				doc = MutableDoc(name=existing_name or "TASK-NEW")
+
+				def write_then_fail(**kwargs):
+					stored[doc.name] = doc.values["subject"]
+					raise RuntimeError("Controller on_update failed after writing")
+
+				def rollback(*, save_point):
+					stored.clear()
+					stored.update(snapshots[save_point])
+
+				doc.insert = doc.save = write_then_fail
+				db = _db_stub(
+					savepoint=Mock(side_effect=lambda name: snapshots.update({name: dict(stored)})),
+					rollback=Mock(side_effect=rollback),
+					release_savepoint=Mock(),
+				)
+				with (
+					patch.object(runtime, "frappe", _runtime_frappe_stub(
+						db=db, new_doc=Mock(return_value=doc), get_doc=Mock(return_value=doc),
+					)),
+					patch.object(runtime, "_doctype_has_field", return_value=True),
+					self.assertRaisesRegex(RuntimeError, "Controller on_update failed"),
+				):
+					runtime._upsert_frappe_record(
+						doctype="Task", existing_name=existing_name,
+						payload={"subject": "Failed write"}, dry_run=False,
+					)
+				self.assertEqual(stored, {"EARLIER": "Successful record", "TASK-1": "Original"})
+				db.savepoint.assert_called_once()
+				db.rollback.assert_called_once_with(save_point=db.savepoint.call_args.args[0])
+				db.release_savepoint.assert_not_called()
 
 	def test_upsert_frappe_record_releases_savepoint_after_successful_submit_action(self):
 		doc = MutableDoc(name="TASK-NEW")

@@ -702,6 +702,115 @@ class TestRuntimeAdditional(unittest.TestCase):
 		self.assertEqual(mock_item.call_args.kwargs["action"], "conflict")
 		self.assertEqual(mock_item.call_args.kwargs["status"], "conflict")
 
+	def test_identity_conflicts_block_separately_loaded_records_and_linked_creates(self):
+		cases = [
+			# Duplicate claims, including an unlinked counterpart that must not be created again.
+			([{"name": "F1", "partner_nr": "P1"}, {"name": "F2", "partner_nr": "P1"}],
+			 [{"NR": "P1", "frappe_name": ""}]),
+			([{"name": "F1", "partner_nr": ""}],
+			 [{"NR": "P1", "frappe_name": "F1"}, {"NR": "P2", "frappe_name": "F1"}]),
+			# Duplicate own IDs must also block their separately loaded copies.
+			([{"name": "F1", "partner_nr": "P1"}, {"name": "F1", "partner_nr": "P2"}],
+			 [{"NR": "P1", "frappe_name": "F1"}, {"NR": "P2", "frappe_name": "F1"}]),
+			([{"name": "F1", "partner_nr": "P1"}, {"name": "F2", "partner_nr": "P1"}],
+			 [{"NR": "P1", "frappe_name": "F1"}, {"NR": "P1", "frappe_name": "F2"}]),
+			# Missing counterparts must not turn conflicting claims into deletes.
+			([{"name": "F1", "partner_nr": "P1"}, {"name": "F2", "partner_nr": "P1"}], []),
+			([], [{"NR": "P1", "frappe_name": "F1"}, {"NR": "P2", "frappe_name": "F1"}]),
+			# Normalize driver-dependent scalar representations in conflict keys too.
+			([{"name": "F1", "partner_nr": 1}, {"name": "F2", "partner_nr": "1.0"}],
+			 [{"NR": Decimal("1"), "frappe_name": ""}]),
+		]
+		for frappe_rows, partner_rows in cases:
+			for full_sync in (False, True):
+				for dry_run in (False, True):
+					with self.subTest(frappe=frappe_rows, partner=partner_rows, full_sync=full_sync, dry_run=dry_run):
+						frappe_lookup = [*frappe_rows, {"name": "F9", "partner_nr": "P9"}]
+						partner_lookup = [*partner_rows, {"NR": "P9", "frappe_name": "F9"}]
+						connector = FakeIdentityConnector()
+						with (
+							patch.object(runtime, "_sync_bidirectional_identity_pair") as pair,
+							patch.object(runtime, "_create_identity_frappe_from_partner") as create_frappe,
+							patch.object(runtime, "_create_identity_partner_from_frappe") as create_partner,
+							patch.object(runtime.frappe, "delete_doc") as delete,
+							patch.object(runtime, "_register_and_log") as log,
+							patch.object(runtime, "_flush_pending_run_writes"),
+						):
+							runtime._sync_bidirectional(
+								run_doc=SimpleNamespace(name="RUN-1"),
+								config=_identity_fields_config(delete_missing=True),
+								connector=connector,
+								frappe_records=[dict(row) for row in frappe_lookup],
+								partner_records=[dict(row) for row in partner_lookup],
+								frappe_lookup_records=frappe_lookup,
+								partner_lookup_records=partner_lookup,
+								dry_run=dry_run,
+								stats=runtime.SyncStats(),
+								last_successful_sync=datetime(2026, 3, 17),
+								full_sync=full_sync,
+							)
+						pair.assert_called_once()
+						self.assertEqual(pair.call_args.kwargs["frappe_record"]["name"], "F9")
+						create_frappe.assert_not_called()
+						create_partner.assert_not_called()
+						delete.assert_not_called()
+						self.assertFalse(connector.upserts)
+						self.assertFalse(connector.deletes)
+						self.assertTrue(log.called)
+						self.assertTrue(all(entry.kwargs["status"] == "conflict" for entry in log.call_args_list))
+
+	def test_identity_conflict_detected_after_pair_collection_blocks_the_pair(self):
+		frappe_rows = [{"name": "F1", "partner_nr": ""}, {"name": "F2", "partner_nr": "P1"}]
+		partner_rows = [{"NR": "P1", "frappe_name": "F1"}]
+		with (
+			patch.object(runtime, "_sync_bidirectional_identity_pair") as pair,
+			patch.object(runtime, "_create_identity_frappe_from_partner") as create_frappe,
+			patch.object(runtime, "_create_identity_partner_from_frappe") as create_partner,
+			patch.object(runtime, "_register_and_log") as log,
+			patch.object(runtime, "_flush_pending_run_writes"),
+		):
+			runtime._sync_bidirectional(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=_identity_fields_config(),
+				connector=FakeIdentityConnector(),
+				frappe_records=[dict(row) for row in frappe_rows],
+				partner_records=[dict(row) for row in partner_rows],
+				frappe_lookup_records=frappe_rows,
+				partner_lookup_records=partner_rows,
+				dry_run=False,
+				stats=runtime.SyncStats(),
+				last_successful_sync=datetime(2026, 3, 17),
+			)
+		pair.assert_not_called()
+		create_frappe.assert_not_called()
+		create_partner.assert_not_called()
+		self.assertEqual(log.call_args.kwargs["status"], "conflict")
+
+	def test_identity_late_conflict_blocks_pending_create_from_delta(self):
+		# The later full read sees an identity link that was absent in the delta read.
+		with (
+			patch.object(runtime, "_sync_bidirectional_identity_pair") as pair,
+			patch.object(runtime, "_create_identity_frappe_from_partner") as create_frappe,
+			patch.object(runtime, "_create_identity_partner_from_frappe") as create_partner,
+			patch.object(runtime, "_register_and_log") as log,
+			patch.object(runtime, "_flush_pending_run_writes"),
+		):
+			runtime._sync_bidirectional(
+				run_doc=SimpleNamespace(name="RUN-1"),
+				config=_identity_fields_config(), connector=FakeIdentityConnector(),
+				frappe_records=[{"name": "F1", "partner_nr": ""}, {"name": "F9", "partner_nr": ""}],
+				partner_records=[{"NR": "P2", "frappe_name": "F1"}],
+				frappe_lookup_records=[{"name": "F1", "partner_nr": "P1"}, {"name": "F9", "partner_nr": ""}],
+				partner_lookup_records=[{"NR": "P2", "frappe_name": ""}],
+				dry_run=False, stats=runtime.SyncStats(),
+				last_successful_sync=datetime(2026, 3, 17),
+			)
+		pair.assert_not_called()
+		create_frappe.assert_not_called()
+		create_partner.assert_called_once()
+		self.assertEqual(create_partner.call_args.kwargs["frappe_record"]["name"], "F9")
+		self.assertEqual(log.call_args.kwargs["status"], "conflict")
+
 	def test_identity_fields_timestamp_tie_breaker_controls_writes(self):
 		frappe_record = {
 			"name": "TASK-1",
