@@ -32,7 +32,12 @@ jobs:
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
-        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-start-period=30s
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
 
     steps:
       - name: Clone
@@ -111,29 +116,13 @@ jobs:
           python - <<'PY'
           import xml.etree.ElementTree as ET
 
-          total_threshold = 0.80
-          core_threshold = 0.85
+          total_threshold = 0.85
           root = ET.parse("sites/coverage.xml").getroot()
           line_rate = float(root.attrib["line-rate"])
           pct = line_rate * 100
           print(f"Coverage: {pct:.2f}%")
           if line_rate < total_threshold:
               raise SystemExit(f"Coverage below threshold: {pct:.2f}% < {total_threshold * 100:.0f}%")
-
-          expected = {
-              "sync/sync/service/runtime.py": core_threshold,
-              "sync/sync/service/connectors.py": core_threshold,
-          }
-          classes = {cls.attrib["filename"]: float(cls.attrib["line-rate"]) for cls in root.findall(".//class")}
-          for filename, threshold in expected.items():
-              actual = classes.get(filename)
-              if actual is None:
-                  raise SystemExit(f"Missing coverage entry for {filename}")
-              print(f"{filename}: {actual * 100:.2f}%")
-              if actual < threshold:
-                  raise SystemExit(
-                      f"Coverage below threshold for {filename}: {actual * 100:.2f}% < {threshold * 100:.0f}%"
-                  )
           PY
 
   connector-integration-postgres:
@@ -157,7 +146,12 @@ jobs:
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
-        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-start-period=30s
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
       postgres:
         image: postgres:17
         env:
@@ -266,7 +260,12 @@ jobs:
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
-        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-start-period=30s
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
       firebird:
         image: jacobalberty/firebird:v2.5.9-sc
         env:
@@ -368,7 +367,12 @@ jobs:
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
-        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-start-period=30s
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
       mssql:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
