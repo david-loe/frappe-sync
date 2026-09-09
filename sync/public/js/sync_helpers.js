@@ -948,6 +948,7 @@ sync.helpers.promptDefinitionYamlExport = function () {
 			fieldname: "sync_definition_name",
 			label: __("Sync Definition"),
 			options: "Sync Definition",
+			get_query: () => ({ filters: { include_disabled: 1 } }),
 			reqd: 1,
 		},
 		(values) => {
