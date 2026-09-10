@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sync import setup
@@ -38,22 +38,44 @@ class TestSetupHooks(unittest.TestCase):
 			patch("sync.setup.ensure_default_partner_types") as mock_ensure,
 			patch("sync.setup.ensure_default_sync_settings") as mock_settings,
 			patch("sync.setup.ensure_sync_run_item_indexes"),
+			patch("sync.setup.ensure_sync_run_retention_indexes") as mock_indexes,
 		):
 			setup.after_migrate()
 
 		mock_ensure.assert_called_once_with()
 		mock_settings.assert_called_once_with()
+		mock_indexes.assert_called_once_with()
 
 	def test_before_tests_delegates_to_default_partner_type_setup(self):
 		with (
 			patch("sync.setup.ensure_default_partner_types") as mock_ensure,
 			patch("sync.setup.ensure_default_sync_settings") as mock_settings,
 			patch("sync.setup.ensure_sync_run_item_indexes"),
+			patch("sync.setup.ensure_sync_run_retention_indexes") as mock_indexes,
 		):
 			setup.before_tests()
 
 		mock_ensure.assert_called_once_with()
 		mock_settings.assert_called_once_with()
+		mock_indexes.assert_called_once_with()
+
+	def test_retention_indexes_are_installed_only_for_existing_table(self):
+		from unittest.mock import Mock, call
+
+		for exists in (False, True):
+			db = Mock()
+			db.table_exists.return_value = exists
+			with patch.object(setup.frappe, "db", db):
+				setup.ensure_sync_run_retention_indexes()
+			self.assertEqual(
+				db.add_index.call_args_list,
+				[
+					call("Sync Run", ("status", "finished_at"), index_name="status_finished_at_index"),
+					call("Sync Run", ("status", "creation"), index_name="status_creation_index"),
+				]
+				if exists
+				else [],
+			)
 
 	def test_ensure_default_partner_types_updates_existing_and_creates_missing(self):
 		existing_codes = {"mssql"}

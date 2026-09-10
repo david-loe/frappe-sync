@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from time import monotonic
 from typing import Any
 
 import frappe
+from frappe import _
 from frappe.utils import cint, now_datetime
 
 from sync.sync.constants import (
@@ -25,6 +27,7 @@ from sync.sync.service import config_access as config_access_service
 from sync.sync.service import configuration as configuration_service
 from sync.sync.service import mapping as mapping_service
 from sync.sync.service import mapping_rules as mapping_rules_service
+from sync.sync.service import retention as retention_service
 from sync.sync.service import time_utils as time_utils_service
 from sync.sync.service import values as values_service
 from sync.sync.service.connectors import get_connector_for_partner
@@ -115,7 +118,16 @@ def cleanup_sync_run_retention(
 	*,
 	retention_days_success: int | None = None,
 	retention_days_error: int | None = None,
+	batch_size: int = 1000,
+	verbose: bool = False,
 ) -> dict[str, Any]:
+	"""Permanently prune audit data, committing each item batch independently.
+
+	A failed or interrupted call can leave an expired run with some items removed.
+	Calling this method again safely processes the remaining items and run.
+	"""
+	if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 1 <= batch_size <= 10000:
+		raise frappe.ValidationError(_("Cleanup batch size must be an integer between 1 and 10000."))
 	settings = audit_service._get_sync_settings()
 	success_days = max(
 		1, values_service._positive_int(retention_days_success, settings.run_retention_days_success)
@@ -126,31 +138,55 @@ def cleanup_sync_run_retention(
 	error_cutoff = now - timedelta(days=error_days)
 	deleted_runs = 0
 	deleted_items = 0
-	rows = frappe.get_all(
-		SYNC_RUN,
-		filters={"status": ["in", sorted(DONE_RUN_STATUSES)]},
-		fields=["name", "status", "finished_at", "creation"],
-		order_by="creation asc",
-	)
+	started = monotonic()
+	logger = frappe.logger("sync.retention", allow_site=True)
+	run_name = None
 
-	for row in rows:
-		run_name = str(values_service._row_value(row, "name") or "")
-		if not run_name:
-			continue
-		status = str(values_service._row_value(row, "status") or "")
-		cutoff = success_cutoff if status == RUN_STATUS_SUCCESS else error_cutoff
-		completed_at = time_utils_service._parse_datetime(
-			values_service._row_value(row, "finished_at")
-		) or time_utils_service._parse_datetime(values_service._row_value(row, "creation"))
-		if completed_at and completed_at > cutoff:
-			continue
-		for item_name in audit_service._linked_run_item_names(run_name):
-			frappe.delete_doc(SYNC_RUN_ITEM, item_name, ignore_permissions=True, force=True)
-			deleted_items += 1
-		frappe.delete_doc(SYNC_RUN, run_name, ignore_permissions=True, force=True)
-		deleted_runs += 1
+	def report(event):
+		message = (
+			f"Sync cleanup {event}: run={run_name or '-'} deleted_runs={deleted_runs} "
+			f"deleted_run_items={deleted_items} elapsed_seconds={monotonic() - started:.1f} "
+			f"batch_size={batch_size} success_cutoff={success_cutoff.isoformat()} "
+			f"error_cutoff={error_cutoff.isoformat()}"
+		)
+		if verbose:
+			print(message, flush=True)
+		if event != "progress":
+			logger.info(message)
 
-	frappe.db.commit()
+	report("started")
+	try:
+		for run_name in retention_service.expired_run_names(success_cutoff, error_cutoff):
+			while True:
+				# This lock is reacquired after every commit. Concurrent cleaners must
+				# see the latest parent and item rows, not a previous read snapshot.
+				run = frappe.db.get_value(
+					SYNC_RUN, run_name, ["status", "finished_at", "creation"], as_dict=True, for_update=True
+				)
+				if not retention_service.is_expired(run, success_cutoff, error_cutoff):
+					frappe.db.commit()
+					break
+				item_names = retention_service.item_batch(run_name, batch_size)
+				if item_names:
+					retention_service.delete_item_batch(item_names)
+					frappe.db.commit()
+					deleted_items += len(item_names)
+				else:
+					frappe.delete_doc(
+						SYNC_RUN, run_name, ignore_permissions=True, force=True, delete_permanently=True
+					)
+					frappe.db.commit()
+					deleted_runs += 1
+				report("progress")
+				if not item_names:
+					break
+		frappe.db.commit()
+	except BaseException:
+		frappe.db.rollback()
+		report("failed")
+		logger.exception("Sync cleanup stopped; previously committed batches are retained")
+		raise
+	report("finished")
 	return {
 		"ok": True,
 		"retention_days_success": success_days,

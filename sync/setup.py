@@ -2,8 +2,7 @@
 
 import frappe
 
-from sync.sync.constants import SYNC_RUN_ITEM
-
+from sync.sync.constants import SYNC_RUN, SYNC_RUN_ITEM
 
 DEFAULT_PARTNER_TYPES = (
 	{
@@ -40,18 +39,31 @@ SYNC_RUN_ITEM_INDEXES = (
 	("status_creation_index", ("status", "creation")),
 	("sync_run_status_creation_index", ("sync_run", "status", "creation")),
 )
+SYNC_RUN_RETENTION_INDEXES = (
+	("status_finished_at_index", ("status", "finished_at")),
+	("status_creation_index", ("status", "creation")),
+)
 
 
 def after_migrate():
 	ensure_default_partner_types()
 	ensure_default_sync_settings()
 	ensure_sync_run_item_indexes()
+	ensure_sync_run_retention_indexes()
 
 
 def before_tests():
 	ensure_default_partner_types()
 	ensure_default_sync_settings()
 	ensure_sync_run_item_indexes()
+	ensure_sync_run_retention_indexes()
+
+
+def ensure_sync_run_retention_indexes():
+	if not frappe.db.table_exists(SYNC_RUN):
+		return
+	for index_name, fields in SYNC_RUN_RETENTION_INDEXES:
+		frappe.db.add_index(SYNC_RUN, fields, index_name=index_name)
 
 
 def ensure_sync_run_item_indexes():

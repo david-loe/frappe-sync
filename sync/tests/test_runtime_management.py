@@ -337,50 +337,59 @@ class TestRuntimeManagement(unittest.TestCase):
 		mock_get_doc.assert_not_called()
 
 	def test_cleanup_sync_run_retention_deletes_items_before_runs(self):
-		now = datetime(2026, 3, 17, 12, 0, 0)
-		deleted = []
+		from contextlib import ExitStack
 
-		def fake_get_all(doctype, **kwargs):
-			if doctype == "Sync Run":
-				return [
-					{
-						"name": "RUN-OLD-SUCCESS",
-						"status": "Success",
-						"finished_at": datetime(2025, 12, 1, 0, 0),
-					},
-					{"name": "RUN-OLD-ERROR", "status": "Error", "finished_at": datetime(2025, 1, 1, 0, 0)},
-					{"name": "RUN-FRESH", "status": "Success", "finished_at": datetime(2026, 3, 1, 0, 0)},
-				]
-			if doctype == "Sync Run Item":
-				run_name = kwargs["filters"]["sync_run"]
-				return [{"name": f"ITEM-{run_name}"}]
-			raise AssertionError(doctype)
-
-		with (
-			patch_service_dependency("now_datetime", return_value=now),
-			patch(
-				"sync.sync.service.audit._get_sync_settings",
-				return_value=SimpleNamespace(run_retention_days_success=90, run_retention_days_error=365),
-			),
-			patch("sync.sync.service.orchestrator.frappe.get_all", side_effect=fake_get_all),
-			patch(
-				"sync.sync.service.orchestrator.frappe.delete_doc",
-				side_effect=lambda doctype, name, **kwargs: deleted.append((doctype, name)),
-			),
-			patch("sync.sync.service.orchestrator.frappe.db", _db_stub()),
-		):
+		events = []
+		old_run = SimpleNamespace(status="Success", finished_at=datetime(2020, 1, 1), creation=None)
+		db = _db_stub(
+			get_value=Mock(return_value=old_run),
+			commit=lambda: events.append("commit"),
+			rollback=Mock(),
+		)
+		with ExitStack() as stack:
+			stack.enter_context(patch.object(management_service.frappe, "db", db))
+			stack.enter_context(patch.object(management_service.frappe, "logger"))
+			stack.enter_context(
+				patch.object(management_service, "now_datetime", return_value=datetime(2026, 1, 1))
+			)
+			stack.enter_context(
+				patch.object(
+					audit_service,
+					"_get_sync_settings",
+					return_value=SimpleNamespace(
+						run_retention_days_success=90,
+						run_retention_days_error=365,
+					),
+				)
+			)
+			stack.enter_context(
+				patch.object(
+					management_service.retention_service, "expired_run_names", return_value=["RUN-OLD"]
+				)
+			)
+			stack.enter_context(
+				patch.object(
+					management_service.retention_service, "item_batch", side_effect=[["ITEM-1", "ITEM-2"], []]
+				)
+			)
+			stack.enter_context(
+				patch.object(
+					management_service.retention_service,
+					"delete_item_batch",
+					side_effect=lambda names: events.append(names),
+				)
+			)
+			delete_doc = stack.enter_context(
+				patch.object(
+					management_service.frappe, "delete_doc", side_effect=lambda *a, **k: events.append("run")
+				)
+			)
 			result = management_service.cleanup_sync_run_retention()
-
-		self.assertEqual(result["deleted_runs"], 2)
+		self.assertEqual(result["deleted_runs"], 1)
 		self.assertEqual(result["deleted_run_items"], 2)
-		self.assertEqual(
-			deleted,
-			[
-				("Sync Run Item", "ITEM-RUN-OLD-SUCCESS"),
-				("Sync Run", "RUN-OLD-SUCCESS"),
-				("Sync Run Item", "ITEM-RUN-OLD-ERROR"),
-				("Sync Run", "RUN-OLD-ERROR"),
-			],
+		self.assertEqual(events, [["ITEM-1", "ITEM-2"], "commit", "run", "commit", "commit"])
+		delete_doc.assert_called_once_with(
+			"Sync Run", "RUN-OLD", ignore_permissions=True, force=True, delete_permanently=True
 		)
 
 	def test_enqueue_sync_definition_executes_immediately_when_queue_disabled(self):
