@@ -252,6 +252,33 @@ def _build_preview(sync_definition: Any, *, limit: int) -> dict[str, Any]:
 	preview_context = SyncContext(
 		config=replace(config, batch_size=cint(limit) or 50), dry_run=True, last_successful_sync=None
 	)
+	if config.record_processing_script:
+		from sync.sync.service.execution.scripted import run_scripted
+
+		if not ping.ok:
+			raise frappe.ValidationError(f"Partner connector validation failed: {ping.message}")
+		result = run_scripted(config, connector, preview_context, preview_limit=cint(limit) or 50)
+		return {
+			"sync_definition": config.name,
+			"sync_type": config.sync_type,
+			"partner": config.partner,
+			"connector": type(connector).__name__,
+			"partner_ping": {"ok": ping.ok, "message": ping.message, "details": ping.details},
+			"frappe_source_mode": config.frappe_source_mode,
+			"frappe_records_sample": [],
+			"frappe_records_sample_count": 0,
+			"mapping": mapping,
+			"match_mode": config.match_mode,
+			"match_fields": config.match_fields,
+			"read_query": config.read_query,
+			"render_read_query_template": config.render_read_query_template,
+			"rendered_read_query": query_templates_service.resolve_read_query(config, connector),
+			"partner_identity_field": config_access_service._config_partner_identity_field(config),
+			"value_mapping_fields": sorted(config.value_mapping.keys()),
+			"computed_fields": [field.field_name for field in config.computed_fields],
+			"actions": result["actions"],
+			"result": result,
+		}
 	frappe_records = []
 	for batch in sources_service._iter_frappe_source_batches(
 		preview_context.config, preview_context, apply_delta_filter=False

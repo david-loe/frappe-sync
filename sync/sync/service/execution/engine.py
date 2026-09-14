@@ -58,6 +58,11 @@ def _run_engine(
 	if not ping.ok:
 		raise frappe.ValidationError(f"Partner connector validation failed: {ping.message}")
 
+	if config.record_processing_script:
+		from sync.sync.service.execution.scripted import run_scripted
+
+		return run_scripted(config, connector, context, run_doc)
+
 	stats = SyncStats()
 	if config.sync_type == "Frappe -> Partner":
 		partner_batches = sources_service._iter_partner_source_batches(

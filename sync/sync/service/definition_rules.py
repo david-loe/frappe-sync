@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 
 import frappe
+from frappe import _
 
 from sync.sync.constants import (
 	CONFLICT_POLICY_NEWEST_WINS,
@@ -63,6 +64,7 @@ def validate(doc):
 	validate_source_settings(doc)
 	validate_filter_expression(doc)
 	validate_frappe_source_settings(doc)
+	validate_processing_scripts(doc)
 	validate_modified_fields(doc)
 	validate_identity_settings(doc)
 	validate_one_way_match_mode(doc)
@@ -291,6 +293,39 @@ def validate_frappe_source_settings(doc):
 		frappe.throw("Frappe Source Script requires server_script_enabled.")
 
 
+def validate_processing_scripts(doc):
+	for field in ("partner_source_script", "record_processing_script"):
+		setattr(doc, field, _clean_value(getattr(doc, field, None)))
+	parameters = getattr(doc, "script_parameters", None) or {}
+	if isinstance(parameters, str):
+		try:
+			parameters = json.loads(parameters)
+		except ValueError:
+			frappe.throw(_("Script Parameters must be a JSON object."))
+	if not isinstance(parameters, dict):
+		frappe.throw(_("Script Parameters must be a JSON object."))
+	doc.script_parameters = parameters
+	if not (doc.partner_source_script or doc.record_processing_script):
+		return
+	if doc.sync_type != MAPPING_DIRECTION_PARTNER_TO_FRAPPE:
+		frappe.throw(_("Partner processing scripts require Frappe <- Partner."))
+	if doc.match_mode != MATCH_MODE_MATCH_FIELDS:
+		frappe.throw(_("Partner processing scripts require Match Fields."))
+	if doc.delete_missing or doc.use_last_sync_date:
+		frappe.throw(
+			_(
+				"Partner processing scripts require a complete source read without Delete Missing or date delta."
+			)
+		)
+	if not _server_script_enabled():
+		frappe.throw(_("Partner processing scripts require server_script_enabled."))
+	if doc.record_processing_script:
+		if doc.match_mode != MATCH_MODE_MATCH_FIELDS or doc.one_way_match_mode != ONE_WAY_MATCH_FIRST:
+			frappe.throw(_("Record Processing Script requires Match Fields and first_match."))
+		if any(_row_flag(row, "enabled") for row in getattr(doc, "frappe_write_hooks", None) or []):
+			frappe.throw(_("Record Processing Script cannot be combined with enabled Frappe Write Hooks."))
+
+
 def validate_preview_limit(doc):
 	if doc.preview_limit is not None and doc.preview_limit < 1:
 		frappe.throw("Preview Limit must be at least 1.")
@@ -463,6 +498,9 @@ def as_export_dict(doc) -> dict:
 		"computed_fields": get_computed_fields(doc),
 		"frappe_source_mode": getattr(doc, "frappe_source_mode", FRAPPE_SOURCE_MODE_DOCTYPE_QUERY),
 		"frappe_source_script": getattr(doc, "frappe_source_script", None),
+		"partner_source_script": getattr(doc, "partner_source_script", None),
+		"record_processing_script": getattr(doc, "record_processing_script", None),
+		"script_parameters": getattr(doc, "script_parameters", None),
 		"match_mode": getattr(doc, "match_mode", MATCH_MODE_MATCH_FIELDS),
 		"one_way_match_mode": getattr(doc, "one_way_match_mode", ONE_WAY_MATCH_FIRST),
 		"conflict_policy": doc.conflict_policy or CONFLICT_POLICY_NEWEST_WINS,
@@ -934,6 +972,14 @@ class DefinitionInput(SimpleNamespace):
 
 
 def validate_script_permissions(doc):
+	if (
+		any(
+			_clean_value(getattr(doc, field, None))
+			for field in ("partner_source_script", "record_processing_script")
+		)
+		and not _current_user_is_system_manager()
+	):
+		frappe.throw(_("Only System Manager can save partner processing scripts."))
 	if (
 		any(
 			_get_row_value(row, "hook_type") == FRAPPE_WRITE_HOOK_TYPE_CUSTOM_SCRIPT

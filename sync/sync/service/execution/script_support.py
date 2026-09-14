@@ -1,0 +1,242 @@
+"""UI-owned, read-only planning with runtime-owned atomic writes and durable state."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from contextlib import contextmanager
+from copy import deepcopy
+from datetime import date, datetime
+from decimal import Decimal
+from functools import lru_cache
+from tempfile import TemporaryFile
+
+import frappe
+from frappe import _
+from RestrictedPython import compile_restricted
+from RestrictedPython.Guards import (
+	full_write_guard,
+	guarded_iter_unpack_sequence,
+	guarded_unpack_sequence,
+	safe_builtins,
+	safer_getattr,
+)
+
+from sync.sync.service import matching, query_templates
+
+
+def json_default(value):
+	if isinstance(value, (datetime, date)):
+		return value.isoformat()
+	if isinstance(value, Decimal):
+		return str(value)
+	if isinstance(value, bytes):
+		return value.hex()
+	raise TypeError(f"Unsupported script value: {type(value).__name__}")
+
+
+def encode(value):
+	return json.dumps(value, sort_keys=True, default=json_default, ensure_ascii=False, separators=(",", ":"))
+
+
+def fingerprint(value):
+	return hashlib.sha256(encode(value).encode()).hexdigest()
+
+
+def decode(value, default=None):
+	return (
+		json.loads(value) if isinstance(value, str) and value else (value if value is not None else default)
+	)
+
+
+@lru_cache(maxsize=128)
+def compile_script(script):
+	from frappe.utils.safe_exec import FrappeTransformer
+
+	return compile_restricted(script, filename="<sync processing script>", policy=FrappeTransformer)
+
+
+def execute_read_script(script, context):
+	"""Do not expose Frappe's ordinary safe_exec globals: those include writes and HTTP."""
+	from frappe.utils.safe_exec import is_safe_exec_enabled, protected_inplacevar, safe_exec_flags
+
+	if not is_safe_exec_enabled():
+		raise frappe.ValidationError(_("Partner processing scripts require server_script_enabled."))
+	globals_ = {
+		"_getattr_": safer_getattr,
+		"_getitem_": lambda obj, key: obj[key],
+		"_getiter_": iter,
+		"_write_": full_write_guard,
+		"_inplacevar_": protected_inplacevar,
+		"_iter_unpack_sequence_": guarded_iter_unpack_sequence,
+		"_unpack_sequence_": guarded_unpack_sequence,
+	}
+	globals_["__builtins__"] = {
+		**safe_builtins,
+		"dict": dict,
+		"list": list,
+		"set": set,
+		"tuple": tuple,
+		"sum": sum,
+		"min": min,
+		"max": max,
+		"sorted": sorted,
+		"enumerate": enumerate,
+		"zip": zip,
+		"all": all,
+		"any": any,
+		"reversed": reversed,
+	}
+	globals_.update(context)
+	with safe_exec_flags():
+		exec(compile_script(script), globals_)
+	return globals_.get("result")
+
+
+def check_read_query(query):
+	import sqlparse
+	from sqlparse import tokens
+
+	statements = [s for s in sqlparse.parse(str(query)) if str(s).strip()]
+	if len(statements) != 1 or statements[0].get_type() != "SELECT":
+		raise frappe.ValidationError(_("Processing scripts only allow a single SELECT query."))
+	for token in statements[0].flatten():
+		if token.ttype in tokens.Keyword and (
+			token.normalized in {"INTO", "EXEC", "EXECUTE", "OPENROWSET", "OPENQUERY", "FOR UPDATE"}
+			or token.ttype in tokens.Keyword.DDL
+			or (token.ttype in tokens.Keyword.DML and token.normalized != "SELECT")
+		):
+			raise frappe.ValidationError(_("Processing scripts only allow a single SELECT query."))
+
+
+class ReadHelpers:
+	def decimal(self, value):
+		return Decimal(str(value or 0))
+
+	def fingerprint(self, value):
+		return fingerprint(value)
+
+	def get_all(self, doctype, filters=None, fields=None):
+		frappe.has_permission(doctype, "read", throw=True)
+		# Plain fields only; do not expose SQL expressions through the script helper.
+		fields = fields or ["name"]
+		meta = frappe.get_meta(doctype)
+		if any(field != "name" and not meta.has_field(field) for field in fields):
+			raise frappe.ValidationError(_("Script lookup fields must exist on the DocType."))
+		return [dict(row) for row in frappe.get_list(doctype, filters=filters, fields=fields, limit=0)]
+
+	def get_doc(self, doctype, name):
+		doc = frappe.get_doc(doctype, name)
+		doc.check_permission("read")
+		return deepcopy(doc.as_dict())
+
+
+class SourceHelpers(ReadHelpers):
+	def __init__(self, config, connector, output):
+		self._config, self._connector, self._output = config, connector, output
+		self._reads = []
+		self._keys = set()
+		self._aliases = set()
+		self.count = 0
+
+	def emit(self, record):
+		if not isinstance(record, dict):
+			raise frappe.ValidationError(_("Source script must emit dictionaries."))
+		key = record_key(self._config, record)
+		if key in self._aliases:
+			raise frappe.ValidationError(_("Emitted source key is also claimed by another group."))
+		if key in self._keys:
+			raise frappe.ValidationError(f"Source script emitted duplicate key: {key}")
+		self._keys.add(key)
+		for alias in record.get("_sync", {}).get("aliases", []):
+			alias_key = record_key(self._config, alias)
+			if alias_key in self._keys or alias_key in self._aliases:
+				raise frappe.ValidationError(_("Source alias is claimed by multiple groups."))
+			self._aliases.add(alias_key)
+		self._output.write(encode(record) + "\n")
+		self.count += 1
+
+	def source_tables(self):
+		return [
+			{"name": t.name, "schema": t.schema, "quoted_name": t.quoted_name}
+			for t in self._connector.list_source_tables()
+		]
+
+	def quote_identifier(self, identifier):
+		return self._connector.quote_identifier(str(identifier))
+
+	def query(self, query, key_fields):
+		return list(self._read(query, key_fields))
+
+	def _read(self, query, key_fields):
+		check_read_query(query)
+		if not key_fields:
+			raise frappe.ValidationError(_("Script queries require stable key fields."))
+		read = {"query": query, "key_fields": list(key_fields), "complete": False}
+		self._reads.append(read)
+
+		def records():
+			digest = hashlib.sha256()
+			for batch in self._connector.iter_record_batches(
+				source=None, query=query, batch_size=max(self._config.batch_size, 1000), key_fields=key_fields
+			):
+				for row in batch:
+					digest.update((encode(row) + "\n").encode())
+					yield row
+			read.update(complete=True, digest=digest.hexdigest())
+
+		return records()
+
+	def _verify(self):
+		for read in self._reads:
+			if not read["complete"]:
+				raise frappe.ValidationError(_("Source script did not consume the complete source."))
+			digest = hashlib.sha256()
+			for batch in self._connector.iter_record_batches(
+				source=None,
+				query=read["query"],
+				batch_size=max(self._config.batch_size, 1000),
+				key_fields=read["key_fields"],
+			):
+				for row in batch:
+					digest.update((encode(row) + "\n").encode())
+			if digest.hexdigest() != read["digest"]:
+				raise SourceChanged("Partner source changed while preparing the run.")
+
+
+class SourceChanged(RuntimeError):
+	pass
+
+
+@contextmanager
+def prepare_source(config, connector):
+	"""Stage on disk before any target write. Retry concurrent source changes, not read failures."""
+	with TemporaryFile(mode="w+t", encoding="utf-8") as output:
+		for attempt in range(3):
+			output.seek(0)
+			output.truncate()
+			helpers = SourceHelpers(config, connector, output)
+			query = query_templates.resolve_read_query(config, connector)
+			if not query:
+				query = f"SELECT * FROM {connector.quote_identifier(config.table_name)}"
+			rows = helpers._read(query, matching._partner_fetch_key_fields(config))
+			execute_read_script(
+				config.partner_source_script or "for row in rows:\n    helpers.emit(row)",
+				{"rows": rows, "helpers": helpers, "parameters": deepcopy(config.script_parameters or {})},
+			)
+			try:
+				helpers._verify()
+			except SourceChanged:
+				if attempt == 2:
+					raise
+				continue
+			break
+		output.seek(0)
+		yield (json.loads(line) for line in output)
+
+
+def record_key(config, record):
+	key = matching._key_tuple_from_partner(record, config.match_fields, config.mapping)
+	if not matching._valid_key(key):
+		raise frappe.ValidationError(_("Partner record has incomplete key fields."))
+	return encode(key)

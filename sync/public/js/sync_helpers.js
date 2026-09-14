@@ -606,6 +606,17 @@ sync.helpers.renderPreviewModal = function (payload) {
 		["Ping Message", ping.message],
 	];
 
+	if (data.result) {
+		summaryRows.push(
+			[__("Processed Count"), data.result.processed_count],
+			[__("Created Count"), data.result.created_count],
+			[__("Updated Count"), data.result.updated_count],
+			[__("Skipped Count"), data.result.skipped_count],
+			[__("Error Count"), data.result.error_count],
+			[__("Warnings"), data.result.warning_count]
+		);
+	}
+
 	const sections = [
 		`
 			<div class="mb-3">

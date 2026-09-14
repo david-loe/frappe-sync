@@ -48,6 +48,7 @@ Available template values and helpers:
 | --- | --- |
 | `current_year` | Current calendar year as an integer. |
 | `previous_year` | Previous calendar year as an integer. |
+| `parameters` | The definition’s Script Parameters JSON object. |
 | `quote_identifier(value)` | The connector-quoted SQL identifier for the active partner dialect. |
 | `source_tables(schema=None, filter=None)` | A list of source table objects with `schema`, `name`, `full_name` and `quoted_name`. Optional filters match schema exactly and table name/full name by substring. |
 

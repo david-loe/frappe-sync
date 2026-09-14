@@ -568,6 +568,7 @@ def _format_run_summary(result_payload: dict[str, Any]) -> str:
 		f"conflict={result_payload.get('conflict_count', 0)}, "
 		f"errors={result_payload.get('error_count', 0)}, "
 		f"delta_since={result_payload.get('delta_since') or 'none'}"
+		+ (f", warnings={result_payload['warning_count']}" if result_payload.get("warning_count") else "")
 	)
 
 

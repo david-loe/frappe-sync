@@ -1,0 +1,93 @@
+{
+ "doctype": "DocType",
+ "name": "Sync Record State",
+ "module": "Sync",
+ "autoname": "hash",
+ "engine": "InnoDB",
+ "field_order": [
+  "sync_definition",
+  "record_key",
+  "source_fingerprint",
+  "target_fingerprint",
+  "revision",
+  "state",
+  "documents",
+  "source_record",
+  "last_run"
+ ],
+ "fields": [
+  {
+   "fieldname": "sync_definition",
+   "fieldtype": "Link",
+   "label": "Sync Definition",
+   "read_only": 1,
+   "options": "Sync Definition",
+   "reqd": 1,
+   "in_list_view": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "record_key",
+   "fieldtype": "Small Text",
+   "label": "Record Key",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "source_fingerprint",
+   "fieldtype": "Data",
+   "label": "Source Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "target_fingerprint",
+   "fieldtype": "Data",
+   "label": "Target Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Int",
+   "label": "Revision",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "JSON",
+   "label": "Processing State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "documents",
+   "fieldtype": "JSON",
+   "label": "Current Documents",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_record",
+   "fieldtype": "JSON",
+   "label": "Source Record",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_run",
+   "fieldtype": "Data",
+   "label": "Last Run",
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  }
+ ],
+ "modified": "2026-09-10 19:05:00.000000",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0,
+ "title_field": "record_key"
+}

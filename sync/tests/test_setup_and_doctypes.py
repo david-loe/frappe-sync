@@ -175,7 +175,7 @@ class TestDoctypeControllerBehavior(unittest.TestCase):
 		with patch.object(
 			sync_definition_module,
 			"frappe",
-			SimpleNamespace(get_all=fake_get_all, delete_doc=delete_doc),
+			SimpleNamespace(get_all=fake_get_all, delete_doc=delete_doc, db=SimpleNamespace(delete=Mock())),
 		):
 			sync_definition_module.SyncDefinition.on_trash(SimpleNamespace(name="SYNC-1"))
 

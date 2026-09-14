@@ -7,6 +7,11 @@ frappe.ui.form.on("Sync Definition", {
 		sync.helpers.refreshDefinitionFieldPresentation(frm);
 		sync.helpers.refreshDefinitionFieldMappingDirection(frm);
 		sync.forms.setupButtons(frm);
+		if (!frm.is_new() && frm.doc.record_processing_script) {
+			frm.add_custom_button(__("Processing State"), () => {
+				frappe.set_route("List", "Sync Record State", { sync_definition: frm.doc.name });
+			});
+		}
 		sync.helpers.toggleSourceFields(frm);
 		sync.helpers.refreshDefinitionSourceValidation(frm);
 		sync.helpers.refreshDefinitionFieldChoices(frm);
@@ -32,6 +37,9 @@ frappe.ui.form.on("Sync Definition", {
 	},
 	doctype_name(frm) {
 		sync.helpers.refreshDefinitionFieldChoices(frm);
+	},
+	partner_source_script(frm) {
+		sync.helpers.refreshDefinitionPartnerColumnChoices(frm);
 	},
 	frappe_source_mode(frm) {
 		sync.helpers.refreshDefinitionFieldChoices(frm);
@@ -454,24 +462,29 @@ sync.helpers.refreshDefinitionPartnerColumnState = function (frm) {
 sync.helpers.applyDefinitionPartnerColumnChoices = function (frm) {
 	const state = sync.helpers.getDefinitionPartnerColumnState(frm);
 	const columns = Array.isArray(state.columns) ? state.columns : [];
-	const partnerFieldOptions = ["", ...new Set(columns.map((column) => column?.value).filter(Boolean))].join("\n");
-	const partnerFieldDescription = columns.length
+	const partnerFieldOptions = [
+		"",
+		...new Set(columns.map((column) => column?.value).filter(Boolean)),
+	].join("\n");
+	const partnerFieldDescription = frm.doc.partner_source_script
+		? __("Enter a key emitted by Partner Source Script.")
+		: columns.length
 		? __("Partner field choices loaded from the stored partner columns.")
 		: __("Load partner columns from {0} to get guided partner-side field selection.", [
-				sync.helpers.getDefinitionSourceReadQuery(frm) ? __("Read Query") : __("Table Name"),
+				sync.helpers.getDefinitionSourceReadQuery(frm)
+					? __("Read Query")
+					: __("Table Name"),
 		  ]);
 	const partnerTimestampDescription = columns.length
 		? __("Select a partner-side timestamp field from the loaded partner source columns.")
 		: partnerFieldDescription;
 
-	const fieldMappingGrid = frm.fields_dict.field_mapping?.grid;
-	if (fieldMappingGrid) {
-		fieldMappingGrid.update_docfield_property("partner_field", "fieldtype", "Select");
-		fieldMappingGrid.update_docfield_property("partner_field", "options", partnerFieldOptions);
-		fieldMappingGrid.update_docfield_property("partner_field", "ignore_validation", 0);
-		fieldMappingGrid.update_docfield_property("partner_field", "description", partnerFieldDescription);
-		frm.refresh_field("field_mapping");
-	}
+	sync.helpers.updateDefinitionGridSelect(frm, "field_mapping", "partner_field", {
+		fieldtype: frm.doc.partner_source_script ? "Autocomplete" : "Select",
+		options: partnerFieldOptions,
+		ignore_validation: frm.doc.partner_source_script ? 1 : 0,
+		description: partnerFieldDescription,
+	});
 
 	["partner_modified_field", "partner_creation_field"].forEach((fieldname) => {
 		frm.set_df_property(fieldname, "options", partnerFieldOptions);

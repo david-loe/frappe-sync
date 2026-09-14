@@ -2,6 +2,7 @@
 # For license information, please see license.txt
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from sync.sync.constants import (
@@ -64,9 +65,12 @@ class SyncDefinition(Document):
 		partner_frappe_identity_field: DF.Literal[None]
 		partner_identity_field: DF.Literal[None]
 		partner_modified_field: DF.Literal[None]
+		partner_source_script: DF.Code | None
 		preview_limit: DF.Int
 		read_query: DF.Code | None
+		record_processing_script: DF.Code | None
 		render_read_query_template: DF.Check
+		script_parameters: DF.JSON | None
 		sync_type: DF.Literal["Frappe -> Partner", "Frappe <-> Partner", "Frappe <- Partner"]
 		table_name: DF.Data | None
 		timestamp_buffer_ms: DF.Int
@@ -81,7 +85,36 @@ class SyncDefinition(Document):
 		configuration.normalize_definition_document(self)
 		definition_rules.validate_script_permissions(self)
 
+	def before_save(self):
+		before = self.get_doc_before_save()
+		if not before or not frappe.db.exists("Sync Record State", {"sync_definition": self.name}):
+			return
+
+		def identity(doc):
+			fields = doc.get_match_fields()
+			mapping = doc.get_field_mapping()
+			return (
+				doc.partner,
+				doc.doctype_name,
+				doc.sync_type,
+				doc.match_mode,
+				fields,
+				{field: mapping.get(field) for field in fields},
+			)
+
+		if identity(before) != identity(self) or not self.record_processing_script:
+			frappe.throw(
+				_(
+					"A definition with processing state must keep its partner, target DocType, direction, match keys and record processing script enabled."
+				)
+			)
+
+	def before_rename(self, old_name, new_name, merge=False):
+		if frappe.db.exists("Sync Record State", {"sync_definition": old_name}):
+			frappe.throw(_("A definition with processing state cannot be renamed or merged."))
+
 	def on_trash(self):
+		frappe.db.delete("Sync Record State", {"sync_definition": self.name})
 		for run_name in _linked_names(SYNC_RUN, {"sync_definition": self.name}):
 			frappe.delete_doc(SYNC_RUN, run_name, ignore_permissions=True)
 

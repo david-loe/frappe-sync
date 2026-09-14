@@ -435,6 +435,21 @@ def _iter_partner_source_batches(
 	*,
 	apply_delta_filter: bool = True,
 ):
+	if getattr(config, "partner_source_script", None):
+		from sync.sync.service.execution.script_support import prepare_source
+
+		def prepared_batches():
+			with prepare_source(config, connector) as records:
+				batch = []
+				for record in records:
+					batch.append(record)
+					if len(batch) >= config.batch_size:
+						yield batch
+						batch = []
+				if batch:
+					yield batch
+
+		return prepared_batches()
 	record_batches = _iter_partner_record_batches(
 		connector=connector,
 		source=config.table_name,

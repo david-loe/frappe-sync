@@ -146,6 +146,9 @@ class SyncDefinitionConfig:
 	computed_fields: tuple[SyncComputedFieldConfig, ...] = ()
 	frappe_source_mode: str = FRAPPE_SOURCE_MODE_DOCTYPE_QUERY
 	frappe_source_script: str | None = None
+	partner_source_script: str | None = None
+	record_processing_script: str | None = None
+	script_parameters: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

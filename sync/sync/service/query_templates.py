@@ -25,7 +25,7 @@ def resolve_read_query(config: Any, connector: Any, context: dict[str, Any] | No
 	if SandboxedEnvironment is None or StrictUndefined is None:
 		raise frappe.ValidationError("Read Query templating is unavailable because Jinja is not installed.")
 
-	template_context = _build_read_query_template_context(connector, context=context)
+	template_context = _build_read_query_template_context(connector, context={"parameters": getattr(config, "script_parameters", None) or {}, **(context or {})})
 	try:
 		rendered_query = (
 			SandboxedEnvironment(undefined=StrictUndefined).from_string(read_query).render(template_context)

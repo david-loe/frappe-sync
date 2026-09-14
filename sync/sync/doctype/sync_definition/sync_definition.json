@@ -25,6 +25,10 @@
   "filter_expression",
   "frappe_source_mode",
   "frappe_source_script",
+  "section_processing_scripts",
+  "script_parameters",
+  "partner_source_script",
+  "record_processing_script",
   "section_change_detection",
   "frappe_modified_field",
   "frappe_creation_field",
@@ -536,12 +540,37 @@
    "fieldtype": "Small Text",
    "label": "Last Run Summary",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_processing_scripts",
+   "fieldtype": "Section Break",
+   "label": "Partner Processing Scripts"
+  },
+  {
+   "fieldname": "script_parameters",
+   "fieldtype": "JSON",
+   "label": "Script Parameters",
+   "description": "JSON parameters shared by the source and record processing scripts."
+  },
+  {
+   "fieldname": "partner_source_script",
+   "fieldtype": "Code",
+   "options": "Python",
+   "label": "Partner Source Script",
+   "description": "Read rows and call helpers.emit(record). Runs before mapping; only read helpers are available."
+  },
+  {
+   "fieldname": "record_processing_script",
+   "fieldtype": "Code",
+   "options": "Python",
+   "label": "Record Processing Script",
+   "description": "Set result with action, message and state. Actions: create, reverse, replace, skip, error. The runtime applies the plan atomically."
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-07-07 00:00:02.000000",
+ "modified": "2026-09-10 14:27:55.063284",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [
