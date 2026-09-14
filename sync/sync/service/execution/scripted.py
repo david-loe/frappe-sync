@@ -16,6 +16,7 @@ from sync.sync.service.execution import sources, writes
 from sync.sync.service.execution.progress import Progress
 from sync.sync.service.execution.script_support import (
 	ReadHelpers,
+	RecordKeyResolver,
 	decode,
 	encode,
 	execute_read_script,
@@ -82,7 +83,7 @@ def plan_record(config, record, mapping_context=None, state_cache=None, document
 	def match_records(source_record):
 		cache = getattr(state_cache, "matches", None)
 		if cache is not None:
-			return cache[record_key(config, source_record)]
+			return cache[cached_record_key(config, source_record, state_cache)]
 		candidates = sources._load_frappe_match_candidates(
 			replace(config, update_existing=False), [source_record]
 		)
@@ -98,7 +99,7 @@ def plan_record(config, record, mapping_context=None, state_cache=None, document
 			else load_state(config, key)
 		)
 
-	key = record_key(config, record)
+	key = cached_record_key(config, record, state_cache)
 	old = get_state(key)
 	if (old.get("state") or {}).get("alias_of"):
 		raise frappe.ValidationError(
@@ -115,7 +116,7 @@ def plan_record(config, record, mapping_context=None, state_cache=None, document
 	)
 	aliases = []
 	for alias_record in record.get("_sync", {}).get("aliases", []):
-		alias_key = record_key(config, alias_record)
+		alias_key = cached_record_key(config, alias_record, state_cache)
 		if alias_key == key:
 			continue
 		alias = get_state(alias_key)
@@ -280,11 +281,33 @@ class BatchStates(dict):
 	def __init__(self):
 		super().__init__()
 		self.matches = {}
+		self.record_keys = {}
+
+
+def cached_record_key(config, record, states):
+	entry = getattr(states, "record_keys", {}).get(id(record))
+	if entry is not None and entry[0] is record:
+		return entry[1]
+	return record_key(config, record)
+
+
+def journal_reversal_query(names):
+	# Only membership matters; do not inherit the DocType's default ordering.
+	# Keep the status predicate equivalent to IFNULL(docstatus, 0) != 2 without
+	# wrapping the indexed column in a function. The database chooses the index.
+	journal = frappe.qb.DocType("Journal Entry")
+	return (
+		frappe.qb.from_(journal)
+		.select(journal.reversal_of)
+		.where(journal.reversal_of.isin(names))
+		.where((journal.docstatus != 2) | journal.docstatus.isnull())
+	)
 
 
 def prepared_batches(config, records, progress=None):
 	"""Fetch reconciliation state and requested current document fields in bounded batches."""
 	meta = frappe.get_meta(config.doctype)
+	resolve_key = RecordKeyResolver(config)
 	child_fields = [df for df in meta.fields if df.fieldtype in ("Table", "Table MultiSelect")]
 	projection = config.record_processing_document_fields
 	fields = ["*"]
@@ -300,16 +323,26 @@ def prepared_batches(config, records, progress=None):
 		)
 	for batch in batched(records, max(config.batch_size, 100), strict=False):
 		started = monotonic()
-		key_records = {record_key(config, record): record for record in batch}
-		for record in batch:
-			key_records.update(
-				(record_key(config, alias), alias) for alias in record.get("_sync", {}).get("aliases", [])
-			)
 		states = BatchStates()
+		key_records = {}
+		for record in batch:
+			for source in (record, *record.get("_sync", {}).get("aliases", [])):
+				ident = id(source)
+				if ident not in states.record_keys:
+					states.record_keys[ident] = (source, resolve_key(source))
+				key_records[states.record_keys[ident][1]] = source
 		for row in frappe.get_all(
 			STATE_DOCTYPE,
 			filters={"name": ["in", [state_name(config, key) for key in key_records]]},
-			fields=["*"],
+			fields=[
+				"name",
+				"record_key",
+				"source_fingerprint",
+				"revision",
+				"state",
+				"documents",
+				"source_record",
+			],
 			order_by="name asc",
 		):
 			states[row.name] = {
@@ -341,11 +374,7 @@ def prepared_batches(config, records, progress=None):
 			):
 				documents[row.name] = {**dict(row), "doctype": config.doctype}
 			if config.doctype == "Journal Entry":
-				for reversal in frappe.get_all(
-					"Journal Entry",
-					filters={"reversal_of": ["in", names], "docstatus": ["!=", 2]},
-					fields=["reversal_of"],
-				):
+				for reversal in journal_reversal_query(names).run(as_dict=True):
 					if reversal.reversal_of in documents:
 						documents[reversal.reversal_of]["_sync_reversed"] = True
 			for df in child_fields:
@@ -385,19 +414,35 @@ def unchanged_plan(plan):
 	)
 
 
-def iter_states(config):
+def iter_states(config, seen=None, progress=None):
 	cursor = ""
+	count = 0
 	while True:
 		rows = frappe.get_all(
 			STATE_DOCTYPE,
 			filters={"sync_definition": config.name, "name": [">", cursor]},
-			fields=["name", "record_key", "state", "source_record"],
+			fields=["name", "record_key"]
+			if seen is not None
+			else ["name", "record_key", "state", "source_record"],
 			order_by="name asc",
 			limit=1000,
 		)
 		if not rows:
 			return
-		yield from rows
+		count += len(rows)
+		if progress:
+			progress.report("check missing source", count)
+		if seen is None:
+			yield from rows
+		else:
+			missing = [row.name for row in rows if row.record_key not in seen]
+			if missing:
+				yield from frappe.get_all(
+					STATE_DOCTYPE,
+					filters={"sync_definition": config.name, "name": ["in", missing]},
+					fields=["name", "record_key", "state", "source_record"],
+					order_by="name asc",
+				)
 		cursor = rows[-1].name
 
 
@@ -438,7 +483,7 @@ def run_scripted(config, connector, context, run_doc=None, preview_limit=None):
 		for batch, states, documents in prepared_batches(config, records, progress):
 			started = monotonic()
 			for record in batch:
-				key = record_key(config, record)
+				key = cached_record_key(config, record, states)
 				seen.add(key)
 				plan = None
 				try:
@@ -520,9 +565,7 @@ def run_scripted(config, connector, context, run_doc=None, preview_limit=None):
 	# A missing source is never an implicit reversal, even after a complete read.
 	started = monotonic()
 	progress.report("check missing source")
-	for index, state in enumerate(iter_states(config), 1):
-		if index % 1000 == 0:
-			progress.report("check missing source", index)
+	for state in iter_states(config, seen, progress):
 		if state.record_key in seen or decode(state.state, {}).get("alias_of"):
 			continue
 		message = _("Previously processed source group is missing; target retained.")

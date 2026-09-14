@@ -42,6 +42,61 @@ def config(**updates):
 	return SyncDefinitionConfig(**values)
 
 
+class JournalReversalQueryTest(unittest.TestCase):
+	def test_queries_are_unordered_and_leave_index_selection_to_database(self):
+		from frappe.query_builder.builder import MariaDB, Postgres
+
+		for builder in [MariaDB, Postgres]:
+			with self.subTest(builder=builder), patch.object(frappe, "qb", builder):
+				sql = str(scripted.journal_reversal_query(["a", "b"]))
+				self.assertNotIn("ORDER BY", sql)
+				self.assertNotIn("LIMIT", sql)
+				self.assertIn("IS NULL", sql)
+				self.assertNotIn("FORCE INDEX", sql)
+				self.assertNotIn("USE INDEX", sql)
+
+
+class PreparedKeysTest(unittest.TestCase):
+	def test_resolved_keys_preserve_canonical_normalization_and_validation(self):
+		from datetime import datetime
+		from decimal import Decimal
+
+		cfg = config()
+		resolver = support.RecordKeyResolver(cfg)
+		for value in [
+			" 001.00 ",
+			1,
+			1.0,
+			True,
+			Decimal("1.000"),
+			"word",
+			"2025-01-01T01:00:00+01:00",
+			datetime.fromisoformat("2025-01-01T00:00:00+00:00"),
+			[1, 2],
+			b"key",
+		]:
+			with self.subTest(value=value):
+				self.assertEqual(resolver({"id": value}), support.record_key(cfg, {"id": value}))
+		for record in [{}, {"id": None}, {"id": "  "}]:
+			with self.subTest(record=record), self.assertRaises(frappe.ValidationError):
+				resolver(record)
+		other = config(mapping={"subject": {"partner_field": "other", "direction": "Frappe <- Partner"}})
+		self.assertNotEqual(resolver({"id": 1}), support.RecordKeyResolver(other)({"other": 2}))
+
+	def test_empty_value_maps_preserve_fallbacks_without_normalizing_values(self):
+		from sync.sync.service import mapping
+
+		value = [{"unhashable": [1, 2]}]
+		with patch.object(mapping.values_service, "_normalize_comparable_scalar_value") as normalize:
+			self.assertIs(mapping._mapped_value_with_fallback({}, value, None), value)
+			self.assertIsNone(mapping._mapped_value_with_fallback({}, value, {"action": "use_null"}))
+			self.assertEqual(
+				mapping._mapped_value_with_fallback({}, value, {"action": "fallback", "value": "other"}),
+				"other",
+			)
+			normalize.assert_not_called()
+
+
 class SandboxTest(unittest.TestCase):
 	def setUp(self):
 		self.enterContext(patch("frappe.utils.safe_exec.is_safe_exec_enabled", return_value=True))

@@ -25,7 +25,7 @@ from RestrictedPython.Guards import (
 	safer_getattr,
 )
 
-from sync.sync.service import matching, query_templates
+from sync.sync.service import mapping_rules, matching, query_templates
 from sync.sync.service.execution.progress import Progress
 
 _reusable_source = ContextVar("sync_prepared_source", default=None)
@@ -151,19 +151,20 @@ class SourceHelpers(ReadHelpers):
 		self._progress = Progress(config.name)
 		self._keys = set()
 		self._aliases = set()
+		self._record_key = RecordKeyResolver(config)
 		self.count = 0
 
 	def emit(self, record):
 		if not isinstance(record, dict):
 			raise frappe.ValidationError(_("Source script must emit dictionaries."))
-		key = record_key(self._config, record)
+		key = self._record_key(record)
 		if key in self._aliases:
 			raise frappe.ValidationError(_("Emitted source key is also claimed by another group."))
 		if key in self._keys:
 			raise frappe.ValidationError(f"Source script emitted duplicate key: {key}")
 		self._keys.add(key)
 		for alias in record.get("_sync", {}).get("aliases", []):
-			alias_key = record_key(self._config, alias)
+			alias_key = self._record_key(alias)
 			if alias_key in self._keys or alias_key in self._aliases:
 				raise frappe.ValidationError(_("Source alias is claimed by multiple groups."))
 			self._aliases.add(alias_key)
@@ -366,6 +367,25 @@ def prepare_source(config, connector):
 
 def record_key(config, record):
 	key = matching._key_tuple_from_partner(record, config.match_fields, config.mapping)
+	return _encode_record_key(key)
+
+
+class RecordKeyResolver:
+	"""Resolve immutable field mappings once, retaining canonical key normalization."""
+
+	def __init__(self, config):
+		self.fields = tuple(
+			mapping_rules._partner_field_for_mapping(config.mapping, field, field)
+			for field in config.match_fields
+		)
+
+	def __call__(self, record):
+		return _encode_record_key(
+			matching._normalize_pairing_key_tuple(record.get(field) for field in self.fields)
+		)
+
+
+def _encode_record_key(key):
 	if not matching._valid_key(key):
 		raise frappe.ValidationError(_("Partner record has incomplete key fields."))
 	return encode(key)

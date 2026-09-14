@@ -253,6 +253,8 @@ def _mapped_value_with_fallback(
 
 
 def _mapped_value(field_map: dict[Any, Any], value: Any, *, default: Any = None) -> Any:
+	if not field_map:
+		return default
 	try:
 		if value in field_map:
 			return field_map[value]

@@ -270,6 +270,34 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 		doc = frappe.get_doc(payload["sync_definition"])
 		self.assertEqual(configuration._build_definition_config(doc).record_processing_document_fields, [])
 
+	def test_unordered_reversal_lookup_preserves_status_checks(self):
+		original = self.transition(10, "create")[0]
+		scripted.writes._reverse_journal_entry(source_name=original, posting_date=frappe.utils.nowdate())
+		reversal = frappe.db.get_value("Journal Entry", {"reversal_of": original}, "name")
+		names = [original] + [f"absent-reversal-target-{i}" for i in range(1000)]
+		query = scripted.journal_reversal_query(names)
+		cfg = replace(self.config, record_processing_document_fields=[])
+		for status in [0, 1, 2]:
+			with self.subTest(docstatus=status):
+				frappe.db.set_value("Journal Entry", reversal, "docstatus", status)
+				expected = frappe.get_all(
+					"Journal Entry",
+					filters={"reversal_of": ["in", names], "docstatus": ["!=", 2]},
+					fields=["reversal_of"],
+				)
+				self.assertEqual(query.run(as_dict=True), expected)
+				batch, states, documents = next(scripted.prepared_batches(cfg, [self.record(10)]))
+				if status == 2:
+					self.assertEqual(
+						scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)[
+							"action"
+						],
+						"skip",
+					)
+				else:
+					with self.assertRaisesRegex(frappe.ValidationError, "outside the sync"):
+						scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)
+
 	def test_missing_states_and_aliases_use_one_match_lookup_per_batch(self):
 		records = [{**self.record(10), "id": self.ident + str(i)} for i in range(25)]
 		records[0]["_sync"] = {"aliases": [{"id": self.ident + "alias"}]}
@@ -284,6 +312,73 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 				self.assertEqual(plan["action"], "create")
 			lookup.assert_called_once()
 			self.assertEqual(len(lookup.call_args.args[1]), 26)
+
+	def test_keys_are_reused_for_planning_and_aliases_and_scoped_to_each_batch(self):
+		records = [{**self.record(10), "id": self.ident + str(i)} for i in range(201)]
+		records[0]["_sync"] = {"aliases": [{"id": self.ident + "alias"}]}
+		cfg = replace(self.config, batch_size=100, record_processing_document_fields=[])
+		resolve = scripted.RecordKeyResolver.__call__
+		calls = []
+
+		def counted(resolver, record):
+			calls.append(id(record))
+			return resolve(resolver, record)
+
+		with (
+			patch.object(scripted.RecordKeyResolver, "__call__", counted),
+			patch.object(scripted, "record_key", side_effect=AssertionError("unexpected key recomputation")),
+		):
+			previous_cache = None
+			for batch, states, documents in scripted.prepared_batches(cfg, records):
+				self.assertIsNot(states.record_keys, previous_cache)
+				self.assertLessEqual(len(states.record_keys), 101)
+				previous_cache = states.record_keys
+				for record in batch:
+					plan = scripted.plan_record(cfg, record, state_cache=states, document_cache=documents)
+					self.assertEqual(plan["key"], scripted.cached_record_key(cfg, record, states))
+		self.assertEqual(len(calls), 202)
+		self.assertEqual(len(set(calls)), 202)
+
+	def test_missing_source_scan_loads_details_only_for_unseen_states(self):
+		from types import SimpleNamespace
+
+		from sync.sync.service.models import SyncContext
+
+		original = self.transition(10, "create")[0]
+		seen = {record_key(self.config, self.record(10))}
+		missing_record = {**self.record(10), "id": self.ident + "missing"}
+		missing_key = record_key(self.config, missing_record)
+		scripted.persist_state(self.config, missing_key, missing_record, {}, {}, [original], 1)
+		alias_record = {"id": self.ident + "orphan-alias"}
+		alias_key = record_key(self.config, alias_record)
+		scripted.persist_state(self.config, alias_key, alias_record, {}, {"alias_of": missing_key}, [], 1)
+		expected = [row for row in scripted.iter_states(self.config) if row.record_key not in seen]
+		with patch.object(frappe, "get_all", wraps=frappe.get_all) as queries:
+			actual = list(scripted.iter_states(self.config, seen))
+		self.assertEqual(actual, expected)
+		detail_queries = [call for call in queries.call_args_list if "state" in call.kwargs["fields"]]
+		self.assertEqual(len(detail_queries), 1)
+		self.assertEqual(len(detail_queries[0].kwargs["filters"]["name"][1]), 2)
+		self.assertEqual(
+			[row.record_key for row in actual if not scripted.decode(row.state, {}).get("alias_of")],
+			[missing_key],
+		)
+		with patch.object(frappe, "get_all", wraps=frappe.get_all) as queries:
+			self.assertEqual(list(scripted.iter_states(self.config, seen | {missing_key, alias_key})), [])
+		self.assertTrue(
+			all(call.kwargs["fields"] == ["name", "record_key"] for call in queries.call_args_list)
+		)
+		before = frappe.db.count("Journal Entry")
+		result = scripted.run_scripted(
+			self.config,
+			SimpleNamespace(iter_record_batches=lambda **kwargs: iter([[self.record(10)]])),
+			SyncContext(config=self.config, dry_run=True, last_successful_sync=None),
+			preview_limit=10,
+		)
+		self.assertEqual(result["error_count"], 1)
+		self.assertEqual(result["skipped_count"], 1)
+		self.assertEqual(result["actions"][0]["result"]["record_key"], missing_key)
+		self.assertEqual(frappe.db.count("Journal Entry"), before)
 
 	def test_failed_real_replacement_rolls_back_ledger_and_state(self):
 		original = self.transition(10, "create")[0]
