@@ -20,7 +20,6 @@ class SyncDefinition(Document):
 
 	if TYPE_CHECKING:
 		from frappe.types import DF
-
 		from sync.sync.doctype.sync_computed_field.sync_computed_field import SyncComputedField
 		from sync.sync.doctype.sync_field_mapping.sync_field_mapping import SyncFieldMapping
 		from sync.sync.doctype.sync_frappe_write_hook.sync_frappe_write_hook import SyncFrappeWriteHook
@@ -68,6 +67,7 @@ class SyncDefinition(Document):
 		partner_source_script: DF.Code | None
 		preview_limit: DF.Int
 		read_query: DF.Code | None
+		record_processing_document_fields: DF.JSON | None
 		record_processing_script: DF.Code | None
 		render_read_query_template: DF.Check
 		script_parameters: DF.JSON | None
@@ -84,6 +84,10 @@ class SyncDefinition(Document):
 	def validate(self):
 		configuration.normalize_definition_document(self)
 		definition_rules.validate_script_permissions(self)
+		# Frappe accepts JSON dictionaries directly, but rejects Python lists in
+		# non-table fields. Keep the normalized list in runtime configs only.
+		if self.record_processing_document_fields is not None:
+			self.record_processing_document_fields = frappe.as_json(self.record_processing_document_fields)
 
 	def before_save(self):
 		before = self.get_doc_before_save()

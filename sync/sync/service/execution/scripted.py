@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from functools import lru_cache
 from itertools import batched
 from time import monotonic
 
@@ -12,6 +13,7 @@ from frappe import _
 
 from sync.sync.service import audit, mapping, matching
 from sync.sync.service.execution import sources, writes
+from sync.sync.service.execution.progress import Progress
 from sync.sync.service.execution.script_support import (
 	ReadHelpers,
 	decode,
@@ -28,7 +30,12 @@ ACTIONS = {"create", "reverse", "replace", "skip", "error"}
 
 
 def state_name(config, key):
-	return fingerprint([config.name, key])
+	return _state_name(config.name, key)
+
+
+@lru_cache(maxsize=8192)
+def _state_name(definition, key):
+	return fingerprint([definition, key])
 
 
 def load_state(config, key):
@@ -72,6 +79,18 @@ def persist_state(config, key, record, payload, state, documents, revision, run_
 
 
 def plan_record(config, record, mapping_context=None, state_cache=None, document_cache=None):
+	def match_records(source_record):
+		cache = getattr(state_cache, "matches", None)
+		if cache is not None:
+			return cache[record_key(config, source_record)]
+		candidates = sources._load_frappe_match_candidates(
+			replace(config, update_existing=False), [source_record]
+		)
+		lookup = matching._build_frappe_match_lookup(config, candidates)
+		return matching._find_existing_frappe_records(
+			config, source_record, lookup.groups, lookup.identity_by_value
+		)
+
 	def get_state(key):
 		return (
 			state_cache.get(state_name(config, key), {})
@@ -103,13 +122,7 @@ def plan_record(config, record, mapping_context=None, state_cache=None, document
 		if alias and (alias.get("state") or {}).get("alias_of") not in (None, key):
 			raise frappe.ValidationError(_("Source alias is already owned by another group."))
 		if not alias:
-			candidates = sources._load_frappe_match_candidates(
-				replace(config, update_existing=False), [alias_record]
-			)
-			lookup = matching._build_frappe_match_lookup(config, candidates)
-			matched = matching._find_existing_frappe_records(
-				config, alias_record, lookup.groups, lookup.identity_by_value
-			)
+			matched = match_records(alias_record)
 			alias = {
 				"record_key": alias_key,
 				"source_record": alias_record,
@@ -122,11 +135,7 @@ def plan_record(config, record, mapping_context=None, state_cache=None, document
 	for alias in aliases:
 		documents.extend(alias.get("documents") or [])
 	if not old:
-		candidates = sources._load_frappe_match_candidates(replace(config, update_existing=False), [record])
-		lookup = matching._build_frappe_match_lookup(config, candidates)
-		matched = matching._find_existing_frappe_records(
-			config, record, lookup.groups, lookup.identity_by_value
-		)
+		matched = match_records(record)
 		documents.extend(r["name"] for r in matched)
 	documents = list(dict.fromkeys(documents))
 	existing = []
@@ -146,7 +155,12 @@ def plan_record(config, record, mapping_context=None, state_cache=None, document
 			)
 			if reversed_outside:
 				raise frappe.ValidationError(_("A tracked target document was reversed outside the sync."))
-		existing.append(dict(doc))
+		projection = config.record_processing_document_fields
+		if projection is None:
+			existing.append(dict(doc))
+		else:
+			visible = set(projection) | {"name", "doctype", "company", "docstatus", "modified"}
+			existing.append({field: value for field, value in doc.items() if field in visible})
 	result = execute_read_script(
 		config.record_processing_script,
 		{
@@ -178,6 +192,7 @@ def plan_record(config, record, mapping_context=None, state_cache=None, document
 	# Fingerprints and document references are owned by the runtime, never by a script.
 	return {
 		"key": key,
+		"source_fingerprint": fingerprint(record),
 		"record": record,
 		"payload": payload,
 		"old": old,
@@ -259,17 +274,43 @@ def apply_plan(config, plan, run_name=None):
 	return documents
 
 
-def prepared_batches(config, records):
-	"""Fetch reconciliation state and full current documents in bounded batches."""
+class BatchStates(dict):
+	"""States and match results are scoped to one batch, including negative lookups."""
+
+	def __init__(self):
+		super().__init__()
+		self.matches = {}
+
+
+def prepared_batches(config, records, progress=None):
+	"""Fetch reconciliation state and requested current document fields in bounded batches."""
 	meta = frappe.get_meta(config.doctype)
 	child_fields = [df for df in meta.fields if df.fieldtype in ("Table", "Table MultiSelect")]
+	projection = config.record_processing_document_fields
+	fields = ["*"]
+	if projection is not None:
+		child_fields = [df for df in child_fields if df.fieldname in projection]
+		tables = {df.fieldname for df in child_fields}
+		fields = list(
+			dict.fromkeys(
+				["name", "modified", "docstatus"]
+				+ (["company"] if meta.has_field("company") else [])
+				+ [field for field in projection if field != "doctype" and field not in tables]
+			)
+		)
 	for batch in batched(records, max(config.batch_size, 100), strict=False):
-		keys = [record_key(config, record) for record in batch]
+		started = monotonic()
+		key_records = {record_key(config, record): record for record in batch}
 		for record in batch:
-			keys.extend(record_key(config, alias) for alias in record.get("_sync", {}).get("aliases", []))
-		states = {}
+			key_records.update(
+				(record_key(config, alias), alias) for alias in record.get("_sync", {}).get("aliases", [])
+			)
+		states = BatchStates()
 		for row in frappe.get_all(
-			STATE_DOCTYPE, filters={"name": ["in", [state_name(config, key) for key in keys]]}, fields=["*"]
+			STATE_DOCTYPE,
+			filters={"name": ["in", [state_name(config, key) for key in key_records]]},
+			fields=["*"],
+			order_by="name asc",
 		):
 			states[row.name] = {
 				**dict(row),
@@ -277,10 +318,27 @@ def prepared_batches(config, records):
 				"documents": decode(row.documents, []),
 				"source_record": decode(row.source_record, {}),
 			}
-		names = list({name for state in states.values() for name in state["documents"]})
+		missing = {
+			key: record for key, record in key_records.items() if state_name(config, key) not in states
+		}
+		names = {name for state in states.values() for name in state["documents"]}
+		if missing:
+			candidates = sources._load_frappe_match_candidates(
+				replace(config, update_existing=False), list(missing.values())
+			)
+			lookup = matching._build_frappe_match_lookup(config, candidates)
+			for key, record in missing.items():
+				matched = matching._find_existing_frappe_records(
+					config, record, lookup.groups, lookup.identity_by_value
+				)
+				states.matches[key] = matched
+				names.update(row["name"] for row in matched)
+		names = sorted(names)
 		documents = {}
 		if names:
-			for row in frappe.get_all(config.doctype, filters={"name": ["in", names]}, fields=["*"]):
+			for row in frappe.get_all(
+				config.doctype, filters={"name": ["in", names]}, fields=fields, order_by="name asc"
+			):
 				documents[row.name] = {**dict(row), "doctype": config.doctype}
 			if config.doctype == "Journal Entry":
 				for reversal in frappe.get_all(
@@ -305,6 +363,10 @@ def prepared_batches(config, records):
 				):
 					if row.parent in documents:
 						documents[row.parent][df.fieldname].append({**dict(row), "doctype": df.options})
+		if progress:
+			progress.timings["load targets and state"] = (
+				progress.timings.get("load targets and state", 0) + monotonic() - started
+			)
 		yield batch, states, documents
 
 
@@ -312,7 +374,8 @@ def unchanged_plan(plan):
 	old = plan["old"]
 	return (
 		plan["action"] == "skip"
-		and old.get("source_fingerprint") == fingerprint(plan["record"])
+		and old.get("source_fingerprint")
+		== (plan["source_fingerprint"] if "source_fingerprint" in plan else fingerprint(plan["record"]))
 		and old.get("state") == plan["state"]
 		and old.get("documents") == plan["documents"]
 		and all(
@@ -361,6 +424,8 @@ def add_preview(preview, item, limit):
 
 
 def run_scripted(config, connector, context, run_doc=None, preview_limit=None):
+	progress = Progress(config.name)
+	progress.report("prepare source")
 	stats = SyncStats()
 	preview = []
 	warning_count = 0
@@ -368,7 +433,10 @@ def run_scripted(config, connector, context, run_doc=None, preview_limit=None):
 	last_activity = monotonic()
 	mapping_context = mapping._build_runtime_mapping_context(config)
 	with prepare_source(config, connector) as records:
-		for batch, states, documents in prepared_batches(config, records):
+		progress.timings["prepare source"] = monotonic() - progress.started
+		progress.report("plan records")
+		for batch, states, documents in prepared_batches(config, records, progress):
+			started = monotonic()
 			for record in batch:
 				key = record_key(config, record)
 				seen.add(key)
@@ -440,13 +508,21 @@ def run_scripted(config, connector, context, run_doc=None, preview_limit=None):
 						else [],
 						commit=False,
 					)
+			progress.timings["plan and apply"] = (
+				progress.timings.get("plan and apply", 0) + monotonic() - started
+			)
+			progress.report("plan records", stats.processed_count)
 			if run_doc and monotonic() - last_activity >= 30:
 				audit._track_pending_run_writes(run_doc, 1)
 				audit._flush_pending_run_writes(run_doc, force=True)
 				last_activity = monotonic()
 
 	# A missing source is never an implicit reversal, even after a complete read.
-	for state in iter_states(config):
+	started = monotonic()
+	progress.report("check missing source")
+	for index, state in enumerate(iter_states(config), 1):
+		if index % 1000 == 0:
+			progress.report("check missing source", index)
 		if state.record_key in seen or decode(state.state, {}).get("alias_of"):
 			continue
 		message = _("Previously processed source group is missing; target retained.")
@@ -479,6 +555,9 @@ def run_scripted(config, connector, context, run_doc=None, preview_limit=None):
 			)
 	if run_doc:
 		audit._flush_pending_run_writes(run_doc, force=True)
+	progress.timings["check missing source"] = monotonic() - started
+	progress.report("plan records", stats.processed_count, force=True)
+	progress.finish()
 	return {
 		**stats.as_dict(),
 		"warning_count": warning_count,

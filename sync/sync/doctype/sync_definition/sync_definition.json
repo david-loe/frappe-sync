@@ -29,6 +29,7 @@
   "script_parameters",
   "partner_source_script",
   "record_processing_script",
+  "record_processing_document_fields",
   "section_change_detection",
   "frappe_modified_field",
   "frappe_creation_field",
@@ -565,12 +566,19 @@
    "options": "Python",
    "label": "Record Processing Script",
    "description": "Set result with action, message and state. Actions: create, reverse, replace, skip, error. The runtime applies the plan atomically."
+  },
+  {
+   "fieldname": "record_processing_document_fields",
+   "fieldtype": "JSON",
+   "label": "Record Processing Document Fields",
+   "depends_on": "eval:doc.record_processing_script",
+   "description": "Optional JSON list of target fields exposed to the record script. Leave empty for full documents; use [] for required header fields only. Table fields load their complete rows."
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-10 14:27:55.063284",
+ "modified": "2026-09-14 10:33:24.339544",
  "module": "Sync",
  "name": "Sync Definition",
  "permissions": [

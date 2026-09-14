@@ -294,6 +294,31 @@ def validate_frappe_source_settings(doc):
 
 
 def validate_processing_scripts(doc):
+	projection = getattr(doc, "record_processing_document_fields", None)
+	if isinstance(projection, str):
+		try:
+			projection = json.loads(projection) if projection.strip() else None
+		except ValueError:
+			frappe.throw(_("Record Processing Document Fields must be a JSON list of field names."))
+	if projection is not None:
+		if not isinstance(projection, list) or any(not isinstance(field, str) for field in projection):
+			frappe.throw(_("Record Processing Document Fields must be a JSON list of field names."))
+		meta = frappe.get_meta(doc.doctype_name)
+		from frappe.model import no_value_fields, table_fields
+
+		available = {
+			field.fieldname
+			for field in meta.fields
+			if (field.fieldtype not in no_value_fields or field.fieldtype in table_fields)
+			and not getattr(field, "is_virtual", False)
+		}
+		standard = {"name", "doctype", "owner", "creation", "modified", "modified_by", "docstatus", "idx"}
+		if any(field not in standard and field not in available for field in projection):
+			frappe.throw(
+				_("Record Processing Document Fields must name existing fields on the target DocType.")
+			)
+		projection = list(dict.fromkeys(projection))
+	doc.record_processing_document_fields = projection
 	for field in ("partner_source_script", "record_processing_script"):
 		setattr(doc, field, _clean_value(getattr(doc, field, None)))
 	parameters = getattr(doc, "script_parameters", None) or {}
@@ -479,6 +504,9 @@ def get_partner_modified_fields(doc) -> list[str]:
 
 
 def as_export_dict(doc) -> dict:
+	projection = getattr(doc, "record_processing_document_fields", None)
+	if isinstance(projection, str):
+		projection = json.loads(projection) if projection.strip() else None
 	return {
 		"name": doc.name,
 		"title": doc.title,
@@ -500,6 +528,7 @@ def as_export_dict(doc) -> dict:
 		"frappe_source_script": getattr(doc, "frappe_source_script", None),
 		"partner_source_script": getattr(doc, "partner_source_script", None),
 		"record_processing_script": getattr(doc, "record_processing_script", None),
+		"record_processing_document_fields": projection,
 		"script_parameters": getattr(doc, "script_parameters", None),
 		"match_mode": getattr(doc, "match_mode", MATCH_MODE_MATCH_FIELDS),
 		"one_way_match_mode": getattr(doc, "one_way_match_mode", ONE_WAY_MATCH_FIRST),

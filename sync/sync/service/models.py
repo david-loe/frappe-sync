@@ -148,6 +148,7 @@ class SyncDefinitionConfig:
 	frappe_source_script: str | None = None
 	partner_source_script: str | None = None
 	record_processing_script: str | None = None
+	record_processing_document_fields: list[str] | None = None
 	script_parameters: dict[str, Any] | None = None
 
 

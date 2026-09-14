@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sync VERSION\n"
 "Report-Msgid-Bugs-To: kontak@david-loe.de\n"
-"POT-Creation-Date: 2026-09-10 15:02+0000\n"
+"POT-Creation-Date: 2026-09-14 10:56+0000\n"
 "PO-Revision-Date: 2026-05-21 07:35+0000\n"
 "Last-Translator: kontak@david-loe.de\n"
 "Language: de\n"
@@ -18,11 +18,11 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.16.0\n"
 
-#: sync/sync/doctype/sync_definition/sync_definition.py:113
+#: sync/sync/doctype/sync_definition/sync_definition.py:118
 msgid "A definition with processing state cannot be renamed or merged."
 msgstr "Eine Definition mit Verarbeitungsstand kann nicht umbenannt oder zusammengeführt werden."
 
-#: sync/sync/doctype/sync_definition/sync_definition.py:106
+#: sync/sync/doctype/sync_definition/sync_definition.py:111
 msgid "A definition with processing state must keep its partner, target DocType, direction, match keys and record processing script enabled."
 msgstr "Bei einer Definition mit Verarbeitungsstand müssen Partner, Ziel-DocType, Richtung und Abgleichschlüssel erhalten bleiben und das Datensatzverarbeitungsskript aktiviert bleiben."
 
@@ -30,11 +30,11 @@ msgstr "Bei einer Definition mit Verarbeitungsstand müssen Partner, Ziel-DocTyp
 msgid "A sync run is already active for {0}."
 msgstr "Für {0} ist bereits ein Synchronisierungslauf aktiv."
 
-#: sync/sync/service/execution/scripted.py:140
+#: sync/sync/service/execution/scripted.py:149
 msgid "A tracked target document was cancelled outside the sync."
 msgstr "Ein verfolgtes Zieldokument wurde außerhalb der Synchronisierung storniert."
 
-#: sync/sync/service/execution/scripted.py:148
+#: sync/sync/service/execution/scripted.py:157
 msgid "A tracked target document was reversed outside the sync."
 msgstr "Zu einem verfolgten Zieldokument wurde außerhalb der Synchronisierung eine Gegenbuchung erstellt."
 
@@ -329,11 +329,11 @@ msgstr "Zähler"
 msgid "Create New"
 msgstr "Neu erstellen"
 
-#: sync/sync/service/execution/scripted.py:166
+#: sync/sync/service/execution/scripted.py:180
 msgid "Create New is disabled."
 msgstr "Neu anlegen ist deaktiviert."
 
-#: sync/sync/service/execution/scripted.py:175
+#: sync/sync/service/execution/scripted.py:189
 msgid "Create plan cannot duplicate an existing target."
 msgstr "Ein Erstellungsplan darf kein vorhandenes Ziel duplizieren."
 
@@ -494,7 +494,7 @@ msgstr "Testlauf"
 msgid "Dry run started."
 msgstr "Testlauf gestartet."
 
-#: sync/sync/service/execution/script_support.py:147
+#: sync/sync/service/execution/script_support.py:161
 msgid "Emitted source key is also claimed by another group."
 msgstr "Der ausgegebene Quellschlüssel wird auch von einer anderen Gruppe beansprucht."
 
@@ -1254,11 +1254,11 @@ msgstr "Ein Feldname pro Zeile. Diese Felder werden in Exporten und Schwärzungs
 msgid "One-Way Match Mode"
 msgstr "Einweg-Abgleichmodus"
 
-#: sync/sync/service/definition_rules.py:982
+#: sync/sync/service/definition_rules.py:1011
 msgid "Only System Manager can save partner processing scripts."
 msgstr "Nur Systemmanager dürfen Skripte zur Partnerverarbeitung speichern."
 
-#: sync/sync/service/execution/scripted.py:173
+#: sync/sync/service/execution/scripted.py:187
 msgid "Only submitted Journal Entries can be reversed."
 msgstr "Nur gebuchte Journalbuchungen können durch Gegenbuchungen aufgehoben werden."
 
@@ -1299,6 +1299,12 @@ msgstr "Optionales Frappe-Feld, das nach einem erfolgreichen Schreibvorgang beim
 #: sync/public/js/sync_partner.js:100
 msgid "Optional IANA time zone used when the partner sends naive datetimes. Leave blank only when partner timestamps already carry offsets or already match the site time zone."
 msgstr "Optionale IANA-Zeitzone, die verwendet wird, wenn der Partner naive Datums-/Zeitwerte sendet. Nur leer lassen, wenn Partner-Zeitstempel bereits Offsets enthalten oder bereits der Site-Zeitzone entsprechen."
+
+#. Description of the 'Record Processing Document Fields' (JSON) field in
+#. DocType 'Sync Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Optional JSON list of target fields exposed to the record script. Leave empty for full documents; use [] for required header fields only. Table fields load their complete rows."
+msgstr "Optionale JSON-Liste der Zielfelder, die dem Datensatzskript bereitgestellt werden. Leer lassen für vollständige Dokumente; [] lädt nur die erforderlichen Kopffelder. Tabellenfelder laden ihre vollständigen Zeilen."
 
 #: sync/public/js/sync_partner.js:92
 msgid "Optional PostgreSQL / libpq connection options, one per line or JSON."
@@ -1524,24 +1530,24 @@ msgstr "Partner-Feldauswahlen aus den gespeicherten Partner-Spalten geladen."
 msgid "Partner field used to detect changes. Falls back to the creation field when NULL."
 msgstr "Partnerfeld zur Erkennung von Änderungen. Fällt bei NULL auf das Erstellungsfeld zurück."
 
-#: sync/sync/service/definition_rules.py:311
+#: sync/sync/service/definition_rules.py:336
 msgid "Partner processing scripts require Frappe <- Partner."
 msgstr "Skripte zur Partnerverarbeitung erfordern Frappe <- Partner."
 
-#: sync/sync/service/definition_rules.py:313
+#: sync/sync/service/definition_rules.py:338
 msgid "Partner processing scripts require Match Fields."
 msgstr "Skripte zur Partnerverarbeitung erfordern den Abgleich über Felder."
 
-#: sync/sync/service/definition_rules.py:316
+#: sync/sync/service/definition_rules.py:341
 msgid "Partner processing scripts require a complete source read without Delete Missing or date delta."
 msgstr "Skripte zur Partnerverarbeitung erfordern das vollständige Einlesen der Quelle ohne Löschen fehlender Datensätze oder Datumsdelta."
 
-#: sync/sync/service/definition_rules.py:321
-#: sync/sync/service/execution/script_support.py:64
+#: sync/sync/service/definition_rules.py:346
+#: sync/sync/service/execution/script_support.py:70
 msgid "Partner processing scripts require server_script_enabled."
 msgstr "Skripte zur Partnerverarbeitung erfordern server_script_enabled."
 
-#: sync/sync/service/execution/script_support.py:241
+#: sync/sync/service/execution/script_support.py:370
 msgid "Partner record has incomplete key fields."
 msgstr "Die Schlüsselfelder des Partnerdatensatzes sind unvollständig."
 
@@ -1622,7 +1628,7 @@ msgstr "Vorschau"
 msgid "Preview Limit"
 msgstr "Vorschaulimit"
 
-#: sync/sync/service/execution/scripted.py:452
+#: sync/sync/service/execution/scripted.py:528
 msgid "Previously processed source group is missing; target retained."
 msgstr "Eine zuvor verarbeitete Quellgruppe fehlt; das Ziel wurde beibehalten."
 
@@ -1641,20 +1647,20 @@ msgstr "Anzahl verarbeitet"
 msgid "Processing State"
 msgstr "Verarbeitungsstand"
 
-#: sync/sync/service/execution/scripted.py:138
+#: sync/sync/service/execution/scripted.py:147
 msgid "Processing plan cannot cross company boundaries."
 msgstr "Ein Verarbeitungsplan darf keine Unternehmensgrenzen überschreiten."
 
-#: sync/sync/service/execution/script_support.py:102
-#: sync/sync/service/execution/script_support.py:109
+#: sync/sync/service/execution/script_support.py:108
+#: sync/sync/service/execution/script_support.py:115
 msgid "Processing scripts only allow a single SELECT query."
 msgstr "Verarbeitungsskripte erlauben nur eine einzelne SELECT-Abfrage."
 
-#: sync/sync/service/execution/scripted.py:202
+#: sync/sync/service/execution/scripted.py:217
 msgid "Processing state changed; retry the run."
 msgstr "Der Verarbeitungsstand hat sich geändert; wiederholen Sie den Lauf."
 
-#: sync/sync/service/execution/scripted.py:177
+#: sync/sync/service/execution/scripted.py:191
 msgid "Processing state must be an object."
 msgstr "Der Verarbeitungsstand muss ein Objekt sein."
 
@@ -1732,21 +1738,36 @@ msgstr "Datensatzschlüssel"
 msgid "Record Matching"
 msgstr "Datensatzabgleich"
 
+#. Label of the record_processing_document_fields (JSON) field in DocType 'Sync
+#. Definition'
+#: sync/sync/doctype/sync_definition/sync_definition.json
+msgid "Record Processing Document Fields"
+msgstr "Dokumentfelder für die Datensatzverarbeitung"
+
+#: sync/sync/service/definition_rules.py:302
+#: sync/sync/service/definition_rules.py:305
+msgid "Record Processing Document Fields must be a JSON list of field names."
+msgstr "Die Dokumentfelder für die Datensatzverarbeitung müssen eine JSON-Liste von Feldnamen sein."
+
+#: sync/sync/service/definition_rules.py:318
+msgid "Record Processing Document Fields must name existing fields on the target DocType."
+msgstr "Die Dokumentfelder für die Datensatzverarbeitung müssen vorhandene Felder des Ziel-DocTypes benennen."
+
 #. Label of the record_processing_script (Code) field in DocType 'Sync
 #. Definition'
 #: sync/sync/doctype/sync_definition/sync_definition.json
 msgid "Record Processing Script"
 msgstr "Datensatzverarbeitungsskript"
 
-#: sync/sync/service/definition_rules.py:326
+#: sync/sync/service/definition_rules.py:351
 msgid "Record Processing Script cannot be combined with enabled Frappe Write Hooks."
 msgstr "Ein Datensatzverarbeitungsskript kann nicht mit aktivierten Frappe-Schreib-Hooks kombiniert werden."
 
-#: sync/sync/service/definition_rules.py:324
+#: sync/sync/service/definition_rules.py:349
 msgid "Record Processing Script requires Match Fields and first_match."
 msgstr "Ein Datensatzverarbeitungsskript erfordert den Abgleich über Felder und first_match."
 
-#: sync/sync/service/execution/scripted.py:163
+#: sync/sync/service/execution/scripted.py:177
 msgid "Record script must return a valid action plan."
 msgstr "Das Datensatzskript muss einen gültigen Aktionsplan zurückgeben."
 
@@ -1831,7 +1852,7 @@ msgstr "Ergebnis"
 msgid "Retention"
 msgstr "Aufbewahrung"
 
-#: sync/sync/service/execution/scripted.py:170
+#: sync/sync/service/execution/scripted.py:184
 msgid "Reverse and replace require existing Journal Entries and Update Existing."
 msgstr "Gegenbuchungen und Ersetzungen erfordern vorhandene Journalbuchungen und die Option Vorhandene aktualisieren."
 
@@ -1949,16 +1970,16 @@ msgstr "Skript"
 msgid "Script Parameters"
 msgstr "Skriptparameter"
 
-#: sync/sync/service/definition_rules.py:304
-#: sync/sync/service/definition_rules.py:306
+#: sync/sync/service/definition_rules.py:329
+#: sync/sync/service/definition_rules.py:331
 msgid "Script Parameters must be a JSON object."
 msgstr "Skriptparameter müssen ein JSON-Objekt sein."
 
-#: sync/sync/service/execution/script_support.py:125
+#: sync/sync/service/execution/script_support.py:137
 msgid "Script lookup fields must exist on the DocType."
 msgstr "Die im Skript abgefragten Felder müssen im DocType vorhanden sein."
 
-#: sync/sync/service/execution/script_support.py:174
+#: sync/sync/service/execution/script_support.py:208
 msgid "Script queries require stable key fields."
 msgstr "Skriptabfragen erfordern stabile Schlüsselfelder."
 
@@ -2091,23 +2112,23 @@ msgstr "Quell-ID"
 msgid "Source Record"
 msgstr "Quelldatensatz"
 
-#: sync/sync/service/execution/scripted.py:104
+#: sync/sync/service/execution/scripted.py:123
 msgid "Source alias is already owned by another group."
 msgstr "Der Quellalias gehört bereits zu einer anderen Gruppe."
 
-#: sync/sync/service/execution/script_support.py:154
+#: sync/sync/service/execution/script_support.py:168
 msgid "Source alias is claimed by multiple groups."
 msgstr "Der Quellalias wird von mehreren Gruppen beansprucht."
 
-#: sync/sync/service/execution/scripted.py:86
+#: sync/sync/service/execution/scripted.py:105
 msgid "Source group split requires explicit reconciliation; existing group is retained."
 msgstr "Die Aufteilung einer Quellgruppe erfordert einen ausdrücklichen Abgleich; die vorhandene Gruppe wurde beibehalten."
 
-#: sync/sync/service/execution/script_support.py:193
+#: sync/sync/service/execution/script_support.py:243
 msgid "Source script did not consume the complete source."
 msgstr "Das Quellskript hat die Quelle nicht vollständig eingelesen."
 
-#: sync/sync/service/execution/script_support.py:144
+#: sync/sync/service/execution/script_support.py:158
 msgid "Source script must emit dictionaries."
 msgstr "Das Quellskript muss Dictionaries ausgeben."
 
@@ -2364,7 +2385,7 @@ msgstr "Zielprüfsumme"
 msgid "Target ID"
 msgstr "Ziel-ID"
 
-#: sync/sync/service/execution/scripted.py:207
+#: sync/sync/service/execution/scripted.py:222
 msgid "Target document changed after planning."
 msgstr "Das Zieldokument wurde nach der Planung geändert."
 
@@ -2445,7 +2466,7 @@ msgstr "Titel"
 msgid "Tolerance in milliseconds for considering Frappe and partner modified timestamps equal during conflict resolution."
 msgstr "Toleranz in Millisekunden, um geänderte Zeitstempel von Frappe und Partner bei der Konfliktauflösung als gleich zu betrachten."
 
-#: sync/sync/service/execution/scripted.py:215
+#: sync/sync/service/execution/scripted.py:230
 msgid "Tracked Journal Entry already has a reversal outside this transition."
 msgstr "Zur verfolgten Journalbuchung besteht bereits eine Gegenbuchung außerhalb dieses Verarbeitungsschritts."
 

@@ -112,6 +112,7 @@ def _coerce_config(config: SyncDefinitionConfig | Any) -> SyncDefinitionConfig:
 		frappe_source_script=values_service._clean_string(getattr(config, "frappe_source_script", None)),
 		partner_source_script=getattr(config, "partner_source_script", None),
 		record_processing_script=getattr(config, "record_processing_script", None),
+		record_processing_document_fields=getattr(config, "record_processing_document_fields", None),
 		script_parameters=getattr(config, "script_parameters", None),
 		frappe_write_hooks=config_access_service._normalize_frappe_write_hooks(
 			getattr(config, "frappe_write_hooks", None),
@@ -261,6 +262,9 @@ def _build_definition_config(sync_definition_doc: Any) -> SyncDefinitionConfig:
 		computed_fields=computed_fields,
 		partner_source_script=sync_definition_doc.partner_source_script,
 		record_processing_script=sync_definition_doc.record_processing_script,
+		record_processing_document_fields=getattr(
+			sync_definition_doc, "record_processing_document_fields", None
+		),
 		script_parameters=sync_definition_doc.script_parameters,
 		frappe_source_mode=config_access_service._normalize_frappe_source_mode(
 			values_service._first_value(
@@ -304,6 +308,7 @@ def validate_config(config: SyncDefinitionConfig) -> SyncDefinitionConfig:
 		frappe_source_script=doc.frappe_source_script,
 		partner_source_script=doc.partner_source_script,
 		record_processing_script=doc.record_processing_script,
+		record_processing_document_fields=doc.record_processing_document_fields,
 		script_parameters=doc.script_parameters,
 		partner_time_zone=time_utils_service._normalize_time_zone_name(config.partner_time_zone),
 	)

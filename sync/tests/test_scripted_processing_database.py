@@ -231,6 +231,60 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "outside the sync"):
 			scripted.plan_record(self.config, self.record(10))
 
+	def test_projection_keeps_plans_and_avoids_child_queries(self):
+		original = self.transition(10, "create")[0]
+		record = self.record(10)
+		full = scripted.plan_record(self.config, record)
+		cfg = replace(self.config, record_processing_document_fields=[])
+		with patch.object(frappe, "get_all", wraps=frappe.get_all) as queries:
+			batch, states, documents = next(scripted.prepared_batches(cfg, [record]))
+			projected = scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)
+			self.assertNotIn("Journal Entry Account", [call.args[0] for call in queries.call_args_list])
+		self.assertEqual(projected["action"], full["action"])
+		self.assertEqual(projected["state"], full["state"])
+		self.assertNotIn("accounts", projected["existing"][0])
+		self.assertEqual(projected["documents"], [original])
+		with patch.object(frappe, "get_all", wraps=frappe.get_all) as queries:
+			_, _, with_accounts = next(
+				scripted.prepared_batches(
+					replace(cfg, record_processing_document_fields=["accounts"]), [record]
+				)
+			)
+			self.assertEqual(len(with_accounts[original]["accounts"]), 2)
+			self.assertIn("Journal Entry Account", [call.args[0] for call in queries.call_args_list])
+			self.assertNotIn("Tax Withholding Entry", [call.args[0] for call in queries.call_args_list])
+		scripted.writes._reverse_journal_entry(source_name=original, posting_date=frappe.utils.nowdate())
+		batch, states, documents = next(scripted.prepared_batches(cfg, [record]))
+		with self.assertRaisesRegex(frappe.ValidationError, "outside the sync"):
+			scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)
+
+	def test_projection_survives_yaml_roundtrip(self):
+		import yaml
+
+		from sync.sync.service import configuration, yaml_io
+
+		self.definition.record_processing_script = SCRIPT
+		self.definition.record_processing_document_fields = []
+		self.definition.save()
+		payload = yaml.safe_load(yaml_io.export_sync_definition_yaml(self.definition.name))
+		doc = frappe.get_doc(payload["sync_definition"])
+		self.assertEqual(configuration._build_definition_config(doc).record_processing_document_fields, [])
+
+	def test_missing_states_and_aliases_use_one_match_lookup_per_batch(self):
+		records = [{**self.record(10), "id": self.ident + str(i)} for i in range(25)]
+		records[0]["_sync"] = {"aliases": [{"id": self.ident + "alias"}]}
+		with patch.object(
+			scripted.sources,
+			"_load_frappe_match_candidates",
+			wraps=scripted.sources._load_frappe_match_candidates,
+		) as lookup:
+			batch, states, documents = next(scripted.prepared_batches(self.config, records))
+			for record in batch:
+				plan = scripted.plan_record(self.config, record, state_cache=states, document_cache=documents)
+				self.assertEqual(plan["action"], "create")
+			lookup.assert_called_once()
+			self.assertEqual(len(lookup.call_args.args[1]), 26)
+
 	def test_failed_real_replacement_rolls_back_ledger_and_state(self):
 		original = self.transition(10, "create")[0]
 		before = scripted.load_state(self.config, record_key(self.config, self.record(10)))

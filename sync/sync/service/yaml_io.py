@@ -256,6 +256,8 @@ def _sanitize_document_dict(data: dict[str, Any], *, mask_credentials: bool = Fa
 			result[key] = [_sanitize_child_row(child_doctype, row) for row in value]
 			continue
 		if meta.has_field(key):
+			if key == "record_processing_document_fields" and isinstance(value, str):
+				value = frappe.parse_json(value) if value.strip() else None
 			result[key] = (
 				"***" if mask_credentials and key in secret_fields and value not in (None, "") else value
 			)

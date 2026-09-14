@@ -50,6 +50,7 @@ def after_migrate():
 	ensure_default_sync_settings()
 	ensure_sync_run_item_indexes()
 	ensure_sync_run_retention_indexes()
+	ensure_scripted_processing_indexes()
 
 
 def before_tests():
@@ -57,6 +58,29 @@ def before_tests():
 	ensure_default_sync_settings()
 	ensure_sync_run_item_indexes()
 	ensure_sync_run_retention_indexes()
+	ensure_scripted_processing_indexes()
+
+
+def ensure_index(doctype, fields, index_name):
+	"""Reuse indexes with the same leading columns, regardless of their name."""
+	if frappe.db.db_type == "mariadb":
+		indexes = {}
+		for row in frappe.db.sql(
+			"SELECT INDEX_NAME, COLUMN_NAME, SUB_PART FROM information_schema.STATISTICS "
+			"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_TYPE = 'BTREE' "
+			"ORDER BY INDEX_NAME, SEQ_IN_INDEX",
+			("tab" + doctype,),
+			as_dict=True,
+		):
+			indexes.setdefault(row.INDEX_NAME, []).append(row.COLUMN_NAME if row.SUB_PART is None else None)
+		if any(columns[: len(fields)] == list(fields) for columns in indexes.values()):
+			return
+	frappe.db.add_index(doctype, fields, index_name=index_name)
+
+
+def ensure_scripted_processing_indexes():
+	if frappe.db.table_exists("Journal Entry") and frappe.get_meta("Journal Entry").has_field("reversal_of"):
+		ensure_index("Journal Entry", ("reversal_of", "docstatus"), "sync_reversal_status_index")
 
 
 def ensure_sync_run_retention_indexes():

@@ -33,18 +33,32 @@ def _db_stub(**overrides):
 
 
 class TestSetupHooks(unittest.TestCase):
+	def test_equivalent_index_is_reused(self):
+		from unittest.mock import Mock
+
+		db = Mock(db_type="mariadb")
+		db.sql.return_value = [
+			SimpleNamespace(INDEX_NAME="other_name", COLUMN_NAME=field, SUB_PART=None)
+			for field in ["reversal_of", "docstatus", "name"]
+		]
+		with patch.object(setup.frappe, "db", db):
+			setup.ensure_index("Journal Entry", ("reversal_of", "docstatus"), "new_name")
+		db.add_index.assert_not_called()
+
 	def test_after_migrate_delegates_to_default_partner_type_setup(self):
 		with (
 			patch("sync.setup.ensure_default_partner_types") as mock_ensure,
 			patch("sync.setup.ensure_default_sync_settings") as mock_settings,
 			patch("sync.setup.ensure_sync_run_item_indexes"),
 			patch("sync.setup.ensure_sync_run_retention_indexes") as mock_indexes,
+			patch("sync.setup.ensure_scripted_processing_indexes") as mock_processing,
 		):
 			setup.after_migrate()
 
 		mock_ensure.assert_called_once_with()
 		mock_settings.assert_called_once_with()
 		mock_indexes.assert_called_once_with()
+		mock_processing.assert_called_once_with()
 
 	def test_before_tests_delegates_to_default_partner_type_setup(self):
 		with (
@@ -52,12 +66,14 @@ class TestSetupHooks(unittest.TestCase):
 			patch("sync.setup.ensure_default_sync_settings") as mock_settings,
 			patch("sync.setup.ensure_sync_run_item_indexes"),
 			patch("sync.setup.ensure_sync_run_retention_indexes") as mock_indexes,
+			patch("sync.setup.ensure_scripted_processing_indexes") as mock_processing,
 		):
 			setup.before_tests()
 
 		mock_ensure.assert_called_once_with()
 		mock_settings.assert_called_once_with()
 		mock_indexes.assert_called_once_with()
+		mock_processing.assert_called_once_with()
 
 	def test_retention_indexes_are_installed_only_for_existing_table(self):
 		from unittest.mock import Mock, call

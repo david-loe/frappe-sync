@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from contextlib import nullcontext
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -115,6 +116,80 @@ result = total([('a', '0.1'), ('a', '0.2')])
 		with support.prepare_source(config(), SimpleNamespace(iter_record_batches=batches)) as records:
 			self.assertEqual(len(calls), 2)
 			self.assertEqual(list(records), [{"id": "one"}, {"id": "two"}])
+
+	def test_prepared_source_reuses_normalization_but_rechecks_source(self):
+		connector = SimpleNamespace(iter_record_batches=Mock(return_value=[[{"id": "one"}]]))
+		with patch.object(support, "execute_read_script", wraps=support.execute_read_script) as execute:
+			with support.prepare_source_snapshot(config(), connector) as source:
+				self.assertEqual(list(source), [{"id": "one"}])
+				with (
+					support.reuse_prepared_source(source),
+					support.prepare_source(config(), connector) as records,
+				):
+					self.assertEqual(list(records), [{"id": "one"}])
+				execute.assert_called_once()
+				self.assertEqual(connector.iter_record_batches.call_count, 3)
+
+	def test_prepared_source_change_rebuilds_and_read_failure_propagates(self):
+		connector = SimpleNamespace(iter_record_batches=Mock(return_value=[[{"id": "one"}]]))
+		with support.prepare_source_snapshot(config(), connector) as source:
+			connector.iter_record_batches.return_value = [[{"id": "two"}]]
+			with (
+				support.reuse_prepared_source(source),
+				support.prepare_source(config(), connector) as records,
+			):
+				self.assertEqual(list(records), [{"id": "two"}])
+			self.assertEqual(connector.iter_record_batches.call_count, 5)
+			connector.iter_record_batches.side_effect = RuntimeError("offline")
+			with support.reuse_prepared_source(source), self.assertRaisesRegex(RuntimeError, "offline"):
+				with support.prepare_source(config(), connector):
+					self.fail("failed read must not yield the staged source")
+
+	def test_prepared_source_configuration_and_lookup_changes_invalidate(self):
+		connector = SimpleNamespace(iter_record_batches=Mock(return_value=[[{"id": "one"}]]))
+		cfg = config(
+			partner_source_script="label = helpers.get_all('Task', fields=['subject'])[0]['subject']\nfor row in rows:\n    helpers.emit({'id': row['id'], 'label': label})"
+		)
+		with patch.object(support.ReadHelpers, "get_all", return_value=[{"subject": "old"}]) as lookup:
+			with support.prepare_source_snapshot(cfg, connector) as source:
+				lookup.return_value = [{"subject": "new"}]
+				with support.reuse_prepared_source(source), support.prepare_source(cfg, connector) as records:
+					self.assertEqual(next(records)["label"], "new")
+				with self.assertRaises(support.SourceChanged):
+					source.verify(replace(cfg, script_parameters={"changed": True}), connector)
+
+	def test_prepared_source_rechecks_rendered_query_and_cannot_outlive_file(self):
+		connector = SimpleNamespace(iter_record_batches=Mock(return_value=[[{"id": "one"}]]))
+		with patch.object(
+			support.query_templates, "resolve_read_query", return_value="SELECT id FROM old_table"
+		) as query:
+			with support.prepare_source_snapshot(config(), connector) as source:
+				query.return_value = "SELECT id FROM new_table"
+				connector.iter_record_batches.return_value = [[{"id": "two"}]]
+				with (
+					support.reuse_prepared_source(source),
+					support.prepare_source(config(), connector) as records,
+				):
+					self.assertEqual(list(records), [{"id": "two"}])
+				self.assertEqual(connector.iter_record_batches.call_count, 4)
+			with self.assertRaises(support.SourceChanged):
+				source.verify(config(), connector)
+
+	def test_document_projection_validation_and_export(self):
+		install_definition_metadata(self)
+		with patch.object(definition_rules, "_server_script_enabled", return_value=True):
+			for projection in [[], ["name"], ["subject"]]:
+				cfg = configuration._coerce_config(config(record_processing_document_fields=projection))
+				self.assertEqual(cfg.record_processing_document_fields, projection)
+				doc = configuration.definition_input(configuration.definition_input_from_config(cfg))
+				doc.title = cfg.name
+				doc.enabled = 0
+				self.assertEqual(
+					definition_rules.as_export_dict(doc)["record_processing_document_fields"], projection
+				)
+			for projection in ["not json", {}, ["bad()"], [4]]:
+				with self.subTest(projection=projection), self.assertRaises(frappe.ValidationError):
+					configuration._coerce_config(config(record_processing_document_fields=projection))
 
 	def test_concurrent_change_retries_before_any_target_write(self):
 		calls = []
