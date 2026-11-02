@@ -6,6 +6,7 @@ from typing import Any
 
 import frappe
 
+from sync.config.desktop import get_app_sidebar
 from sync.sync.constants import (
 	SYNC_DEFINITION,
 	SYNC_PARTNER,
@@ -236,6 +237,16 @@ def _build_child_field_choices(table_fields: list[dict[str, str]]) -> dict[str, 
 			choices.append({"fieldname": fieldname, "label": label, "fieldtype": fieldtype or "Data"})
 		result[table_field["fieldname"]] = choices
 	return result
+
+
+@frappe.whitelist()
+def open_app() -> None:
+	"""Open the first accessible Sync destination in either desktop mode."""
+	sidebar = get_app_sidebar()
+	if not sidebar:
+		raise frappe.PermissionError
+	frappe.local.response.type = "redirect"
+	frappe.local.response.location = sidebar.landing or "/desk"
 
 
 @frappe.whitelist()

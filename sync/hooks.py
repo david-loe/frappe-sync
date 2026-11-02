@@ -4,22 +4,23 @@ app_publisher = "david-loe"
 app_description = "Sync anything from and or to frappe"
 app_email = "kontak@david-loe.de"
 app_license = "agpl-3.0"
+app_logo_url = "/assets/sync/icons/desktop_icons/solid/sync.svg"
 
 # Apps
 # ------------------
 
 # required_apps = []
 
-# Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "sync",
-# 		"logo": "/assets/sync/logo.png",
-# 		"title": "Sync",
-# 		"route": "/sync",
-# 		"has_permission": "sync.api.permission.has_app_permission"
-# 	}
-# ]
+add_to_apps_screen = [
+	{
+		"name": app_name,
+		"title": app_title,
+		"logo": app_logo_url,
+		# The classic icon generator also reads this route.
+		"route": "/api/method/sync.api.open_app",
+		"has_permission": "sync.config.desktop.has_app_permission",
+	}
+]
 
 # Includes in <head>
 # ------------------

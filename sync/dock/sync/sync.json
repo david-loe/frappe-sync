@@ -1,0 +1,23 @@
+{
+ "app": "sync",
+ "creation": "2026-11-02 11:23:51.525934",
+ "docstatus": 0,
+ "doctype": "Dock",
+ "idx": 0,
+ "items": [
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "repeat",
+   "link_to": "Sync",
+   "link_type": "Sidebar",
+   "title": "Sync"
+  }
+ ],
+ "modified": "2026-11-02 11:23:51.525934",
+ "modified_by": "Administrator",
+ "name": "sync",
+ "owner": "Administrator",
+ "standard": 1,
+ "user": ""
+}

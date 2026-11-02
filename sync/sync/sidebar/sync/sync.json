@@ -2,7 +2,7 @@
  "app": "sync",
  "creation": "2026-05-21 12:56:36.554326",
  "docstatus": 0,
- "doctype": "Workspace Sidebar",
+ "doctype": "Sidebar",
  "header_icon": "repeat",
  "idx": 0,
  "items": [
@@ -64,7 +64,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-06-05 00:00:00.000000",
+ "modified": "2026-11-02 11:23:51.525934",
  "modified_by": "Administrator",
  "module": "Sync",
  "name": "Sync",

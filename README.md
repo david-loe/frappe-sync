@@ -4,7 +4,7 @@ Sync anything from and to Frappe, allowing a single `Sync Definition` to describ
 
 ### Prerequisites
 
-1. A Frappe bench (>=16.0) with Python 3.14 from the base repo.
+1. A Frappe bench (>=16.50.0) with Python 3.14 from the base repo.
 2. The operating-system database drivers listed below.
 
 ### Database driver requirements

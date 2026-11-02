@@ -55,6 +55,16 @@ class ApiTestCase(unittest.TestCase):
 
 
 class TestSyncApi(ApiTestCase):
+	def test_open_app_falls_back_to_desk_without_a_server_landing(self):
+		response = SimpleNamespace()
+		with (
+			patch.object(self.api, "get_app_sidebar", return_value=SimpleNamespace(landing=None)),
+			patch.object(self.api.frappe, "local", SimpleNamespace(response=response)),
+		):
+			self.api.open_app()
+		self.assertEqual(response.type, "redirect")
+		self.assertEqual(response.location, "/desk")
+
 	def test_doctype_field_choices_include_hidden_data_fields(self):
 		meta = SimpleNamespace(
 			fields=[
