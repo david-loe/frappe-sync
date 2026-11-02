@@ -39,6 +39,7 @@ class _ScriptedProcessingDatabaseCase(IntegrationTestCase):
 
 	def setUp(self):
 		super().setUp()
+		self.enterContext(patch("sync.sync.service.config_access.server_script_enabled", return_value=True))
 		self.enterContext(patch("frappe.utils.safe_exec.is_safe_exec_enabled", return_value=True))
 		suffix = frappe.generate_hash(length=8)
 		self.savepoint = "scripted_" + suffix
