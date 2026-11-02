@@ -12,7 +12,7 @@ from sync.sync.service.execution.script_support import fingerprint, record_key
 from sync.tests.test_runtime_execution import _has_frappe_site_context
 from sync.tests.test_scripted_processing import config
 
-SCRIPT = """
+JOURNAL_SCRIPT = """
 hash = helpers.fingerprint(frappe_payload)
 if state.get('hash') == hash:
     action = 'skip'
@@ -24,8 +24,19 @@ result = {'action': action, 'submit': True, 'state': {'hash': hash}}
 """
 
 
-@unittest.skipUnless(_has_frappe_site_context(), "requires Frappe site context")
-class TestScriptedProcessingDatabase(IntegrationTestCase):
+SCRIPT = """
+hash = helpers.fingerprint(frappe_payload)
+action = 'skip' if state.get('hash') == hash else 'create'
+result = {'action': action, 'state': {'hash': hash}}
+"""
+
+
+class _ScriptedProcessingDatabaseCase(IntegrationTestCase):
+	target_doctype = "ToDo"
+	match_field = "description"
+	fields = (("description", "id"), ("date", "date"), ("priority", "priority"))
+	processing_script = SCRIPT
+
 	def setUp(self):
 		super().setUp()
 		self.enterContext(patch("frappe.utils.safe_exec.is_safe_exec_enabled", return_value=True))
@@ -49,56 +60,39 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 				"title": "Script test " + suffix,
 				"partner": partner.name,
 				"sync_type": "Frappe <- Partner",
-				"doctype_name": "Journal Entry",
+				"doctype_name": self.target_doctype,
 				"frequency_cron": "0 0 1 1 *",
 				"enabled": 0,
 				"table_name": "source",
 				"use_last_sync_date": 0,
-				"match_fields": [{"frappe_field": "user_remark"}],
+				"match_fields": [{"frappe_field": self.match_field}],
 				"field_mapping": [
-					{"frappe_field": "user_remark", "partner_field": "id", "direction": "Frappe <- Partner"}
+					{
+						"frappe_field": self.match_field,
+						"partner_field": "id",
+						"direction": "Frappe <- Partner",
+					}
 				],
 			}
 		).insert()
 		mapping = {
 			field: {"partner_field": source, "direction": "Frappe <- Partner"}
-			for field, source in [
-				("user_remark", "id"),
-				("company", "company"),
-				("posting_date", "posting_date"),
-				("accounts", "accounts"),
-			]
+			for field, source in self.fields
 		}
 		self.config = config(
 			name=self.definition.name,
-			doctype="Journal Entry",
-			match_fields=["user_remark"],
+			doctype=self.target_doctype,
+			match_fields=[self.match_field],
 			mapping=mapping,
-			record_processing_script=SCRIPT,
+			record_processing_script=self.processing_script,
 		)
 		self.ident = "scripted " + suffix
 
 	def record(self, amount):
 		return {
 			"id": self.ident,
-			"company": "_Test Company",
-			"posting_date": frappe.utils.nowdate(),
-			"accounts": (
-				[]
-				if not amount
-				else [
-					{
-						"account": "Cash - _TC",
-						"debit_in_account_currency": amount,
-						"cost_center": "Main - _TC",
-					},
-					{
-						"account": "Earnest Money - _TC",
-						"credit_in_account_currency": amount,
-						"cost_center": "Main - _TC",
-					},
-				]
-			),
+			"date": frappe.utils.nowdate(),
+			"priority": "High" if amount >= 20 else "Medium",
 		}
 
 	def transition(self, amount, expected):
@@ -107,42 +101,9 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 		self.assertEqual(plan["action"], expected)
 		return scripted.apply_plan(self.config, plan)
 
-	def test_actual_journal_revisions_repeat_reverse_restore_and_state_name(self):
-		original = self.transition(10, "create")[0]
-		key = record_key(self.config, self.record(10))
-		self.assertTrue(frappe.db.exists("Sync Record State", scripted.state_name(self.config, key)))
-		revision = scripted.load_state(self.config, key)["revision"]
-		self.assertEqual(self.transition(10, "skip"), [original])
-		self.assertEqual(scripted.load_state(self.config, key)["revision"], revision)
-		updated = self.transition(20, "replace")[0]
-		restored = self.transition(10, "replace")[0]
-		self.assertEqual(len({original, updated, restored}), 3)
-		self.assertEqual(self.transition(0, "reverse"), [])
-		self.assertEqual(self.transition(0, "skip"), [])
-		self.transition(10, "create")
-		self.assertEqual(
-			frappe.db.count(
-				"Journal Entry", {"reversal_of": ["in", [original, updated, restored]], "docstatus": 1}
-			),
-			3,
-		)
-		# Net ledger effect is the current revision, even after A -> B -> A -> empty -> A.
-		entries = frappe.get_all("Journal Entry", filters={"user_remark": self.ident}, pluck="name")
-		entries += frappe.get_all("Journal Entry", filters={"reversal_of": ["in", entries]}, pluck="name")
-		ledger = frappe.get_all(
-			"GL Entry",
-			filters={"voucher_no": ["in", entries], "account": "Cash - _TC", "is_cancelled": 0},
-			fields=["debit", "credit"],
-		)
-		self.assertEqual(sum(r.debit - r.credit for r in ledger), 10)
-		batch, states, documents = next(scripted.prepared_batches(self.config, [self.record(10)]))
-		self.assertEqual(
-			scripted.plan_record(self.config, batch[0], state_cache=states, document_cache=documents)[
-				"action"
-			],
-			"skip",
-		)
 
+@unittest.skipUnless(_has_frappe_site_context(), "requires Frappe site context")
+class TestScriptedProcessingDatabase(_ScriptedProcessingDatabaseCase):
 	def test_preview_reads_all_records_and_writes_nothing(self):
 		from types import SimpleNamespace
 
@@ -155,7 +116,7 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 		]
 		cfg = replace(
 			self.config,
-			record_processing_script=SCRIPT
+			record_processing_script=self.processing_script
 			+ "\nif partner_record.get('bad'):\n    result = {'action': 'error', 'message': 'late error'}",
 		)
 		reads = []
@@ -165,8 +126,7 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 			yield records
 
 		before = {
-			dt: frappe.db.count(dt)
-			for dt in ("Sync Record State", "Journal Entry", "GL Entry", "Sync Run Item")
+			dt: frappe.db.count(dt) for dt in ("Sync Record State", self.target_doctype, "Sync Run Item")
 		}
 		result = scripted.run_scripted(
 			cfg,
@@ -181,22 +141,6 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 		self.assertEqual(len(reads), 2)
 		self.assertEqual(before, {dt: frappe.db.count(dt) for dt in before})
 
-	def test_absorbed_group_reverses_both_current_documents_and_owns_alias(self):
-		first = self.transition(10, "create")[0]
-		other = {**self.record(20), "id": self.ident + " other"}
-		second = scripted.apply_plan(self.config, scripted.plan_record(self.config, other))[0]
-		merged = {**self.record(30), "_sync": {"aliases": [{"id": other["id"]}]}}
-		plan = scripted.plan_record(self.config, merged)
-		self.assertEqual(set(plan["documents"]), {first, second})
-		scripted.apply_plan(self.config, plan)
-		self.assertEqual(
-			frappe.db.count("Journal Entry", {"reversal_of": ["in", [first, second]], "docstatus": 1}), 2
-		)
-		alias = scripted.load_state(self.config, record_key(self.config, other))
-		self.assertEqual(alias["state"]["alias_of"], record_key(self.config, merged))
-		with self.assertRaisesRegex(frappe.ValidationError, "split"):
-			scripted.plan_record(self.config, other)
-
 	def test_unchanged_audit_suppression_keeps_counts_and_never_hides_warnings(self):
 		from types import SimpleNamespace
 
@@ -204,7 +148,9 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 
 		original = self.transition(10, "create")[0]
 		record = self.record(10)
-		cfg = replace(self.config, record_processing_script=SCRIPT + "\nresult['log_unchanged'] = False")
+		cfg = replace(
+			self.config, record_processing_script=self.processing_script + "\nresult['log_unchanged'] = False"
+		)
 		connector = SimpleNamespace(iter_record_batches=lambda **kwargs: iter([[record]]))
 		context = SyncContext(config=cfg, dry_run=True, last_successful_sync=None)
 		with patch.object(scripted.audit, "_register_and_log") as log:
@@ -225,78 +171,17 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "renamed"):
 			self.definition.before_rename(self.definition.name, self.definition.name + " renamed")
 
-	def test_external_reversal_is_detected_on_unchanged_source(self):
-		original = self.transition(10, "create")[0]
-		scripted.writes._reverse_journal_entry(source_name=original, posting_date=frappe.utils.nowdate())
-		with self.assertRaisesRegex(frappe.ValidationError, "outside the sync"):
-			scripted.plan_record(self.config, self.record(10))
-
-	def test_projection_keeps_plans_and_avoids_child_queries(self):
-		original = self.transition(10, "create")[0]
-		record = self.record(10)
-		full = scripted.plan_record(self.config, record)
-		cfg = replace(self.config, record_processing_document_fields=[])
-		with patch.object(frappe, "get_all", wraps=frappe.get_all) as queries:
-			batch, states, documents = next(scripted.prepared_batches(cfg, [record]))
-			projected = scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)
-			self.assertNotIn("Journal Entry Account", [call.args[0] for call in queries.call_args_list])
-		self.assertEqual(projected["action"], full["action"])
-		self.assertEqual(projected["state"], full["state"])
-		self.assertNotIn("accounts", projected["existing"][0])
-		self.assertEqual(projected["documents"], [original])
-		with patch.object(frappe, "get_all", wraps=frappe.get_all) as queries:
-			_, _, with_accounts = next(
-				scripted.prepared_batches(
-					replace(cfg, record_processing_document_fields=["accounts"]), [record]
-				)
-			)
-			self.assertEqual(len(with_accounts[original]["accounts"]), 2)
-			self.assertIn("Journal Entry Account", [call.args[0] for call in queries.call_args_list])
-			self.assertNotIn("Tax Withholding Entry", [call.args[0] for call in queries.call_args_list])
-		scripted.writes._reverse_journal_entry(source_name=original, posting_date=frappe.utils.nowdate())
-		batch, states, documents = next(scripted.prepared_batches(cfg, [record]))
-		with self.assertRaisesRegex(frappe.ValidationError, "outside the sync"):
-			scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)
-
 	def test_projection_survives_yaml_roundtrip(self):
 		import yaml
 
 		from sync.sync.service import configuration, yaml_io
 
-		self.definition.record_processing_script = SCRIPT
+		self.definition.record_processing_script = self.processing_script
 		self.definition.record_processing_document_fields = []
 		self.definition.save()
 		payload = yaml.safe_load(yaml_io.export_sync_definition_yaml(self.definition.name))
 		doc = frappe.get_doc(payload["sync_definition"])
 		self.assertEqual(configuration._build_definition_config(doc).record_processing_document_fields, [])
-
-	def test_unordered_reversal_lookup_preserves_status_checks(self):
-		original = self.transition(10, "create")[0]
-		scripted.writes._reverse_journal_entry(source_name=original, posting_date=frappe.utils.nowdate())
-		reversal = frappe.db.get_value("Journal Entry", {"reversal_of": original}, "name")
-		names = [original] + [f"absent-reversal-target-{i}" for i in range(1000)]
-		query = scripted.journal_reversal_query(names)
-		cfg = replace(self.config, record_processing_document_fields=[])
-		for status in [0, 1, 2]:
-			with self.subTest(docstatus=status):
-				frappe.db.set_value("Journal Entry", reversal, "docstatus", status)
-				expected = frappe.get_all(
-					"Journal Entry",
-					filters={"reversal_of": ["in", names], "docstatus": ["!=", 2]},
-					fields=["reversal_of"],
-				)
-				self.assertEqual(query.run(as_dict=True), expected)
-				batch, states, documents = next(scripted.prepared_batches(cfg, [self.record(10)]))
-				if status == 2:
-					self.assertEqual(
-						scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)[
-							"action"
-						],
-						"skip",
-					)
-				else:
-					with self.assertRaisesRegex(frappe.ValidationError, "outside the sync"):
-						scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)
 
 	def test_missing_states_and_aliases_use_one_match_lookup_per_batch(self):
 		records = [{**self.record(10), "id": self.ident + str(i)} for i in range(25)]
@@ -368,7 +253,7 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 		self.assertTrue(
 			all(call.kwargs["fields"] == ["name", "record_key"] for call in queries.call_args_list)
 		)
-		before = frappe.db.count("Journal Entry")
+		before = frappe.db.count(self.target_doctype)
 		result = scripted.run_scripted(
 			self.config,
 			SimpleNamespace(iter_record_batches=lambda **kwargs: iter([[self.record(10)]])),
@@ -378,7 +263,182 @@ class TestScriptedProcessingDatabase(IntegrationTestCase):
 		self.assertEqual(result["error_count"], 1)
 		self.assertEqual(result["skipped_count"], 1)
 		self.assertEqual(result["actions"][0]["result"]["record_key"], missing_key)
-		self.assertEqual(frappe.db.count("Journal Entry"), before)
+		self.assertEqual(frappe.db.count(self.target_doctype), before)
+
+
+@unittest.skipUnless(_has_frappe_site_context(), "requires Frappe site context")
+class TestScriptedProcessingERPNextDatabase(_ScriptedProcessingDatabaseCase):
+	target_doctype = "Journal Entry"
+	match_field = "user_remark"
+	fields = (
+		("user_remark", "id"),
+		("company", "company"),
+		("posting_date", "posting_date"),
+		("accounts", "accounts"),
+	)
+	processing_script = JOURNAL_SCRIPT
+
+	@classmethod
+	def setUpClass(cls):
+		if "erpnext" not in frappe.get_installed_apps():
+			raise unittest.SkipTest("requires ERPNext")
+		for doctype in (
+			"Journal Entry",
+			"Journal Entry Account",
+			"GL Entry",
+			"Company",
+			"Account",
+			"Cost Center",
+		):
+			if not frappe.db.table_exists(doctype):
+				raise unittest.SkipTest(f"requires ERPNext DocType: {doctype}")
+		if not frappe.get_meta("Journal Entry").has_field("reversal_of"):
+			raise unittest.SkipTest("requires Journal Entry reversal support")
+		for doctype, name in (
+			("Company", "_Test Company"),
+			("Account", "Cash - _TC"),
+			("Account", "Earnest Money - _TC"),
+			("Cost Center", "Main - _TC"),
+		):
+			if not frappe.db.exists(doctype, name):
+				raise unittest.SkipTest(f"requires ERPNext accounting fixture: {doctype} {name}")
+		super().setUpClass()
+
+	def record(self, amount):
+		return {
+			"id": self.ident,
+			"company": "_Test Company",
+			"posting_date": frappe.utils.nowdate(),
+			"accounts": (
+				[]
+				if not amount
+				else [
+					{
+						"account": "Cash - _TC",
+						"debit_in_account_currency": amount,
+						"cost_center": "Main - _TC",
+					},
+					{
+						"account": "Earnest Money - _TC",
+						"credit_in_account_currency": amount,
+						"cost_center": "Main - _TC",
+					},
+				]
+			),
+		}
+
+	def test_actual_journal_revisions_repeat_reverse_restore_and_state_name(self):
+		original = self.transition(10, "create")[0]
+		key = record_key(self.config, self.record(10))
+		self.assertTrue(frappe.db.exists("Sync Record State", scripted.state_name(self.config, key)))
+		revision = scripted.load_state(self.config, key)["revision"]
+		self.assertEqual(self.transition(10, "skip"), [original])
+		self.assertEqual(scripted.load_state(self.config, key)["revision"], revision)
+		updated = self.transition(20, "replace")[0]
+		restored = self.transition(10, "replace")[0]
+		self.assertEqual(len({original, updated, restored}), 3)
+		self.assertEqual(self.transition(0, "reverse"), [])
+		self.assertEqual(self.transition(0, "skip"), [])
+		self.transition(10, "create")
+		self.assertEqual(
+			frappe.db.count(
+				"Journal Entry", {"reversal_of": ["in", [original, updated, restored]], "docstatus": 1}
+			),
+			3,
+		)
+		# Net ledger effect is the current revision, even after A -> B -> A -> empty -> A.
+		entries = frappe.get_all("Journal Entry", filters={"user_remark": self.ident}, pluck="name")
+		entries += frappe.get_all("Journal Entry", filters={"reversal_of": ["in", entries]}, pluck="name")
+		ledger = frappe.get_all(
+			"GL Entry",
+			filters={"voucher_no": ["in", entries], "account": "Cash - _TC", "is_cancelled": 0},
+			fields=["debit", "credit"],
+		)
+		self.assertEqual(sum(r.debit - r.credit for r in ledger), 10)
+		batch, states, documents = next(scripted.prepared_batches(self.config, [self.record(10)]))
+		self.assertEqual(
+			scripted.plan_record(self.config, batch[0], state_cache=states, document_cache=documents)[
+				"action"
+			],
+			"skip",
+		)
+
+	def test_absorbed_group_reverses_both_current_documents_and_owns_alias(self):
+		first = self.transition(10, "create")[0]
+		other = {**self.record(20), "id": self.ident + " other"}
+		second = scripted.apply_plan(self.config, scripted.plan_record(self.config, other))[0]
+		merged = {**self.record(30), "_sync": {"aliases": [{"id": other["id"]}]}}
+		plan = scripted.plan_record(self.config, merged)
+		self.assertEqual(set(plan["documents"]), {first, second})
+		scripted.apply_plan(self.config, plan)
+		self.assertEqual(
+			frappe.db.count("Journal Entry", {"reversal_of": ["in", [first, second]], "docstatus": 1}), 2
+		)
+		alias = scripted.load_state(self.config, record_key(self.config, other))
+		self.assertEqual(alias["state"]["alias_of"], record_key(self.config, merged))
+		with self.assertRaisesRegex(frappe.ValidationError, "split"):
+			scripted.plan_record(self.config, other)
+
+	def test_external_reversal_is_detected_on_unchanged_source(self):
+		original = self.transition(10, "create")[0]
+		scripted.writes._reverse_journal_entry(source_name=original, posting_date=frappe.utils.nowdate())
+		with self.assertRaisesRegex(frappe.ValidationError, "outside the sync"):
+			scripted.plan_record(self.config, self.record(10))
+
+	def test_projection_keeps_plans_and_avoids_child_queries(self):
+		original = self.transition(10, "create")[0]
+		record = self.record(10)
+		full = scripted.plan_record(self.config, record)
+		cfg = replace(self.config, record_processing_document_fields=[])
+		with patch.object(frappe, "get_all", wraps=frappe.get_all) as queries:
+			batch, states, documents = next(scripted.prepared_batches(cfg, [record]))
+			projected = scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)
+			self.assertNotIn("Journal Entry Account", [call.args[0] for call in queries.call_args_list])
+		self.assertEqual(projected["action"], full["action"])
+		self.assertEqual(projected["state"], full["state"])
+		self.assertNotIn("accounts", projected["existing"][0])
+		self.assertEqual(projected["documents"], [original])
+		with patch.object(frappe, "get_all", wraps=frappe.get_all) as queries:
+			_, _, with_accounts = next(
+				scripted.prepared_batches(
+					replace(cfg, record_processing_document_fields=["accounts"]), [record]
+				)
+			)
+			self.assertEqual(len(with_accounts[original]["accounts"]), 2)
+			self.assertIn("Journal Entry Account", [call.args[0] for call in queries.call_args_list])
+			self.assertNotIn("Tax Withholding Entry", [call.args[0] for call in queries.call_args_list])
+		scripted.writes._reverse_journal_entry(source_name=original, posting_date=frappe.utils.nowdate())
+		batch, states, documents = next(scripted.prepared_batches(cfg, [record]))
+		with self.assertRaisesRegex(frappe.ValidationError, "outside the sync"):
+			scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)
+
+	def test_unordered_reversal_lookup_preserves_status_checks(self):
+		original = self.transition(10, "create")[0]
+		scripted.writes._reverse_journal_entry(source_name=original, posting_date=frappe.utils.nowdate())
+		reversal = frappe.db.get_value("Journal Entry", {"reversal_of": original}, "name")
+		names = [original] + [f"absent-reversal-target-{i}" for i in range(1000)]
+		query = scripted.journal_reversal_query(names)
+		cfg = replace(self.config, record_processing_document_fields=[])
+		for status in [0, 1, 2]:
+			with self.subTest(docstatus=status):
+				frappe.db.set_value("Journal Entry", reversal, "docstatus", status)
+				expected = frappe.get_all(
+					"Journal Entry",
+					filters={"reversal_of": ["in", names], "docstatus": ["!=", 2]},
+					fields=["reversal_of"],
+				)
+				self.assertEqual(query.run(as_dict=True), expected)
+				batch, states, documents = next(scripted.prepared_batches(cfg, [self.record(10)]))
+				if status == 2:
+					self.assertEqual(
+						scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)[
+							"action"
+						],
+						"skip",
+					)
+				else:
+					with self.assertRaisesRegex(frappe.ValidationError, "outside the sync"):
+						scripted.plan_record(cfg, batch[0], state_cache=states, document_cache=documents)
 
 	def test_failed_real_replacement_rolls_back_ledger_and_state(self):
 		original = self.transition(10, "create")[0]
